@@ -1,20 +1,33 @@
 #include "events_internal.h"
-#ifdef _WIN32
-static CRITICAL_SECTION events_lock;
-#define events_block	EnterCriticalSection(&events_lock)
-#define events_unblock	LeaveCriticalSection(&events_lock)
-#else
-static sigset_t events_lock, events_lock_all;
-#define events_block	sigfillset(&events_lock);	\
-    pthread_sigmask(SIG_SETMASK, &events_lock, &events_lock_all)
-#define events_unblock	pthread_sigmask(SIG_SETMASK, &events_lock_all, NULL)
-#endif
 
-#define EVENTS_ARGS_LENGTH 32768
+#define dequeue(l, t) 				\
+	 do { 							\
+		if (t->prev)				\
+			t->prev->next = t->next;\
+		else						\
+			l->head = t->next;		\
+		if (t->next)				\
+			t->next->prev = t->prev;\
+		else						\
+			l->tail = t->prev;		\
+	 } while(0)
 
-static char EVENTS_ARGS[EVENTS_ARGS_LENGTH] = {0};
+#define enqueue(l, t) 				\
+	do {							\
+		if (l->tail) {				\
+			l->tail->next = t;		\
+			t->prev = l->tail;		\
+		} else {					\
+			l->head = t;			\
+			t->prev = NULL;			\
+		}							\
+		l->tail = t;				\
+		t->next = NULL; 			\
+	} while(0)
+
 static volatile bool events_startup_set = false;
 static volatile bool events_shutdown_set = false;
+static volatile bool events_tasks_started = false;
 static int events_execute(events_t *loop, int max_wait);
 sys_events_t sys_event = {0};
 
@@ -32,18 +45,72 @@ static events_allocator_t events_allocators = {
   free,
 };
 
+typedef struct {
+	bool is_main;
+	bool started;
+	/* has the task sleep/wait system started. */
+	bool sleep_activated;
+	int active_timer;
+	int in_callback;
+	/* number of tasks waiting in sleep mode. */
+	int sleep_count;
+	/* track the number of tasks used */
+	int task_count;
+	/* indicator for thread termination. */
+	unsigned int exiting;
+	/* thread id assigned */
+	unsigned int thrd_id;
+	/* number of other task that ran while the current task was waiting.*/
+	unsigned int num_others_ran;
+	/* per thread event loop */
+	events_t *loop;
+	tasks_t *sleep_handle;
+	/* Variable holding the main target `scheduler` that gets called once an task
+	function fully completes and return. */
+	/* record which task is executing for scheduler */
+	tasks_t *running;
+	/* Variable holding the current running task per thread. */
+	tasks_t *active_handle;
+#if defined(USE_SJLJ)
+	tasks_t *active_sig_handle;
+#endif
+	tasks_t *main_handle;
+	/* Variable holding the previous running task per thread. */
+	tasks_t *current_handle;
+	/* Store/hold the registers of the default task thread state,
+	allows the ability to switch from any function, non task/coroutine context. */
+	tasks_t active_buffer[1];
+	/* record which task sleeping in scheduler */
+	tasklist_t sleep_queue[1];
+	/* task's FIFO scheduler queue */
+	tasklist_t run_queue[1];
+} events_thread_t;
+tls_static(events_thread_t, __thread, NULL)
+
+static void __thread_init(bool is_main, unsigned int thread_id);
+static void task_switch(tasks_t *co);
+static void task_scheduler_switch(void);
+static int tasks_schedulering(bool do_io);
+static unsigned int task_push(tasks_t *t);
+static void *task_wait_system(void *v);
+static tasks_t *create_task(size_t heapsize, data_func_t func, void *args);
+
+#ifdef MPROTECT
+alignas(4096)
+#else
+section(text)
+#endif
+
 EVENTS_INLINE bool events_is_shutdown(void) {
 	return events_shutdown_set;
 }
 
 void events_set_destroy(void) {
-	events_block;
-	sys_event.loop_destroyed = true;
-	events_unblock;
+	__thread()->loop = NULL;
 }
 
 EVENTS_INLINE bool events_is_destroy(void) {
-	return sys_event.loop_destroyed;
+	return __thread()->loop == NULL;
 }
 
 EVENTS_INLINE int events_set_allocator(malloc_func malloc_cb, realloc_func realloc_cb, calloc_func calloc_cb,
@@ -86,173 +153,16 @@ void *events_calloc(size_t count, size_t size) {
 }
 
 EVENTS_INLINE void events_update_polling(events_t *loop, int fd, int events) {
-	sys_event.fds[fd].events = events & EVENTS_READWRITE;
-}
-
-EVENTS_INLINE char *str_cpy(char *dest, const char *src, size_t len) {
-	return (char *)memcpy(dest, src, (len ? len : strlen(src)));
-}
-
-char *str_cat(int num_args, ...) {
-	va_list ap;
-	size_t strsize = 0;
-	char *res = NULL;
-	int i;
-
-	if (num_args > 0) {
-		va_start(ap, num_args);
-		for (i = 0; i < num_args; i++)
-			strsize += strlen(va_arg(ap, char *));
-		va_end(ap);
-
-		if ((res = events_calloc(1, strsize + 1)) != NULL) {
-			strsize = 0;
-			va_start(ap, num_args);
-			for (i = 0; i < num_args; i++) {
-				char *s = va_arg(ap, char *);
-				str_cpy(res + strsize, s, 0);
-				strsize += strlen(s);
-			}
-			va_end(ap);
-		}
-	}
-
-	return res;
-}
-
-static int _str_append(size_t offset, const char *str, size_t len) {
-	strncat(EVENTS_ARGS + offset, str, len);
-	return offset + len;
-}
-
-char *str_cat_argv(int argc, char **argv, int start, char *delim) {
-	int i, j, len = 0;
-	for (i = start; i < argc; i++) {
-		len += strlen(argv[i]) + 1;
-	}
-
-	char *str = EVENTS_ARGS;
-	for (i = start, j = 0; i < argc; ++i) {
-		if (i > start)
-			j = _str_append(j, delim, 1);
-		j = _str_append(j, argv[i], strlen(argv[i]));
-	}
-
-	str[(sizeof(char) * len) - 1] = '\0';
-	return str;
-}
-
-char *str_swap(const char *haystack, const char *needle, const char *swap) {
-	if (!haystack || !needle || !swap)
-		return NULL;
-
-	char *result;
-	size_t i, cnt = 0;
-	size_t newWlen = strlen(swap);
-	size_t oldWlen = strlen(needle);
-
-	for (i = 0; haystack[i] != '\0'; i++) {
-		if (strstr(&haystack[i], needle) == &haystack[i]) {
-			cnt++;
-			i += oldWlen - 1;
-		}
-	}
-
-	if (cnt == 0)
-		return NULL;
-
-	result = (char *)events_calloc(1, i + cnt * (newWlen - oldWlen) + 1);
-	i = 0;
-	while (*haystack) {
-		if (strstr(haystack, needle) == haystack) {
-			str_cpy(&result[i], swap, newWlen);
-			i += newWlen;
-			haystack += oldWlen;
-		} else {
-			result[i++] = *haystack++;
-		}
-	}
-
-	result[i] = '\0';
-	return result;
-}
-
-char **str_slice(const char *s, const char *delim, int *count) {
-    if ((void *)s == NULL)
-		return NULL;
-
-	if ((void *)delim == NULL)
-		delim = " ";
-
-	size_t ptrsSize, nbWords = 1, sLen = strlen(s), delimLen = strlen(delim);
-	if (sLen == 0)
-		return NULL;
-
-    void *data;
-    char **ptrs, *_s = (char *)s;
-    while ((_s = strstr(_s, delim))) {
-        _s += delimLen;
-        ++nbWords;
-    }
-
-    ptrsSize = (nbWords + 1) * sizeof(char *);
-    ptrs = data = events_calloc(1, ptrsSize + sLen + 1);
-
-    if (data) {
-        *ptrs = _s = str_cpy((char *)data + ptrsSize, s, sLen);
-        if (nbWords > 1) {
-            while ((_s = strstr(_s, delim))) {
-                *_s = '\0';
-                _s += delimLen;
-                *++ptrs = _s;
-            }
-        }
-
-        *++ptrs = NULL;
-        if (count)
-            *count = (int)nbWords;
-    }
-
-    return data;
-}
-
-int str_pos(const char *text, char *pattern) {
-	size_t c, d, e, text_length, pattern_length, position = -1;
-	if (pattern == NULL || (void *)text == NULL)
-		return -1;
-
-	text_length = strlen(text);
-	pattern_length = strlen(pattern);
-
-	if (pattern_length > text_length)
-		return -1;
-
-	for (c = 0; c <= text_length - pattern_length; c++) {
-		position = e = c;
-		for (d = 0; d < pattern_length; d++)
-			if (pattern[d] == text[e])
-				e++;
-			else
-				break;
-
-		if (d == pattern_length)
-			return (int)position;
-	}
-
-	return -1;
-}
-
-EVENTS_INLINE bool str_has(const char *text, char *pattern) {
-	return str_pos(text, pattern) >= 0;
+	events_target(fd)->events = events & EVENTS_READWRITE;
 }
 
 EVENTS_INLINE int events_init(int max_fd) {
+	atomic_thread_fence(memory_order_seq_cst);
 	if (events_shutdown_set || events_startup_set)
 		return 0;
 
 	events_startup_set = true;
 #ifdef _WIN32
-	InitializeCriticalSection(&events_lock);
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2, 0), &wsaData);
 #endif
@@ -263,15 +173,23 @@ EVENTS_INLINE int events_init(int max_fd) {
 		return -1;
 	}
 
-	if ((sys_event.fds = (events_fd_t *)events_memalign(sizeof(events_fd_t) * max_fd,
-		&sys_event._fds_free_addr, 1)) == NULL) {
+	atomic_init(&sys_event.fds, NULL);
+	atomic_init(&sys_event.results, NULL);
+	atomic_init(&sys_event.result_id_generate, 0);
+	atomic_init(&sys_event.id_generate, 0);
+	atomic_init(&sys_event.num_loops, 0);
+	atomic_flag_clear(&sys_event.loop_signaled);
+	atomic_unlock(&sys_event.lock);
+	events_fd_t *fds = (events_fd_t *)events_memalign(sizeof(events_fd_t) * max_fd, &sys_event._fds_free_addr, 1);
+	if (fds == NULL) {
 		os_shutdown();
 		return -1;
 	}
 
+	atomic_init(&sys_event.fds, fds);
 	atexit(events_deinit);
 	sys_event.max_fd = max_fd;
-	sys_event.num_loops = 0;
+	sys_event.queue_size = data_queue_size();
 	sys_event.timeout_vec_size = EVENTS_RND_UP(sys_event.max_fd, EVENTS_SIMD_BITS) / EVENTS_SHORT_BITS;
 	sys_event.timeout_vec_of_vec_size = EVENTS_RND_UP(sys_event.timeout_vec_size, EVENTS_SIMD_BITS)
 		/ EVENTS_SHORT_BITS;
@@ -282,27 +200,45 @@ EVENTS_INLINE int events_init(int max_fd) {
 #elif defined(__APPLE__) || defined(__MACH__)
 	mach_timebase_info(&sys_event.timer);
 #endif
+
+	__thread_init(true, 0);
 	return 0;
 }
 
 EVENTS_INLINE void events_deinit(void) {
+	atomic_thread_fence(memory_order_seq_cst);
 	if (events_shutdown_set)
 		return;
 
-	if (EVENTS_IS_INITD)
-		return;
-
 	events_shutdown_set = true;
+	if (__thread()->sleep_handle != NULL
+		&& __thread()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
+#if defined(_WIN32) && defined(USE_FIBER)
+		DeleteFiber(__thread()->sleep_handle->type->fiber);
+#endif
+		events_free(__thread()->sleep_handle);
+		__thread()->sleep_handle = NULL;
+	}
+
 	events_free(sys_event._fds_free_addr);
-	sys_event.fds = NULL;
 	sys_event._fds_free_addr = NULL;
 	sys_event.max_fd = 0;
-	sys_event.num_loops = 0;
+	atomic_init(&sys_event.fds, NULL);
+	atomic_init(&sys_event.num_loops, 0);
+
+	results_data_t *r = atomic_get(results_data_t *, &sys_event.results);
+	if (r != NULL) {
+		size_t i, count = atomic_load(&sys_event.result_id_generate);
+		for (i = 0; i < count; i++)
+			events_free(r[i]);
+
+		atomic_init(&sys_event.results, NULL);
+		events_free((void *)r);
+	}
 
 	os_shutdown();
 #ifdef _WIN32
 	WSACleanup();
-	DeleteCriticalSection(&events_lock);
 #endif
 }
 
@@ -354,10 +290,7 @@ EVENTS_INLINE void events_set_timeout(sockfd_t sfd, int secs) {
 }
 
 EVENTS_INLINE events_fd_t *events_target(int fd) {
-	events_block;
-	events_fd_t *target = sys_event.fds + fd;
-	events_unblock;
-	return target;
+	return (events_fd_t *)atomic_load_explicit(&sys_event.fds, memory_order_relaxed) + fd;
 }
 
 EVENTS_INLINE int events_add(events_t *loop, sockfd_t sfd, int event, int timeout_in_secs,
@@ -371,6 +304,7 @@ EVENTS_INLINE int events_add(events_t *loop, sockfd_t sfd, int event, int timeou
 
 	target = events_target(fd);
 	if (event == EVENTS_SIGNAL) {
+		atomic_thread_fence(memory_order_seq_cst);
 		if ((sig_idx = events_add_signal(fd, callback, cb_arg)) >= 0) {
 			loop->signal_set = events_signals();
 			loop->active_signals++;
@@ -456,28 +390,28 @@ EVENTS_INLINE int events_del(sockfd_t sfd) {
 	return 0;
 }
 
-EVENTS_INLINE bool events_is_active(events_t *loop, sockfd_t sfd) {
+EVENTS_INLINE bool events_is_registered(events_t *loop, sockfd_t sfd) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	if (EVENTS_IS_INITD)
 		return false;
-
 	return loop != NULL
-		? sys_event.fds[socket2fd(sfd)].loop_id == loop->loop_id
-		: sys_event.fds[socket2fd(sfd)].loop_id != 0;
+		? events_target(socket2fd(sfd))->loop_id == loop->loop_id
+		: events_target(socket2fd(sfd))->loop_id != 0;
 }
 
 EVENTS_INLINE bool events_is_running(events_t *loop) {
-	return (events_shutdown_set || sys_event.loop_destroyed || events_got_signal)
+	return (events_shutdown_set || events_is_destroy() || events_got_signal)
 		? false
 		: (int)loop->active_descriptors > 0
 		|| (int)loop->active_timers > 0
 		|| (int)loop->active_io > 0
-		|| (int)loop->active_signals > 0;
+		|| (int)loop->active_signals > 0
+		|| __thread()->task_count > 0;
 }
 
 EVENTS_INLINE int events_get_event(events_t *loop __attribute__((unused)), sockfd_t sfd) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
-	return sys_event.fds[socket2fd(sfd)].events & EVENTS_READWRITE;
+	return events_target(socket2fd(sfd))->events & EVENTS_READWRITE;
 }
 
 int events_set_event(sockfd_t sfd, int event) {
@@ -486,14 +420,14 @@ int events_set_event(sockfd_t sfd, int event) {
 	bool is_io = false;
 #ifdef _WIN32
 	if ((is_io = (valid_fd(sfd) || !is_socket(sfd)))) {
-		if (sys_event.fds[socket2fd(sfd)].events != event)
+		if (events_target(socket2fd(sfd))->events != event)
 			return -1;
 
 		events_update_polling(loop, socket2fd(sfd), event);
 		return 0;
 	}
 #endif
-	if (!is_io && sys_event.fds[socket2fd(sfd)].events != event
+	if (!is_io && events_target(socket2fd(sfd))->events != event
 		&& events_update_internal(loop, socket2fd(sfd), event) != 0) {
 		return -1;
 	}
@@ -505,31 +439,34 @@ EVENTS_INLINE events_cb events_get_callback(events_t *loop __attribute__((unused
 	sockfd_t sfd, void **cb_arg) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	if (cb_arg != NULL) {
-		*cb_arg = sys_event.fds[socket2fd(sfd)].cb_arg;
+		*cb_arg = events_target(socket2fd(sfd))->cb_arg;
 	}
 
-	return sys_event.fds[socket2fd(sfd)].callback;
+	return events_target(socket2fd(sfd))->callback;
 }
 
 EVENTS_INLINE void events_set_callback(events_t *loop __attribute__((unused)),
 	sockfd_t sfd, events_cb callback, void **cb_arg) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	if (cb_arg != NULL) {
-		sys_event.fds[socket2fd(sfd)].cb_arg = *cb_arg;
+		events_target(socket2fd(sfd))->cb_arg = *cb_arg;
 	}
 
-	sys_event.fds[socket2fd(sfd)].callback = callback;
+	events_target(socket2fd(sfd))->callback = callback;
 }
 
 EVENTS_INLINE int events_once(events_t *loop, int max_wait) {
-	loop->now = time(NULL);
 	if (max_wait > loop->timeout.resolution) {
 		max_wait = loop->timeout.resolution;
 	}
 
+	loop->now = time(NULL);
 	if (events_execute(loop, max_wait) != 0) {
 		return -1;
 	}
+
+	if (!__thread()->in_callback && __thread()->task_count)
+		tasks_schedulering(false);
 
 	if (max_wait != 0) {
 		loop->now = time(NULL);
@@ -555,7 +492,7 @@ EVENTS_INLINE int events_id(events_t *loop) {
 }
 
 int events_init_loop_internal(events_t *loop, int max_timeout) {
-	loop->loop_id = ++sys_event.num_loops;
+	loop->loop_id = atomic_fetch_add(&sys_event.num_loops, 1) + 1;
 	loop->active_descriptors = 0;
 	loop->active_io = 0;
 	loop->active_timers = 0;
@@ -566,7 +503,7 @@ int events_init_loop_internal(events_t *loop, int max_timeout) {
 	if ((loop->timeout.vec_of_vec = (short *)events_memalign(
 		(sys_event.timeout_vec_of_vec_size + sys_event.timeout_vec_size) * sizeof(short) * EVENTS_TIMEOUT_VEC_SIZE,
 		&loop->timeout._free_addr, 1)) == NULL) {
-		--sys_event.num_loops;
+		atomic_fetch_sub(&sys_event.num_loops, 1);
 		return -1;
 	}
 
@@ -574,6 +511,9 @@ int events_init_loop_internal(events_t *loop, int max_timeout) {
 	loop->timeout.base_idx = 0;
 	loop->timeout.base_time = time(NULL);
 	loop->timeout.resolution = EVENTS_RND_UP(max_timeout, EVENTS_TIMEOUT_VEC_SIZE) / EVENTS_TIMEOUT_VEC_SIZE;
+	if (events_is_destroy())
+		__thread()->loop = loop;
+
 	return 0;
 }
 
@@ -752,57 +692,22 @@ EVENTS_INLINE events_t *events_actor_loop(actor_t *actor) {
 	return actor->loop;
 }
 
-/*static EVENTS_INLINE void events_enqueue(timerlist_t *l, actor_t *t) {
-	if (l->tail) {
-		l->tail->next = t;
-		t->prev = l->tail;
-	} else {
-		l->head = t;
-		t->prev = NULL;
-	}
-
-	l->tail = t;
-	t->next = NULL;
-}*/
-
-static EVENTS_INLINE void events_dequeue(timerlist_t *l, actor_t *t) {
-	if (t->prev)
-		t->prev->next = t->next;
-	else
-		l->head = t->next;
-
-	if (t->next)
-		t->next->prev = t->prev;
-	else
-		l->tail = t->prev;
-}
-
 static int events_execute(events_t *loop, int max_wait) {
-	int ms;
 	actor_t *t;
 	size_t now;
+	timerlist_t *l;
 
-	if ((t = loop->timers->head) == NULL) {
-		ms = max_wait;
-	} else {
-		now = events_nsec();
-		if ((now >= t->alarmtime) || (now + 1 * 1000 * 1000 * 1000LL >= t->alarmtime))
-			ms = 0;
-		else
-			ms = max_wait;
-	}
-
-	/* wait for events */
 	if (loop->active_io)
-		os_iodispatch((ms ? ms : 1));
+		os_iodispatch((__thread()->task_count ? 0 : max_wait));
 
-	if (events_poll_once_internal(loop, (loop->active_io ? 0 : ms)) != 0) {
+	if (events_poll_once_internal(loop, (__thread()->task_count || loop->active_io ? 0 : max_wait)) != 0) {
 		return -1;
 	}
 
 	now = events_nsec();
-	while ((t = loop->timers->head) && now >= t->alarmtime) {
-		events_dequeue(loop->timers, t);
+	l = loop->timers;
+	while ((t = l->head) && now >= t->alarmtime) {
+		dequeue(l, t);
 		t->actor(t, t->args);
 		if (!t->repeating) {
 			events_free(t);
@@ -883,4 +788,634 @@ fd_types events_fd_type(int fd) {
 	/* Should never reach here */
 	return FD_UNKNOWN;
 #endif
+}
+
+static void __thread_init(bool is_main, unsigned int thread_id) {
+	__thread()->is_main = is_main;
+	__thread()->thrd_id = thread_id;
+	__thread()->started = false;
+	__thread()->exiting = 0;
+	__thread()->in_callback = 0;
+	__thread()->active_timer = 0;
+	__thread()->sleep_count = 0;
+	__thread()->task_count = 0;
+	__thread()->sleep_handle = NULL;
+	__thread()->active_handle = NULL;
+	__thread()->current_handle = NULL;
+	__thread()->main_handle = NULL;
+	__thread()->loop = NULL;
+	__thread()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL)) >= 0;
+}
+
+static EVENTS_INLINE void task_scheduler_switch(void) {
+	task_switch(__thread()->main_handle);
+}
+
+static EVENTS_INLINE tasks_t *task_dequeue(tasklist_t *l) {
+	tasks_t *t = NULL;
+	if (l->head != NULL) {
+		t = l->head;
+		dequeue(l, t);
+	}
+
+	return t;
+}
+
+/* Delete specified coroutine. */
+static void task_delete(tasks_t *co) {
+	if (!co) {
+		fprintf(stderr, "attempt to delete an invalid task");
+	} else if (!(co->status == TASK_NORMAL
+		|| co->status == TASK_DEAD
+		|| co->status == TASK_ERRED
+		|| co->status == TASK_FINISH)) {
+		co->err_code = TASK_ERRED;
+	} else {
+		if (co->magic_number == TASK_MAGIC_NUMBER) {
+			co->magic_number = TASK_ERRED;
+#if defined(_WIN32) && defined(USE_FIBER)
+			DeleteFiber(co->type->fiber);
+#endif
+			events_free(co);
+		}
+	}
+}
+
+static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
+	if (data != NULL && is_ptr_usable(co) && co->rid != DATA_INVALID) {
+		unsigned int id = co->rid;
+		results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
+		atomic_thread_fence(memory_order_seq_cst);
+		results[id]->result.object = data;
+		results[id]->is_ready = true;
+		co->results = &results[id]->result;
+		atomic_store_explicit(&sys_event.results, results, memory_order_release);
+	} else if (is_ptr_usable(co)) {
+		co->status = TASK_FINISH;
+	}
+}
+
+/* called only if tasks_t func returns */
+static void task_done(void) {
+	active_task()->halt = true;
+	active_task()->status = TASK_DEAD;
+	task_scheduler_switch();
+}
+
+static void task_awaitable(void) {
+	tasks_t *co = active_task();
+	param_t args = (param_t)co->args;
+	tasks_result_set(co, co->func(args));
+	data_delete(args);
+	if (co->result_group != NULL)
+		data_delete(co->result_group);
+}
+
+static void task_func(void) {
+	task_awaitable();
+	task_done(); /* called only if coroutine function returns */
+}
+
+/* Returns task status state string. */
+static EVENTS_INLINE const char *task_state(int status) {
+	switch (status) {
+		case TASK_DEAD:
+			return "Dead/Not initialized";
+		case TASK_NORMAL:
+			return "Active/Not running";
+		case TASK_RUNNING:
+			return "Active/Running";
+		case TASK_SUSPENDED:
+			return "Suspended/Not started";
+		case TASK_EVENT:
+			return "Events running";
+		case TASK_ERRED:
+			return "Erred/Exception generated";
+		default:
+			return "Unknown";
+	}
+}
+
+EVENTS_INLINE void task_info(tasks_t *t, int pos) {
+#ifdef USE_DEBUG
+	bool line_end = false;
+	if (t == NULL) {
+		line_end = true;
+		t = active_task();
+	}
+
+	char line[256];
+	snprintf(line, 256, CLR_LN"\r\033[%dA", pos);
+	fprintf(stderr, "\t\t - Thrd #%zx, id: %u cid: %u (%s)%s cycles: %zu%s",
+		os_self(),
+		t->tid,
+		t->cid,
+		task_state(t->status),
+		(!t->referenced ? "" : " referenced"),
+		t->cycles,
+		(line_end ? ""CLR_LN : line)
+	);
+#endif
+}
+
+/* Mark the current task as a ``system`` coroutine. These are ignored for the
+purposes of deciding the program is done running */
+static EVENTS_INLINE void task_system(void) {
+	if (!__thread()->running->system) {
+		__thread()->running->system = true;
+		--__thread()->task_count;
+		__thread()->running->tid = __thread()->thrd_id;
+		__thread()->sleep_handle = __thread()->running;
+	}
+}
+
+/* The current task will be scheduled again once all the
+other currently-ready tasks have a chance to run. Returns
+the number of other tasks that ran while the current task was waiting. */
+static EVENTS_INLINE int task_yielding_active(void) {
+	int n = __thread()->num_others_ran;
+	yield_task();
+	return __thread()->num_others_ran - n - 1;
+}
+
+static void *task_wait_system(void *v) {
+	tasks_t *t;
+	tasklist_t *l;
+	size_t now;
+	(void)v;
+
+	task_system();
+	while (!__thread()->exiting) {
+		__thread()->active_timer++;
+		/* let everyone else run */
+		while (task_yielding_active() > 0)
+			;
+		__thread()->active_timer--;
+
+		now = events_now();
+		task_info(active_task(), 1);
+		while ((t = __thread()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
+			l = __thread()->sleep_queue;
+			dequeue(l, t);
+			if (!t->system && --__thread()->sleep_count == 0)
+				__thread()->task_count--;
+
+			if (!t->halt) {
+				l = __thread()->run_queue;
+				enqueue(l, t);
+			}
+		}
+	}
+
+	return 0;
+}
+
+static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, unsigned int ms, size_t now) {
+	size_t when = now + (size_t)ms * 1000000;
+	tasks_t *t = NULL;
+
+	for (t = __thread()->sleep_queue->head; t != NULL && t->alarm_time < when; t = t->next)
+		;
+
+	if (t) {
+		context->prev = t->prev;
+		context->next = t;
+	} else {
+		context->prev = __thread()->sleep_queue->tail;
+		context->next = NULL;
+	}
+
+	t = context;
+	t->alarm_time = when;
+	if (t->prev)
+		t->prev->next = t;
+	else
+		__thread()->sleep_queue->head = t;
+
+	if (t->next)
+		t->next->prev = t;
+	else
+		__thread()->sleep_queue->tail = t;
+
+	if (!running->system && __thread()->sleep_count++ == 0)
+		__thread()->task_count++;
+}
+
+EVENTS_INLINE unsigned int sleep_task(unsigned int ms) {
+	size_t now = events_now();
+
+	add_timeout(__thread()->running, __thread()->running, ms, now);
+	task_switch(__thread()->current_handle);
+
+	return (unsigned int)(events_now() - now) / 1000000;
+}
+
+#if defined(_WIN32) && defined(USE_FIBER)
+static EVENTS_INLINE void __stdcall fiber_thunk(void *func) {
+	((void (*)(void))func)();
+}
+
+/* Windows fibers do not allow users to supply their own memory */
+static EVENTS_INLINE tasks_t *task_derive(void *memory, unsigned int heapsize) {
+	active_task();
+	coroutine_t *co = (coroutine_t *)memory;
+	co->fiber = CreateFiber(heapsize, fiber_thunk, (void *)task_func);
+	return (tasks_t *)co;
+}
+
+EVENTS_INLINE void task_switch(tasks_t *handle) {
+	tasks_t *coro_previous_handle = __thread()->active_handle;
+	__thread()->active_handle = handle;
+	__thread()->active_handle->status = TASK_RUNNING;
+	__thread()->current_handle = coro_previous_handle;
+	__thread()->current_handle->status = TASK_NORMAL;
+	SwitchToFiber(handle->type->fiber);
+}
+
+#elif defined(USE_SJLJ)
+static EVENTS_INLINE void _spring_board(int ignored) {
+	if (sigsetjmp(((coroutine_t *)__thread()->active_sig_handle)->sig_ctx, 0)) {
+		((coroutine_t *)__thread()->active_handle)->sig_func();
+	}
+}
+
+/* Switch to specified coroutine. */
+static EVENTS_INLINE void task_switch(tasks_t *co) {
+	if (!sigsetjmp(((coroutine_t *)active_task())->sig_ctx, 0)) {
+		tasks_t *task_previous_handle = __thread()->active_handle;
+		__thread()->active_handle = co;
+		__thread()->active_handle->status = TASK_RUNNING;
+		__thread()->current_handle = task_previous_handle;
+		__thread()->active_sig_handle = __thread()->current_handle;
+		__thread()->current_handle->status = TASK_NORMAL;
+		siglongjmp(((coroutine_t *)__thread()->active_handle)->sig_ctx, 1);
+	}
+}
+
+static tasks_t *task_derive(void *co, size_t stack_size) {
+	coroutine_t *contxt = (coroutine_t *)co;
+	size_t size = stack_size + sizeof(_results_data_t);
+	size -= sizeof(tasks_t);
+	if (contxt) {
+		struct sigaction handler;
+		struct sigaction old_handler;
+
+		stack_t stack;
+		stack_t old_stack;
+
+		contxt->sig_func = contxt->stack = NULL;
+
+		stack.ss_flags = 0;
+		stack.ss_size = size;
+		contxt->stack = stack.ss_sp = (void *)co;
+		if (stack.ss_sp && !sigaltstack(&stack, &old_stack)) {
+			handler.sa_handler = _spring_board;
+			handler.sa_flags = SA_ONSTACK;
+			sigemptyset(&handler.sa_mask);
+			__thread()->active_sig_handle = (tasks_t *)co;
+
+			if (!sigaction(SIGUSR1, &handler, &old_handler)) {
+				if (!raise(SIGUSR1)) {
+					contxt->sig_func = task_func;
+				}
+
+				sigaltstack(&old_stack, 0);
+				sigaction(SIGUSR1, &old_handler, 0);
+			}
+		}
+
+		if (contxt->sig_func != task_func) {
+			task_delete((tasks_t *)contxt);
+			contxt = NULL;
+		}
+	}
+
+	return (tasks_t *)contxt;
+}
+
+#else
+static tasks_t *task_derive(void *co, size_t stack_size) {
+	ucontext_t *ctx = (ucontext_t *)co;
+	size_t size = stack_size + sizeof(_results_data_t);
+	size -= sizeof(ucontext_t);
+
+	/* Initialize ucontext. */
+	if (getcontext(ctx)) {
+		perror("getcontext failed!");
+		return NULL;
+	}
+
+	ctx->uc_link = (ucontext_t *)__thread()->main_handle;
+	ctx->uc_stack.ss_sp = (unsigned char *)co;
+	ctx->uc_stack.ss_size = size;
+	makecontext(ctx, (void (*)(void))task_func, 0);
+
+	return (tasks_t *)co;
+}
+
+/* Switch to specified coroutine. */
+static EVENTS_INLINE void task_switch(tasks_t *co) {
+	tasks_t *task_previous_handle = __thread()->active_handle;
+	__thread()->active_handle = co;
+	__thread()->active_handle->status = TASK_RUNNING;
+	__thread()->current_handle = task_previous_handle;
+	__thread()->current_handle->status = TASK_NORMAL;
+	if (swapcontext((ucontext_t *)__thread()->current_handle, (ucontext_t *)__thread()->active_handle))
+		perror("Error! `swapcontext`");
+}
+
+#endif
+static EVENTS_INLINE void task_yielding(tasks_t *co) {
+	if (!__thread()->in_callback && !__thread()->active_timer)
+		tasks_stack_check(0);
+
+	task_switch(co);
+}
+
+static results_data_t tasks_create_result(void) {
+	results_data_t result, *results;
+	size_t id = atomic_fetch_add(&sys_event.result_id_generate, 1);
+	result = (results_data_t)events_malloc(sizeof(_results_data_t));
+	results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
+	if (id % sys_event.queue_size == 0 || results == NULL)
+		results = events_realloc(results, (id + sys_event.queue_size) * sizeof(results[0]));
+
+	result->is_ready = false;
+	result->id = id;
+	result->result.object = NULL;
+	result->type = DATA_OBJ;
+	results[id] = result;
+	atomic_store_explicit(&sys_event.results, results, memory_order_release);
+	return result;
+}
+
+/* Utility for aligning addresses. */
+static EVENTS_INLINE size_t _tasks_align_forward(size_t addr, size_t align) {
+	return (addr + (align - 1)) & ~(align - 1);
+}
+
+/* Create new task. */
+static tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
+	void *memory = NULL;
+	tasks_t *co = NULL;
+	/* Stack size should be at least `TASK_STACK_SIZE`. */
+	if ((heapsize != 0 && heapsize < TASK_STACK_SIZE) || heapsize == 0)
+		heapsize = TASK_STACK_SIZE;
+
+	heapsize = _tasks_align_forward(heapsize + sizeof(tasks_t), 16); /* Stack size should be aligned to 16 bytes. */
+	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL
+		|| (co = task_derive(memory, heapsize)) == NULL) {
+		perror("Error! calloc/task_derive");
+		return NULL;
+	}
+
+	if (!__thread()->current_handle)
+		__thread()->current_handle = active_task();
+
+	if (!__thread()->main_handle)
+		__thread()->main_handle = __thread()->active_handle;
+
+	co->func = func;
+	co->args = args;
+	co->status = TASK_SUSPENDED;
+	co->halt = false;
+	co->ready = false;
+	co->waiting = false;
+	co->group_active = false;
+	co->group_finish = true;
+	co->system = false;
+	co->referenced = false;
+	co->err_code = 0;
+	co->cycles = 0;
+	co->cid = DATA_INVALID;
+	co->user_data = NULL;
+	co->context = NULL;
+	co->task_group = NULL;
+	co->result_group = NULL;
+	co->stack_size = heapsize + sizeof(_results_data_t);
+	co->stack_base = (unsigned char *)(co + 1);
+	co->magic_number = TASK_MAGIC_NUMBER;
+
+	return co;
+}
+
+static EVENTS_INLINE unsigned int task_push(tasks_t *t) {
+	if (t && t->status == TASK_SUSPENDED && t->cid == DATA_INVALID) {
+		tasks_t *c = active_task();
+		t->cid = (unsigned int)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
+		t->rid = tasks_create_result()->id;
+		t->tid = __thread()->thrd_id;
+		if (c->group_active && c->task_group != NULL && !c->group_finish) {
+			t->waiting = true;
+			$append(c->task_group->group, t);
+		}
+
+		__thread()->task_count++;
+		t->ready = true;
+		tasklist_t *l = __thread()->run_queue;
+		enqueue(l, t);
+	}
+
+	return (t == NULL) ? TASK_ERRED : t->rid;
+}
+
+static EVENTS_INLINE results_data_t task_result_get(unsigned int id) {
+	return (results_data_t)atomic_load_explicit(&sys_event.results[id], memory_order_relaxed);
+}
+
+/* Check for task completetion and return. */
+EVENTS_INLINE bool task_is_terminated(tasks_t *co) {
+	return co->halt;
+}
+
+EVENTS_INLINE bool task_is_ready(unsigned int id) {
+	return task_result_get(id)->is_ready;
+}
+
+EVENTS_INLINE unsigned int task_id(void) {
+	return active_task()->rid;
+}
+
+EVENTS_INLINE values_t results_for(unsigned int id) {
+	results_data_t result = task_result_get(id);
+	if (result->is_ready)
+		return result->result;
+
+	return data_values_empty->value;
+}
+
+EVENTS_INLINE tasks_t *active_task(void) {
+	if (!__thread()->active_handle) {
+		__thread()->active_handle = __thread()->active_buffer;
+#if defined(_WIN32) && defined(USE_FIBER)
+		ConvertThreadToFiber(0);
+		__thread()->active_handle->type->fiber = GetCurrentFiber();
+#endif
+	}
+
+	return __thread()->active_handle;
+}
+
+unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...) {
+	va_list ap;
+
+	va_start(ap, num_of_args);
+	param_t params = data_ex(num_of_args, ap);
+	va_end(ap);
+
+	return task_push(create_task(Kb(18), (data_func_t)fn, params));
+}
+
+static EVENTS_INLINE task_group_t *create_task_group(void) {
+	task_group_t *wg = events_calloc(1, sizeof(task_group_t));
+	wg->group = array();
+	return wg;
+}
+
+EVENTS_INLINE task_group_t *task_group(void) {
+	tasks_t *t = active_task();
+	t->group_active = true;
+	t->group_finish = false;
+	t->task_group = create_task_group();
+
+	return t->task_group;
+}
+
+array_t tasks_wait(task_group_t *wg) {
+	tasks_t *worker, *t = active_task();
+	tasklist_t *l = __thread()->run_queue;
+	array_t wgr = NULL;
+	if (t->group_active && t->task_group == wg) {
+		t->group_active = false;
+		t->group_finish = true;
+		t->task_group = NULL;
+		wgr = array();
+		yield_task();
+		while ($size(wg->group) > 0) {
+			foreach(task in wg->group) {
+				worker = (tasks_t *)task.object;
+				if (task_is_terminated(worker)) {
+					$remove(wg->group, itask);
+					if (worker->results != NULL)
+						$append_unsigned(wgr, worker->rid);
+
+					worker->waiting = false;
+					task_delete(worker);
+				} else {
+					if (worker->status == TASK_NORMAL)
+						enqueue(l, worker);
+
+					task_info(t, 1);
+					yield_task();
+				}
+			}
+			itask = 0;
+		}
+
+		yield_task();
+		t->result_group = wgr;
+		data_delete(wg->group);
+		events_free(wg);
+		__thread()->task_count--;
+	}
+
+	return wgr;
+}
+
+EVENTS_INLINE void async_run(events_t *loop) {
+	int status;
+	do {
+		if (__thread()->task_count == 0)
+			break;
+
+		status = tasks_schedulering(true);
+	} while (events_is_running(loop) && !status);
+}
+
+EVENTS_INLINE void suspend_task(void) {
+	task_yielding(__thread()->current_handle);
+}
+
+EVENTS_INLINE void yield_task(void) {
+	tasks_t *t = __thread()->running;
+	tasklist_t *l =__thread()->run_queue;
+	enqueue(l, t);
+	suspend_task();
+}
+
+EVENTS_INLINE void tasks_stack_check(int n) {
+	tasks_t *t = __thread()->running;
+	if ((char *)&t <= (char *)t->stack_base
+		|| (char *)&t - (char *)t->stack_base < 256 + n
+		|| t->magic_number != TASK_MAGIC_NUMBER) {
+		fprintf(stderr, "task stack overflow: &t=%p stack=%p n=%d\n", &t, t->stack_base, 256 + n);
+		abort();
+	}
+}
+
+#ifdef _WIN32
+EVENTS_INLINE size_t tasks_cpu_count(void) {
+	SYSTEM_INFO system_info;
+	GetSystemInfo(&system_info);
+	return (size_t)system_info.dwNumberOfProcessors;
+}
+#elif (defined(__linux__) || defined(__linux))
+#include <sched.h>
+EVENTS_INLINE size_t tasks_cpu_count(void) {
+	cpu_set_t cpuset;
+	sched_getaffinity(0, sizeof(cpuset), &cpuset);
+	return CPU_COUNT(&cpuset);
+}
+#else
+EVENTS_INLINE size_t tasks_cpu_count(void) {
+	return sysconf(_SC_NPROCESSORS_ONLN);
+}
+#endif
+
+static EVENTS_INLINE void task_gc(tasks_t *co) {
+	atomic_lock(&sys_event.lock);
+	if (sys_event.gc == NULL)
+		sys_event.gc = array();
+
+	if (co->magic_number == TASK_MAGIC_NUMBER)
+		$append(sys_event.gc, co);
+
+	atomic_unlock(&sys_event.lock);
+}
+
+static int tasks_schedulering(bool do_io) {
+	__thread()->started = true;
+	bool has_task = false;
+	tasks_t *t = task_dequeue(__thread()->run_queue);
+	if (t != NULL) {
+		has_task = true;
+		t->ready = false;
+		t->cycles++;
+
+		__thread()->num_others_ran++;
+		__thread()->running = t;
+		if (do_io) {
+			__thread()->in_callback++;
+			events_once(__thread()->loop, 0);
+			__thread()->in_callback--;
+		}
+
+		if (!t->halt)
+			task_switch(t);
+	}
+
+	__thread()->running = NULL;
+	if (t && t->halt) {
+		if (!t->system) {
+			--__thread()->task_count;
+		}
+
+		if (!t->waiting && !t->referenced) {
+			task_delete(t);
+		} else if (t->referenced) {
+			task_gc(t);
+		}
+	}
+
+	return has_task ? 0 : -1;
 }

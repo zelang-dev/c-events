@@ -1,8 +1,11 @@
 
 set(TARGET_LIST
+ test-arrays
  test-changelist
  test-closed
  test-eof
+ test-task_group
+ test-thread
  test-time
 )
 

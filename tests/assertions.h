@@ -87,7 +87,7 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
 #define ASSERT_PTR(expected, actual) ASSERT_EQ_(expected, actual, memcmp(expected, actual, sizeof(actual)) == 0, "%p")
 #define ASSERT_UEQ(expected, actual) ASSERT_EQ_((long unsigned)expected, actual, expected == actual, "%lu")
 #define ASSERT_DOUBLE(expected, actual) ASSERT_EQ_(expected, actual, expected == actual, "%f")
-#define ASSERT_EQ(expected, actual) ASSERT_EQ_((int)expected, actual, expected == actual, "%d")
+#define ASSERT_EQ(expected, actual) ASSERT_EQ_((int)expected, (int)actual, expected == actual, "%d")
 #define ASSERT_EQU(expected, actual) ASSERT_ERR_((int)expected, actual, expected == actual, "%d")
 #define ASSERT_CHAR(expected, actual) ASSERT_EQ_((char)expected, (char)actual, expected == actual, "%c")
 #define ASSERT_LEQ(expected, actual) ASSERT_EQ_(expected, actual, expected == actual, "%i")
@@ -97,6 +97,7 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
 #define ASSERT_TRUE(actual) ASSERT_EQ_(true, actual, true == actual, "%c")
 #define ASSERT_FALSE(actual) ASSERT_EQ_(false, actual, false == actual, "%d")
 #define ASSERT_THREAD(actual) ASSERT_THREAD_EQ(true, actual, true == actual, "%c")
+#define ASSERT_TASK(actual) ASSERT_THREAD_EQ(true, actual, true == actual, "%c")
 
 #define ASSERT_FUNC(FNC_CALL) do { \
     if (FNC_CALL) { \

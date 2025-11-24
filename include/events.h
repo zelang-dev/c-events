@@ -1,18 +1,47 @@
 #ifndef _EVENTS_H
 #define _EVENTS_H
 
-#define _GNU_SOURCE
+/* uses the C standard library's `setjump`/`longjmp` API.
+Overhead: `~30x` in cost compared to an ordinary function call.
+*/
+#define USE_SJLJ
 
-#ifdef __cplusplus
-extern "C" {
+/* uses the Windows "fibers" API.
+Overhead: `~15x` in cost compared to an ordinary function call.
+*/
+#define USE_FIBER
+
+/* uses the POSIX "ucontext" API.
+Overhead: `~300x` in cost compared to an ordinary function call.
+*/
+#define USE_UCONTEXT
+
+#ifndef _WIN32
+#	define _GNU_SOURCE
+#	define _BSD_SOURCE
+# 	undef USE_FIBER
+# 	undef USE_UCONTEXT
+#else
+# 	undef USE_UCONTEXT
+# 	undef USE_SJLJ
+#endif
+
+#if defined(USE_SJLJ)
+/* for sigsetjmp(), sigjmp_buf, and stack_t */
+#	define _POSIX_C_SOURCE 200809L
+/* for SA_ONSTACK */
+#	define _XOPEN_SOURCE 600
 #endif
 
 #include <limits.h>
 #include <errno.h>
 #include <stdio.h>
 #include <signal.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <time.h>
 #include <stdbool.h>
 #include <stdarg.h>
 #include <sys/types.h>
@@ -48,6 +77,7 @@ extern "C" {
 #		else
 			/* O.S. platform ~pipe~ prefix. */
 #			define SYS_PIPE "/tmp/"
+#			define SYS_PIPE_PRE "/tmp/"
 #		endif
 #	endif
 #endif
@@ -63,10 +93,8 @@ extern "C" {
 #	define FD_SETSIZE      256
 #	include <WinSock2.h>
 #	include <ws2tcpip.h>
-#	include <time.h>
 #	include <io.h>
 #	include <direct.h>
-#	include <afunix.h>
 #else
 #	if defined(__APPLE__) || defined(__MACH__)
 #		include <mach/clock.h>
@@ -77,7 +105,6 @@ extern "C" {
 #	include <arpa/inet.h>
 #	include <netinet/in.h>
 #	include <netinet/tcp.h>
-#   include <pthread.h>
 #   include <netdb.h>
 #	include <sys/time.h>
 #	include <sys/socket.h>
@@ -129,9 +156,9 @@ extern "C" {
 #endif
 
 #define socket2fd(sock) ((int)sock)
-#define _2fd(sock) ((int*)sock)
-#define fd2socket(fd) ((sockfd_t)fd)
-#define _2socket(fd) ((sockfd_t*)fd)
+#define _2fd(sock) 		((int*)sock)
+#define fd2socket(fd) 	((sockfd_t)fd)
+#define _2socket(fd) 	((sockfd_t*)fd)
 
 #ifndef seconds
 #	define seconds(ms)	(1000 * ms)
@@ -143,6 +170,10 @@ extern "C" {
 
 #ifndef hours
 #	define hours(ms)	(3600000 * ms)
+#endif
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 typedef enum {
@@ -171,6 +202,8 @@ typedef void (*free_func)(void *);
 typedef void (*events_cb)(sockfd_t fd, int event, void *args);
 typedef void (*actor_cb)(actor_t *, void *);
 typedef void (*os_cb)(intptr_t file, int bytes, void *data);
+typedef void *(*param_func_t)(param_t);
+typedef intptr_t(*intptr_func_t)(intptr_t);
 typedef events_cb sig_cb;
 
 C_API sys_events_t sys_event;
@@ -204,7 +237,7 @@ C_API int events_add(events_t *loop, sockfd_t sfd, int events, int timeout_in_se
 C_API int events_del(sockfd_t sfd);
 
 /* Check if `fd` is registered. */
-C_API bool events_is_active(events_t *loop, sockfd_t sfd);
+C_API bool events_is_registered(events_t *loop, sockfd_t sfd);
 
 /* Check if any `events` still running. */
 C_API bool events_is_running(events_t *loop);
@@ -242,13 +275,21 @@ C_API int events_timeofday(struct timeval *, struct timezone *);
 C_API fd_types events_fd_type(int fd);
 C_API sys_signal_t *events_signals(void);
 
-C_API bool str_has(const char *text, char *pattern);
-C_API int str_pos(const char *text, char *pattern);
-C_API char *str_cpy(char *dest, const char *src, size_t len);
-C_API char *str_cat(int num_args, ...);
-C_API char **str_slice(const char *s, const char *delim, int *count);
-C_API char *str_swap(const char *haystack, const char *needle, const char *swap);
-C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
+C_API tasks_t *active_task(void);
+C_API void yield_task(void);
+C_API void suspend_task(void);
+C_API unsigned int sleep_task(unsigned int ms);
+C_API unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...);
+C_API void async_run(events_t *loop);
+C_API values_t results_for(unsigned int id);
+C_API task_group_t *task_group(void);
+C_API array_t tasks_wait(task_group_t *);
+C_API unsigned int task_id(void);
+C_API bool task_is_ready(unsigned int id);
+C_API bool task_is_terminated(tasks_t *);
+C_API void task_info(tasks_t *t, int pos);
+C_API size_t tasks_cpu_count(void);
+C_API void tasks_stack_check(int n);
 
 #ifdef __cplusplus
 }

@@ -32,7 +32,9 @@ option(BUILD_SHARED_LIBS "Build the library as a shared (dynamically-linked) " O
 message("Generated with config types: ${CMAKE_CONFIGURATION_TYPES}")
 set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
 
-set(ev_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/events.c)
+set(ev_sources
+	${CMAKE_CURRENT_SOURCE_DIR}/src/events.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c)
 if(WIN32)
 	set(ev_sources ${ev_sources}
 	${CMAKE_CURRENT_SOURCE_DIR}/src/os_windows.c
@@ -68,8 +70,14 @@ target_include_directories(${PROJECT_NAME}
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
-find_package(Threads)
-target_link_libraries(${PROJECT_NAME} PUBLIC ${CMAKE_THREAD_LIBS_INIT})
+if(UNIX)
+	find_package(Threads)
+    if(APPLE)
+        target_link_libraries(${PROJECT_NAME} PUBLIC ${CMAKE_THREAD_LIBS_INIT})
+    else()
+        target_link_libraries(${PROJECT_NAME} PUBLIC ${CMAKE_THREAD_LIBS_INIT} atomic)
+    endif()
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
 	OUTPUT_NAME ${PROJECT_NAME}
@@ -161,7 +169,7 @@ install(
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION lib)
-install(FILES include/events.h include/os.h DESTINATION include)
+install(FILES include/events.h include/arrays.h include/os.h DESTINATION include)
 include(CPack)
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)

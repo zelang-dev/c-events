@@ -7,6 +7,9 @@ set(TARGET_LIST
 	events_echo
 	signal-test
 	time-test
+	task_group
+	task_multi-args
+	task_sleep
 )
 
 foreach (TARGET ${TARGET_LIST})

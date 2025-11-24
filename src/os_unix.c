@@ -185,129 +185,6 @@ static int release_lock(int sock) {
 	return -1;
 }
 
-/**
- * Using the pathname bind_path, fill in the sockaddr_un structure
- * *servAddrPtr and the length of this structure *servAddrLen.
- *
- * @returns `0` for normal return, `-1` for failure (bind_path too long).
- *
- */
-static int os_build_sockaddr_un(const char *bind_path,
-	struct sockaddr_un *servAddrPtr, int *servAddrLen) {
-	int bindpath_len = strlen(bind_path);
-
-#ifdef HAVE_SOCKADDR_UN_SUN_LEN /* 4.3BSD Reno and later: BSDI, DEC */
-	if (bindpath_len >= sizeof(servAddrPtr->sun_path)) {
-		return -1;
-	}
-#else                           /* 4.3 BSD Tahoe: Solaris, HPUX, DEC, ... */
-	if (bindpath_len > sizeof(servAddrPtr->sun_path)) {
-		return -1;
-	}
-#endif
-	memset((char *)servAddrPtr, 0, sizeof(*servAddrPtr));
-	servAddrPtr->sun_family = AF_UNIX;
-	memcpy(servAddrPtr->sun_path, bind_path, bindpath_len);
-	if (servAddrPtr->sun_path[0] == '*') { // abstract socket address
-		servAddrPtr->sun_path[0] = '\0';
-	}
-#ifdef HAVE_SOCKADDR_UN_SUN_LEN /* 4.3BSD Reno and later: BSDI, DEC */
-	*servAddrLen = sizeof(servAddrPtr->sun_len)
-		+ sizeof(servAddrPtr->sun_family)
-		+ bindpath_len + 1;
-	servAddrPtr->sun_len = *servAddrLen;
-#else                           /* 4.3 BSD Tahoe: Solaris, HPUX, DEC, ... */
-	*servAddrLen = sizeof(servAddrPtr->sun_family) + bindpath_len;
-#endif
-	return 0;
-}
-union SockAddrUnion {
-	struct  sockaddr_un	unixVariant;
-	struct  sockaddr_in	inetVariant;
-};
-
-int os_create_ipc(const char *bind_path, int backlog) {
-	int listenSock, servLen;
-	union   SockAddrUnion sa;
-	int	    tcp = false;
-	unsigned long tcp_ia = 0;
-	char *tp;
-	short   port = 0;
-	char    host[MAXPATHLEN];
-
-	strcpy(host, bind_path);
-	if ((tp = strchr(host, ':')) != 0) {
-		*tp++ = 0;
-		if ((port = atoi(tp)) == 0) {
-			*--tp = ':';
-		} else {
-			tcp = true;
-		}
-	}
-	if (tcp) {
-		if (!*host || !strcmp(host, "*")) {
-			tcp_ia = htonl(INADDR_ANY);
-		} else {
-			tcp_ia = inet_addr(host);
-			if (tcp_ia == INADDR_NONE) {
-				struct hostent *hep;
-				hep = gethostbyname(host);
-				if ((!hep) || (hep->h_addrtype != AF_INET || !hep->h_addr_list[0])) {
-					fprintf(stderr, "Cannot resolve host name %s -- exiting!\n", host);
-					return -(1);
-				}
-				if (hep->h_addr_list[1]) {
-					fprintf(stderr, "Host %s has multiple addresses ---\n", host);
-					fprintf(stderr, "you must choose one explicitly!!!\n");
-					return -(1);
-				}
-				tcp_ia = ((struct in_addr *)(hep->h_addr))->s_addr;
-			}
-		}
-	}
-
-	if (tcp) {
-		listenSock = socket(AF_INET, SOCK_STREAM, 0);
-		if (listenSock >= 0) {
-			int flag = 1;
-			if (setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR,
-				(char *)&flag, sizeof(flag)) < 0) {
-				fprintf(stderr, "Can't set SO_REUSEADDR.\n");
-				return -(1001);
-			}
-		}
-	} else {
-		listenSock = socket(AF_UNIX, SOCK_STREAM, 0);
-	}
-	if (listenSock < 0) {
-		return -1;
-	}
-
-	/*
-	 * Bind the listening socket.
-	 */
-	if (tcp) {
-		memset((char *)&sa.inetVariant, 0, sizeof(sa.inetVariant));
-		sa.inetVariant.sin_family = AF_INET;
-		sa.inetVariant.sin_addr.s_addr = tcp_ia;
-		sa.inetVariant.sin_port = htons(port);
-		servLen = sizeof(sa.inetVariant);
-	} else {
-		unlink(bind_path);
-		if (os_build_sockaddr_un(bind_path, &sa.unixVariant, &servLen)) {
-			fprintf(stderr, "Listening socket's path name is too long.\n");
-			return -(1000);
-		}
-	}
-	if (bind(listenSock, (struct sockaddr *)&sa.unixVariant, servLen) < 0
-		|| listen(listenSock, backlog) < 0) {
-		perror("bind/listen");
-		return (errno);
-	}
-
-	return listenSock;
-}
-
 int os_asyncread(int fd, void *buf, int len, int offset, os_cb proc, void *data) {
 	int index = AIO_RD_IX(fd);
 
@@ -407,9 +284,9 @@ static int new_fd(int fd) {
 		fdTable[index].process->fd = index;
 		fdTable[index].process->env = NULL;
 		fdTable[index].process->detached = false;
-		fdTable[index].process->in = inherit;
-		fdTable[index].process->out = inherit;
-		fdTable[index].process->err = inherit;
+		fdTable[index].process->input = inherit;
+		fdTable[index].process->output = inherit;
+		fdTable[index].process->error = inherit;
 		fdTable[index].process->ps = -1;
 	}
 
@@ -443,12 +320,12 @@ static inline process_t os_exec_info(const char *filename, execinfo_t *info) {
 		sa.sa_handler = SIG_DFL;
 		sigaction(SIGPIPE, &sa, NULL);
 
-		if (info->in != -1)
-			dup2(info->in, STDIN_FILENO);
-		if (info->out != -1)
-			dup2(info->out, STDOUT_FILENO);
-		if (info->err != -1)
-			dup2(info->err, STDERR_FILENO);
+		if (info->input != -1)
+			dup2(info->input, STDIN_FILENO);
+		if (info->output != -1)
+			dup2(info->output, STDOUT_FILENO);
+		if (info->error != -1)
+			dup2(info->error, STDERR_FILENO);
 	}
 
 	if (info->workdir != NULL && 0 != chdir(info->workdir))
@@ -470,13 +347,13 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 		info->env = (const char **)str_slice(env, ";", NULL);
 
 	if (io_in)
-		info->in = io_in;
+		info->input = io_in;
 
 	if (io_out)
-		info->out = io_out;
+		info->output = io_out;
 
 	if (io_err)
-		info->err = io_err;
+		info->error = io_err;
 
 	info->fd = pseudofd;
 	return info;
@@ -602,4 +479,127 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 	}
 	events_sigunblock;
 	return i;
+}
+
+EVENTS_INLINE int os_tls_alloc(tls_emulate_t *key, emulate_dtor dtor) {
+	if (!key) return -1;
+
+	return (pthread_key_create(key, dtor) == 0) ? 0 : -1;
+}
+
+EVENTS_INLINE void os_tls_free(tls_emulate_t key) {
+	void *ptr = os_tls_get(key);
+	if (ptr != NULL)
+		events_free(ptr);
+
+	pthread_key_delete(key);
+}
+
+EVENTS_INLINE void *os_tls_get(tls_emulate_t key) {
+	return pthread_getspecific(key);
+}
+
+EVENTS_INLINE int os_tls_set(tls_emulate_t key, void *val) {
+	return (pthread_setspecific(key, val) == 0) ? 0 : -1;
+}
+
+EVENTS_INLINE os_thread_t os_create(os_thread_proc proc, void *param) {
+	os_thread_t t = 0;
+	typedef void *(*start_routine) (void *);
+	pthread_attr_t *pattr = NULL;
+
+	if (0 != pthread_create(&t, pattr, (start_routine)(void *)proc, param))
+		t = 0;
+
+end:
+	if (pattr != NULL)
+		pthread_attr_destroy(pattr);
+
+	return t;
+}
+
+/** Add msec value to 'timespec' object */
+EVENTS_INLINE void _timespec_addms(struct timespec *ts, size_t ms) {
+	ts->tv_sec += ms / 1000;
+	ts->tv_nsec += (ms % 1000) * 1000 * 1000;
+	if (ts->tv_nsec >= 1000 * 1000 * 1000) {
+		ts->tv_sec++;
+		ts->tv_nsec -= 1000 * 1000 * 1000;
+	}
+}
+
+EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code) {
+	void *result;
+	int r;
+
+	if (timeout_ms == (unsigned int)-1) {
+		r = pthread_join(t, &result);
+	}
+
+#if defined(__linux__) && !defined(ANDROID)
+	else if (timeout_ms == 0) {
+		r = pthread_tryjoin_np(t, &result);
+		if (r == EBUSY)
+			r = ETIMEDOUT;
+	}
+#endif
+
+#if defined(__linux__)  && !defined(ANDROID)
+	else {
+		struct timespec ts;
+		clock_gettime(CLOCK_REALTIME, &ts);
+		_timespec_addms(&ts, timeout_ms);
+		r = pthread_timedjoin_np(t, &result, &ts);
+	}
+#else
+	else {
+		r = pthread_join(t, &result);
+	}
+#endif
+
+	if (r != 0) {
+		errno = r;
+		return -1;
+	}
+
+	if (exit_code != NULL)
+		*exit_code = (int)(size_t)result;
+	return 0;
+}
+
+EVENTS_INLINE uintptr_t os_self() {
+	return (uintptr_t)pthread_self();
+}
+
+EVENTS_INLINE void os_exit(unsigned int exit_code) {
+	pthread_exit((void *)(intptr_t)exit_code);
+}
+
+EVENTS_INLINE int os_detach(os_thread_t t) {
+	return pthread_detach(t);
+}
+
+EVENTS_INLINE void os_cpumask_set(os_cpumask *mask, unsigned int i) {
+	CPU_SET(i, mask);
+}
+
+EVENTS_INLINE int os_affinity(os_thread_t t, const os_cpumask *mask) {
+#ifdef ANDROID
+	errno = ENOSYS;
+	return -1;
+#else
+	return pthread_setaffinity_np(t, sizeof(*mask), mask);
+#endif
+}
+
+EVENTS_INLINE int os_sleep(unsigned int msec) {
+	struct timespec ts = {
+		.tv_sec = msec / 1000,
+		.tv_nsec = (msec % 1000) * 1000000,
+	};
+	return nanosleep(&ts, NULL);
+}
+
+EVENTS_INLINE int os_geterror(void) {
+	return errno;
 }

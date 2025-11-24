@@ -73,13 +73,13 @@ sys_events_t sys_event;
 
 static EVENTS_INLINE void events_signal_set(void) {
 	events_sigblock;
-	sys_event.loop_signaled = true;
+	atomic_flag_test_and_set(&sys_event.loop_signaled);
 	events_sigunblock;
 }
 
 static EVENTS_INLINE void events_signal_clear(void) {
 	events_sigblock;
-	sys_event.loop_signaled = false;
+	atomic_flag_clear(&sys_event.loop_signaled);
 	events_sigunblock;
 }
 
@@ -178,9 +178,9 @@ int new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].process->fd = -1;
 		fdTable[index].process->env = NULL;
 		fdTable[index].process->detached = false;
-		fdTable[index].process->in = inherit;
-		fdTable[index].process->out = inherit;
-		fdTable[index].process->err = inherit;
+		fdTable[index].process->input = inherit;
+		fdTable[index].process->output = inherit;
+		fdTable[index].process->error = inherit;
 		fdTable[index].process->ps = INVALID_HANDLE_VALUE;
 	}
 
@@ -522,9 +522,9 @@ int os_iodispatch(int ms) {
 
 		/* call callback if descriptor still valid */
 		if (pOv && pOv->instance == fdTable[fd].instance) {
-			if (sys_event.loop_signaled) {
+			if (atomic_flag_load_explicit(&sys_event.loop_signaled, memory_order_relaxed)) {
 				events_signal_clear();
-				return -1;
+				return 0;
 			}
 
 			events_fd_t *target = events_target((fdTable[fd].type == FD_FILE_ASYNC ? fdTable[fd].fid.value : fd));
@@ -702,7 +702,7 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 
 	si.cb = sizeof(STARTUPINFO);
 	if (!i->detached) {
-		if (i->in != INVALID_HANDLE_VALUE || i->out != INVALID_HANDLE_VALUE || i->err != INVALID_HANDLE_VALUE) {
+		if (i->input != INVALID_HANDLE_VALUE || i->output != INVALID_HANDLE_VALUE || i->error != INVALID_HANDLE_VALUE) {
 			si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 			si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
 			si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
@@ -710,19 +710,19 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 			inherit_handles = 1;
 		}
 
-		if (i->in != inherit) {
-			si.hStdInput = i->in;
-			SetHandleInformation(i->in, HANDLE_FLAG_INHERIT, 1);
+		if (i->input != inherit) {
+			si.hStdInput = i->input;
+			SetHandleInformation(i->input, HANDLE_FLAG_INHERIT, 1);
 		}
 
-		if (i->out != inherit) {
-			si.hStdOutput = i->out;
-			SetHandleInformation(i->out, HANDLE_FLAG_INHERIT, 1);
+		if (i->output != inherit) {
+			si.hStdOutput = i->output;
+			SetHandleInformation(i->output, HANDLE_FLAG_INHERIT, 1);
 		}
 
-		if (i->err != inherit) {
-			si.hStdError = i->err;
-			SetHandleInformation(i->err, HANDLE_FLAG_INHERIT, 1);
+		if (i->error != inherit) {
+			si.hStdError = i->error;
+			SetHandleInformation(i->error, HANDLE_FLAG_INHERIT, 1);
 		}
 	}
 
@@ -761,13 +761,13 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_datached,
 		info->env = (const char **)str_slice(env, ";", NULL);
 
 	if (io_in != inherit)
-		info->in = io_in;
+		info->input = io_in;
 
 	if (io_out != inherit)
-		info->out = io_out;
+		info->output = io_out;
 
 	if (io_err != inherit)
-		info->err = io_err;
+		info->error = io_err;
 
 	info->fd = pseudofd;
 	return info;
@@ -850,6 +850,7 @@ EVENTS_INLINE sys_signal_t *events_signals(void) {
 
 int events_add_signal(int sig, sig_cb proc, void *data) {
 	int i;
+	atomic_thread_fence(memory_order_seq_cst);
 	for (i = 0; i < max_event_sig; i++) {
 		if (!events_sig[i].proc || events_sig[i].sig == sig)
 			break;
@@ -860,7 +861,6 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 			"Cannot install exception handler for signal no (%d), "
 			"too many signal exception handlers installed (max %d)\n",
 			sig, max_event_sig);
-		events_sigunblock;
 		return -1;
 	}
 
@@ -985,7 +985,7 @@ int socketpair(int domain, int type, int protocol, sockfd_t sockets[2]) {
 	 * that only sockets created by WSASocket() can be used as standard
 	 * file descriptors.
 	 */
-	listener = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, 0);
+	listener = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	if (listener < 0) {
 		return SOCKET_ERROR;
 	}
@@ -1076,4 +1076,162 @@ fail_win32_socketpair:
 	errno = saved_errno;
 
 	return SOCKET_ERROR;
+}
+
+#if defined(__TINYC__)
+EVENTS_INLINE int os_tls_alloc(tls_emulate_t *key, emulate_dtor dtor) {
+	if (!key) return -1;
+
+	return (pthread_key_create(key, dtor) == 0) ? 0 : -1;
+}
+
+EVENTS_INLINE void os_tls_free(tls_emulate_t key) {
+	void *ptr = os_tls_get(key);
+	if (ptr != NULL)
+		events_free(ptr);
+
+	pthread_key_delete(key);
+}
+
+EVENTS_INLINE void *os_tls_get(tls_emulate_t key) {
+	return pthread_getspecific(key);
+}
+
+EVENTS_INLINE int os_tls_set(tls_emulate_t key, void *val) {
+	return (pthread_setspecific(key, val) == 0) ? 0 : -1;
+}
+#elif defined(_WIN32_PLATFORM_X86)
+static struct impl_tls_dtor_entry {
+	tls_emulate_t key;
+	emulate_dtor dtor;
+} impl_emulate_dtorbl[EMULATED_THREADS_TSS_DTOR_SLOTS];
+
+static int impl_tls_dtor_register(tls_emulate_t key, emulate_dtor dtor) {
+	int i;
+	for (i = 0; i < EMULATED_THREADS_TSS_DTOR_SLOTS; i++) {
+		if (!impl_emulate_dtorbl[i].dtor)
+			break;
+	}
+
+	if (i == EMULATED_THREADS_TSS_DTOR_SLOTS)
+		return 1;
+
+	impl_emulate_dtorbl[i].key = key;
+	impl_emulate_dtorbl[i].dtor = dtor;
+
+	return 0;
+}
+
+static void impl_tls_dtor_invoke() {
+	int i;
+	for (i = 0; i < EMULATED_THREADS_TSS_DTOR_SLOTS; i++) {
+		if (impl_emulate_dtorbl[i].dtor) {
+			void *val = os_tls_get(impl_emulate_dtorbl[i].key);
+			if (val) {
+				(impl_emulate_dtorbl[i].dtor)(val);
+			}
+		}
+	}
+}
+
+int os_tls_alloc(tls_emulate_t *key, emulate_dtor dtor) {
+	if (!key) return -1;
+
+	*key = TlsAlloc();
+	if (dtor) {
+		if (impl_tls_dtor_register(*key, dtor)) {
+			TlsFree(*key);
+			return -1;
+		}
+	}
+
+	return (*key != 0xFFFFFFFF) ? 0 : -1;
+}
+
+EVENTS_INLINE void os_tls_free(tls_emulate_t key) {
+	TlsFree(key);
+}
+
+EVENTS_INLINE void *os_tls_get(tls_emulate_t key) {
+	return TlsGetValue(key);
+}
+
+EVENTS_INLINE int os_tls_set(tls_emulate_t key, void *val) {
+	return TlsSetValue(key, val) ? 0 : -1;
+}
+#else
+EVENTS_INLINE int os_tls_alloc(tls_emulate_t *key, emulate_dtor dtor) {
+	if (!key) return -1;
+
+	*key = FlsAlloc(dtor);
+	return (*key != 0xFFFFFFFF) ? 0 : -1;
+}
+
+EVENTS_INLINE void os_tls_free(tls_emulate_t key) {
+	tls_emulate_t temp = key;
+	if (key != 0) {
+		key = 0;
+		FlsFree(temp);
+	}
+}
+
+EVENTS_INLINE void *os_tls_get(tls_emulate_t key) {
+	return FlsGetValue(key);
+}
+
+EVENTS_INLINE int os_tls_set(tls_emulate_t key, void *val) {
+	return FlsSetValue(key, val) ? 0 : -1;
+}
+#endif
+
+EVENTS_INLINE os_thread_t os_create(os_thread_proc proc, void *param) {
+	uintptr_t thrd = _beginthreadex(NULL, 0, (_beginthreadex_proc_type)proc, param, 0, NULL);
+	return thrd == 0 ? NULL : (os_thread_t)thrd;
+}
+
+EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code) {
+	int r = WaitForSingleObject(t, timeout_ms);
+
+	if (r == WAIT_OBJECT_0) {
+
+		if (exit_code != NULL)
+			GetExitCodeThread(t, (DWORD *)exit_code);
+
+		CloseHandle(t);
+		return 0;
+
+	} else if (r == WAIT_TIMEOUT) {
+		SetLastError(ETIMEDOUT);
+	}
+
+	return -1;
+}
+
+EVENTS_INLINE void os_exit(unsigned int exit_code) {
+	_endthreadex(exit_code);
+}
+
+EVENTS_INLINE int os_detach(os_thread_t t) {
+	return 0 == CloseHandle(t);
+}
+
+EVENTS_INLINE void os_cpumask_set(os_cpumask *mask, unsigned int i) {
+	mask->value |= ((size_t)1 << i);
+}
+
+EVENTS_INLINE int os_affinity(os_thread_t t, const os_cpumask *mask) {
+	return (0 == SetThreadAffinityMask(t, mask->value));
+}
+
+EVENTS_INLINE int os_sleep(unsigned int msec) {
+	Sleep(msec);
+	return 0;
+}
+
+EVENTS_INLINE uintptr_t os_self(void) {
+	return (uintptr_t)((void *)NtCurrentTeb());
+}
+
+EVENTS_INLINE int os_geterror(void) {
+	return GetLastError();
 }
