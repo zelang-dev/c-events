@@ -101,6 +101,7 @@ struct sys_events_s {
   	/* read only */
 	void *_fds_free_addr;
 	int max_fd;
+	size_t cpu_count;
 	size_t queue_size;
 	size_t timeout_vec_size; /* #of elements in events_t.timeout.vec[0] */
 	size_t timeout_vec_of_vec_size; /* ... in timeout.vec_of_vec[0] */
@@ -222,6 +223,7 @@ struct events_task_s {
 	void *args;
 	void *user_data;
 	values_t *results;
+	char name[256];
 };
 
 struct execinfo_s {

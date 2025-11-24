@@ -44,6 +44,7 @@ typedef enum {
 	TASK_NORMAL,   /* The coroutine is active but not running (that is, it has switch to another coroutine, suspended). */
 	TASK_RUNNING,  /* The coroutine is active and running. */
 	TASK_SUSPENDED, /* The coroutine is suspended (in a startup, or it has not started running yet). */
+	TASK_SLEEPING, /* The coroutine is sleeping and scheduled to run later. */
 	TASK_FINISH, /* The coroutine has completed and returned. */
 	TASK_EVENT, /* The coroutine is in an Event Loop callback. */
 } task_states;

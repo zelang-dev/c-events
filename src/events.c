@@ -189,6 +189,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 	atomic_init(&sys_event.fds, fds);
 	atexit(events_deinit);
 	sys_event.max_fd = max_fd;
+	sys_event.cpu_count = tasks_cpu_count();
 	sys_event.queue_size = data_queue_size();
 	sys_event.timeout_vec_size = EVENTS_RND_UP(sys_event.max_fd, EVENTS_SIMD_BITS) / EVENTS_SHORT_BITS;
 	sys_event.timeout_vec_of_vec_size = EVENTS_RND_UP(sys_event.timeout_vec_size, EVENTS_SIMD_BITS)
@@ -906,12 +907,12 @@ EVENTS_INLINE void task_info(tasks_t *t, int pos) {
 
 	char line[256];
 	snprintf(line, 256, CLR_LN"\r\033[%dA", pos);
-	fprintf(stderr, "\t\t - Thrd #%zx, id: %u cid: %u (%s)%s cycles: %zu%s",
+	fprintf(stderr, "\t\t - Thrd #%zx, id: %u cid: %u (%s) %s cycles: %zu%s",
 		os_self(),
 		t->tid,
 		t->cid,
+		(t->name != NULL && t->cid > 0 ? t->name : ""),
 		task_state(t->status),
-		(!t->referenced ? "" : " referenced"),
 		t->cycles,
 		(line_end ? ""CLR_LN : line)
 	);
@@ -945,6 +946,11 @@ static void *task_wait_system(void *v) {
 	(void)v;
 
 	task_system();
+	if (__thread()->is_main)
+		task_name("task_wait_system");
+	else
+		task_name("task_wait_system #%d", (int)__thread()->thrd_id);
+
 	while (!__thread()->exiting) {
 		__thread()->active_timer++;
 		/* let everyone else run */
@@ -961,8 +967,14 @@ static void *task_wait_system(void *v) {
 				__thread()->task_count--;
 
 			if (!t->halt) {
+				t->status = TASK_NORMAL;
 				l = __thread()->run_queue;
 				enqueue(l, t);
+				if (t->context != NULL) {
+					t = t->context;
+					t->context = NULL;
+					enqueue(l, t);
+				}
 			}
 		}
 	}
@@ -987,6 +999,7 @@ static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, unsign
 
 	t = context;
 	t->alarm_time = when;
+	t->status = TASK_SLEEPING;
 	if (t->prev)
 		t->prev->next = t;
 	else
@@ -1028,7 +1041,9 @@ EVENTS_INLINE void task_switch(tasks_t *handle) {
 	__thread()->active_handle = handle;
 	__thread()->active_handle->status = TASK_RUNNING;
 	__thread()->current_handle = coro_previous_handle;
-	__thread()->current_handle->status = TASK_NORMAL;
+	if (__thread()->current_handle->status != TASK_SLEEPING)
+		__thread()->current_handle->status = TASK_NORMAL;
+
 	SwitchToFiber(handle->type->fiber);
 }
 
@@ -1282,9 +1297,15 @@ EVENTS_INLINE task_group_t *task_group(void) {
 }
 
 array_t tasks_wait(task_group_t *wg) {
+	if (!__thread()->started && __thread()->is_main) {
+		__thread()->started = true;
+		task_name("main_task");
+	}
+
 	tasks_t *worker, *t = active_task();
 	tasklist_t *l = __thread()->run_queue;
 	array_t wgr = NULL;
+	bool is_sleeping = false;
 	if (t->group_active && t->task_group == wg) {
 		t->group_active = false;
 		t->group_finish = true;
@@ -1302,8 +1323,13 @@ array_t tasks_wait(task_group_t *wg) {
 					worker->waiting = false;
 					task_delete(worker);
 				} else {
-					if (worker->status == TASK_NORMAL)
+					if (worker->status == TASK_NORMAL) {
 						enqueue(l, worker);
+					} else if (worker->status == TASK_SLEEPING) {
+						is_sleeping = true;
+						worker->context = __thread()->running;
+						suspend_task();
+					}
 
 					task_info(t, 1);
 					yield_task();
@@ -1312,11 +1338,11 @@ array_t tasks_wait(task_group_t *wg) {
 			itask = 0;
 		}
 
-		yield_task();
 		t->result_group = wgr;
-		data_delete(wg->group);
+		$delete(wg->group);
 		events_free(wg);
-		__thread()->task_count--;
+		if (!is_sleeping)
+			__thread()->task_count--;
 	}
 
 	return wgr;
@@ -1325,11 +1351,9 @@ array_t tasks_wait(task_group_t *wg) {
 EVENTS_INLINE void async_run(events_t *loop) {
 	int status;
 	do {
-		if (__thread()->task_count == 0)
+		if (!__thread()->task_count	|| (status = tasks_schedulering(true)) == TASK_ERRED)
 			break;
-
-		status = tasks_schedulering(true);
-	} while (events_is_running(loop) && !status);
+	} while (is_ptr_usable(loop) || (!events_shutdown_set && !events_got_signal));
 }
 
 EVENTS_INLINE void suspend_task(void) {
@@ -1372,6 +1396,14 @@ EVENTS_INLINE size_t tasks_cpu_count(void) {
 }
 #endif
 
+void task_name(char *fmt, ...) {
+	va_list args;
+	tasks_t *t = __thread()->running;
+	va_start(args, fmt);
+	vsnprintf(t->name, sizeof(t->name), fmt, args);
+	va_end(args);
+}
+
 static EVENTS_INLINE void task_gc(tasks_t *co) {
 	atomic_lock(&sys_event.lock);
 	if (sys_event.gc == NULL)
@@ -1384,7 +1416,6 @@ static EVENTS_INLINE void task_gc(tasks_t *co) {
 }
 
 static int tasks_schedulering(bool do_io) {
-	__thread()->started = true;
 	bool has_task = false;
 	tasks_t *t = task_dequeue(__thread()->run_queue);
 	if (t != NULL) {
@@ -1394,7 +1425,7 @@ static int tasks_schedulering(bool do_io) {
 
 		__thread()->num_others_ran++;
 		__thread()->running = t;
-		if (do_io) {
+		if (do_io && __thread()->loop != NULL) {
 			__thread()->in_callback++;
 			events_once(__thread()->loop, 0);
 			__thread()->in_callback--;

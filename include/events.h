@@ -288,6 +288,7 @@ C_API unsigned int task_id(void);
 C_API bool task_is_ready(unsigned int id);
 C_API bool task_is_terminated(tasks_t *);
 C_API void task_info(tasks_t *t, int pos);
+C_API void task_name(char *fmt, ...);
 C_API size_t tasks_cpu_count(void);
 C_API void tasks_stack_check(int n);
 
