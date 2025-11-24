@@ -41,7 +41,7 @@ TEST(data_of) {
 	ASSERT_TRUE(($size(d) == 8));
 	ASSERT_EQ(256, d[7].integer);
 
-	$erase(d);
+	$delete(d);
 	ASSERT_FALSE(is_data(d));
 
 	return 0;

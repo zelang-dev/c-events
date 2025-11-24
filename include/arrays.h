@@ -134,7 +134,7 @@ C_API bool is_ptr_usable(void *self);
 #define $shift(arr) 					data_shift((array_t)arr)
 #define $reset(arr) 					data_reset((array_t)arr)
 #define $size(arr) 						data_size((array_t)arr)
-#define $erase(arr) 					data_delete((array_t)arr)
+#define $delete(arr) 					data_delete((array_t)arr)
 #define $capacity(arr) 					data_capacity((array_t)arr)
 #endif
 

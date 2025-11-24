@@ -7,6 +7,7 @@ set(TARGET_LIST
  test-task_group
  test-thread
  test-time
+ test-tls_static
 )
 
 foreach (TARGET ${TARGET_LIST})

@@ -661,6 +661,9 @@ C_API uintptr_t os_self();
 
 /** Suspend the thread for the specified time. */
 C_API int os_sleep(unsigned int msec);
+
+/** Exit current thread with `result` code. */
+C_API void os_exit(unsigned int exit_code);
 C_API int os_geterror(void);
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */
