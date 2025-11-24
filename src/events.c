@@ -1106,8 +1106,8 @@ static tasks_t *task_derive(void *co, size_t stack_size) {
 	}
 
 	ctx->uc_link = (ucontext_t *)__thread()->main_handle;
-	ctx->uc_stack.ss_sp = (unsigned char *)co;
-	ctx->uc_stack.ss_size = size;
+	ctx->uc_stack.ss_sp = (unsigned char *)co + 8;
+	ctx->uc_stack.ss_size = size - 64;
 	makecontext(ctx, (void (*)(void))task_func, 0);
 
 	return (tasks_t *)co;
