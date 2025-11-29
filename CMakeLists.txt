@@ -34,7 +34,8 @@ set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
 
 set(ev_sources
 	${CMAKE_CURRENT_SOURCE_DIR}/src/events.c
-	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c)
+	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/os_async.c)
 if(WIN32)
 	set(ev_sources ${ev_sources}
 	${CMAKE_CURRENT_SOURCE_DIR}/src/os_windows.c

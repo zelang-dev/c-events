@@ -10,6 +10,7 @@ set(TARGET_LIST
 	task_group
 	task_multi-args
 	task_sleep
+	dns_ip
 )
 
 foreach (TARGET ${TARGET_LIST})

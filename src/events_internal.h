@@ -64,6 +64,43 @@ enum {
  */
 typedef char events_cacheline_t[__ATOMIC_CACHE_LINE];
 
+make_atomic(tasks_t *, atomic_tasks_t)
+typedef struct {
+	atomic_size_t size;
+	atomic_tasks_t buffer[];
+} deque_array_t;
+make_atomic(deque_array_t *, atomic_task_array_t)
+
+typedef struct events_deque_s {
+	data_types type;
+	os_thread_t thread;
+	array_t jobs;
+	events_t *loop;
+	events_cacheline_t _pad;
+	atomic_flag started, shutdown;
+	atomic_size_t available, top, bottom;
+	atomic_task_array_t array;
+} events_deque_t;
+
+struct _thread_worker {
+	data_types type;
+	int id;
+	events_t *loop;
+	events_deque_t *queue;
+	atomic_spinlock mutex;
+	char buffer[MAX_PATH];
+};
+
+struct _request_worker {
+	data_types type;
+	int id;
+	param_t args;
+	param_func_t func;
+	data_values_t result[1];
+	atomic_spinlock mutex;
+	atomic_flag done;
+};
+
 struct sys_signal_s {
 	int sig;
 	bool is_running;
@@ -76,6 +113,7 @@ typedef struct results_data {
 	data_types type;
 	int id;
 	bool is_ready;
+	bool is_terminated;
 	values_t result;
 } _results_data_t, *results_data_t;
 make_atomic(results_data_t, atomic_results_t)
@@ -115,6 +153,7 @@ struct sys_events_s {
 	filefd_t pHandle;
 	char pNamed[FILENAME_MAX];
 	array_t gc;
+	events_deque_t **local;
 	events_cacheline_t pad;
 	atomic_spinlock lock;
 	atomic_flag loop_signaled;
@@ -218,7 +257,7 @@ struct events_task_s {
 	tasks_t *prev;
 	tasks_t *context;
 	task_group_t *task_group;
-	array_t result_group;
+	array_t garbage;
 	data_func_t func;
 	void *args;
 	void *user_data;
@@ -236,19 +275,14 @@ struct execinfo_s {
 #endif
 	/* Set working directory */
 	const char *workdir;
-
 	/* List of environment variables */
 	const char **env;
-
 	/* Create detached background process */
 	bool detached;
-
 	/* Standard file descriptors */
 	filefd_t input, output, error;
-
 	/* child process id */
 	process_t ps;
-
 	/* child pseudo fd */
 	sockfd_t fd;
 };
@@ -278,6 +312,22 @@ void *events_calloc(size_t count, size_t size);
 void *events_malloc(size_t size);
 void *events_realloc(void *ptr, size_t size);
 void events_free(void *ptr);
+
+unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of_args, ...);
+unsigned int async_task_loop(events_t *loop, size_t heapsize, param_func_t fn, unsigned int num_of_args, ...);
+void thread_result_set(os_request_t *p, void *res);
+void thread_request_enqueue(os_worker_t *j, os_request_t *r);
+unsigned int task_push(tasks_t *t, bool is_thread);
+tasks_t *create_task(size_t heapsize, data_func_t func, void *args);
+
+void deque_init(events_deque_t *q, int size_hint);
+void deque_resize(events_deque_t *q);
+tasks_t *deque_take(events_deque_t *q);
+tasks_t *deque_steal(events_deque_t *q);
+tasks_t *deque_peek(events_deque_t *q, int index);
+void deque_push(events_deque_t *q, tasks_t *w);
+void deque_free(events_deque_t *q);
+void deque_destroy(void);
 
 #ifdef __cplusplus
 }

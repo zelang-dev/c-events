@@ -195,6 +195,8 @@ typedef struct actors_s actor_t;
 typedef struct timerlist_s timerlist_t;
 typedef struct sys_events_s sys_events_t;
 typedef struct sys_signal_s sys_signal_t;
+typedef struct _thread_worker os_worker_t;
+typedef struct _request_worker os_request_t;
 typedef void *(*malloc_func)(size_t);
 typedef void *(*realloc_func)(void *, size_t);
 typedef void *(*calloc_func)(size_t, size_t);
@@ -280,6 +282,7 @@ C_API void yield_task(void);
 C_API void suspend_task(void);
 C_API unsigned int sleep_task(unsigned int ms);
 C_API unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...);
+C_API values_t await_for(unsigned int id);
 C_API void async_run(events_t *loop);
 C_API values_t results_for(unsigned int id);
 C_API task_group_t *task_group(void);
@@ -292,8 +295,13 @@ C_API void task_name(char *fmt, ...);
 C_API size_t tasks_cpu_count(void);
 C_API void tasks_stack_check(int n);
 
+C_API os_worker_t *events_addthreads_loop(events_t *loop);
+C_API os_worker_t *events_addtasks_loop(events_t *loop);
+
+C_API unsigned int queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...);
+C_API char *async_gethostbyname(os_worker_t *thrd, char *hostname);
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* _EVENTS_H */
+#endif

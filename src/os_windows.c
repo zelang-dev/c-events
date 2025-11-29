@@ -1186,7 +1186,7 @@ EVENTS_INLINE int os_tls_set(tls_emulate_t key, void *val) {
 
 EVENTS_INLINE os_thread_t os_create(os_thread_proc proc, void *param) {
 	uintptr_t thrd = _beginthreadex(NULL, 0, (_beginthreadex_proc_type)proc, param, 0, NULL);
-	return thrd == 0 ? NULL : (os_thread_t)thrd;
+	return thrd == 0 ? OS_NULL : (os_thread_t)thrd;
 }
 
 EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code) {
@@ -1194,7 +1194,7 @@ EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code
 
 	if (r == WAIT_OBJECT_0) {
 
-		if (exit_code != NULL)
+		if (exit_code != OS_NULL)
 			GetExitCodeThread(t, (DWORD *)exit_code);
 
 		CloseHandle(t);

@@ -509,7 +509,7 @@ EVENTS_INLINE os_thread_t os_create(os_thread_proc proc, void *param) {
 	pthread_attr_t *pattr = NULL;
 
 	if (0 != pthread_create(&t, pattr, (start_routine)(void *)proc, param))
-		t = 0;
+		t = OS_NULL;
 
 end:
 	if (pattr != NULL)

@@ -8,6 +8,7 @@ set(TARGET_LIST
  test-thread
  test-time
  test-tls_static
+ test-queue_work
 )
 
 foreach (TARGET ${TARGET_LIST})

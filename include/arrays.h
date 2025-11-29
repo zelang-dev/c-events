@@ -45,7 +45,12 @@ typedef enum {
 	DATA_OBJ,
 	DATA_PTR,
 	DATA_FUNC,
-	DATA_ARRAY
+	DATA_ARRAY,
+	DATA_DEQUE,
+	DATA_UDP,
+	DATA_TCP,
+	DATA_PIPE,
+	DATA_FILE,
 } data_types;
 
 /* Generic simple union storage types. */
@@ -68,6 +73,7 @@ typedef union {
 	signed char schar;
 	unsigned char uchar;
 	char *char_ptr;
+	const char *const_char_ptr;
 	void *object;
 	ptrdiff_t **array;
 	char **array_char;
@@ -118,6 +124,7 @@ C_API size_t data_queue_size(void);
 C_API bool is_data(void *);
 C_API data_types data_type(void *self);
 C_API bool is_ptr_usable(void *self);
+C_API bool defer_free(void *data);
 
 #ifndef $append
 #define $append(arr, value) 			data_append((array_t)arr, (void *)value)
@@ -129,6 +136,7 @@ C_API bool is_ptr_usable(void *self);
 #define $append_char(arr, value) 		data_append_item((array_t)arr, DATA_CHAR, (char)value)
 #define $append_bool(arr, value) 		data_append_item((array_t)arr, DATA_BOOL, (bool)value)
 #define $append_short(arr, value) 		data_append_item((array_t)arr, DATA_SHORT, (short)value)
+#define $copy(des, src) 				data_copy((array_t)des, (array_t)src)
 #define $remove(arr, index) 			data_remove((array_t)arr, index)
 #define $pop(arr) 						data_pop((array_t)arr)
 #define $shift(arr) 					data_shift((array_t)arr)

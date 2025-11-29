@@ -34,12 +34,12 @@
 
 #ifndef TASK_STACK_SIZE
 /* Stack size when creating a coroutine. */
-#   define TASK_STACK_SIZE (16 * 1024)
+#   define TASK_STACK_SIZE (8 * 1024)
 #endif
 
 /* Events task status states. */
 typedef enum {
-	TASK_ERRED = -1, /* The task has erred. */
+	TASK_ERRED = DATA_INVALID, /* The task has erred. */
 	TASK_DEAD, /* The coroutine is uninitialized or deleted. */
 	TASK_NORMAL,   /* The coroutine is active but not running (that is, it has switch to another coroutine, suspended). */
 	TASK_RUNNING,  /* The coroutine is active and running. */
@@ -48,6 +48,13 @@ typedef enum {
 	TASK_FINISH, /* The coroutine has completed and returned. */
 	TASK_EVENT, /* The coroutine is in an Event Loop callback. */
 } task_states;
+
+typedef enum {
+	ASYNC_UDP = DATA_UDP,
+	ASYNC_TCP,
+	ASYNC_PIPE,
+	ASYNC_FILE,
+} async_types;
 
 typedef void (*os_cb)(intptr_t file, int bytes, void *data);
 typedef void (*sigcall_t)(void);
@@ -86,6 +93,7 @@ typedef void (*emulate_dtor)(void *);
 typedef void(__stdcall *emulate_dtor)(PVOID lpFlsData);
 #endif
 #define inherit  INVALID_HANDLE_VALUE
+#define OS_NULL  NULL
 
 /* Type used for the number of file descriptors. */
 typedef unsigned long int nfds_t;
@@ -177,6 +185,9 @@ typedef unsigned long int nfds_t;
 #		define SOCK_CLOEXEC            0x8000  /* set FD_CLOEXEC */
 #		define SOCK_NONBLOCK           0x4000  /* set O_NONBLOCK */
 #	endif
+#ifdef __ANDROID__
+typedef uint16_t in_port_t;
+#endif
 #ifndef poll
 #	define poll	posix_poll
 #endif
@@ -192,6 +203,7 @@ typedef pid_t process_t;
 typedef pthread_key_t tls_emulate_t;
 typedef void (*emulate_dtor)(void *);
 #define inherit  -1
+#define OS_NULL  0
 #endif
 
 #ifndef STDIN_FILENO
@@ -666,6 +678,7 @@ C_API int os_sleep(unsigned int msec);
 /** Exit current thread with `result` code. */
 C_API void os_exit(unsigned int exit_code);
 C_API int os_geterror(void);
+
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */
 #endif

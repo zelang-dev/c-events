@@ -88,12 +88,15 @@ typedef struct {
 tls_static(events_thread_t, __thread, NULL)
 
 static void __thread_init(bool is_main, unsigned int thread_id);
+static int __thread_wrapper(void *arg);
+static int __main_wrapper(void *arg);
 static void task_switch(tasks_t *co);
 static void task_scheduler_switch(void);
 static int tasks_schedulering(bool do_io);
-static unsigned int task_push(tasks_t *t);
 static void *task_wait_system(void *v);
-static tasks_t *create_task(size_t heapsize, data_func_t func, void *args);
+static void defer_cleanup(tasks_t *t);
+
+#include "deque.c"
 
 #ifdef MPROTECT
 alignas(4096)
@@ -191,6 +194,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 	sys_event.max_fd = max_fd;
 	sys_event.cpu_count = tasks_cpu_count();
 	sys_event.queue_size = data_queue_size();
+	sys_event.local = NULL;
 	sys_event.timeout_vec_size = EVENTS_RND_UP(sys_event.max_fd, EVENTS_SIMD_BITS) / EVENTS_SHORT_BITS;
 	sys_event.timeout_vec_of_vec_size = EVENTS_RND_UP(sys_event.timeout_vec_size, EVENTS_SIMD_BITS)
 		/ EVENTS_SHORT_BITS;
@@ -203,6 +207,8 @@ EVENTS_INLINE int events_init(int max_fd) {
 #endif
 
 	__thread_init(true, 0);
+	sys_event.local = (events_deque_t **)events_realloc(sys_event.local,
+		(sys_event.cpu_count + 1) * sizeof(sys_event.local[0]));
 	return 0;
 }
 
@@ -212,6 +218,21 @@ EVENTS_INLINE void events_deinit(void) {
 		return;
 
 	events_shutdown_set = true;
+	deque_destroy();
+	if (sys_event.gc != NULL) {
+		foreach(t in sys_event.gc) {
+			if (((tasks_t *)t.object)->magic_number == TASK_MAGIC_NUMBER) {
+#if defined(_WIN32) && defined(USE_FIBER)
+				DeleteFiber(((tasks_t *)t.object)->type->fiber);
+#endif
+				events_free((tasks_t *)t.object);
+			}
+		}
+
+		$delete(sys_event.gc);
+		sys_event.gc = NULL;
+	}
+
 	if (__thread()->sleep_handle != NULL
 		&& __thread()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
 #if defined(_WIN32) && defined(USE_FIBER)
@@ -226,7 +247,6 @@ EVENTS_INLINE void events_deinit(void) {
 	sys_event.max_fd = 0;
 	atomic_init(&sys_event.fds, NULL);
 	atomic_init(&sys_event.num_loops, 0);
-
 	results_data_t *r = atomic_get(results_data_t *, &sys_event.results);
 	if (r != NULL) {
 		size_t i, count = atomic_load(&sys_event.result_id_generate);
@@ -805,7 +825,7 @@ static void __thread_init(bool is_main, unsigned int thread_id) {
 	__thread()->current_handle = NULL;
 	__thread()->main_handle = NULL;
 	__thread()->loop = NULL;
-	__thread()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL)) >= 0;
+	__thread()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL), !__thread()->is_main) >= 0;
 }
 
 static EVENTS_INLINE void task_scheduler_switch(void) {
@@ -842,22 +862,40 @@ static void task_delete(tasks_t *co) {
 	}
 }
 
-static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
-	if (data != NULL && is_ptr_usable(co) && co->rid != DATA_INVALID) {
-		unsigned int id = co->rid;
-		results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
-		atomic_thread_fence(memory_order_seq_cst);
-		results[id]->result.object = data;
-		results[id]->is_ready = true;
-		co->results = &results[id]->result;
-		atomic_store_explicit(&sys_event.results, results, memory_order_release);
-	} else if (is_ptr_usable(co)) {
-		co->status = TASK_FINISH;
+static EVENTS_INLINE void defer_cleanup(tasks_t *t) {
+	if (t->garbage != NULL) {
+		foreach(arr in t->garbage) {
+			if (is_ptr_usable(arr.object)) {
+				if (is_data(arr.object))
+					$delete(arr.object);
+				else if (arr.object != NULL)
+					events_free(arr.object);
+			}
+		}
+
+		$delete(t->garbage);
+		t->garbage = NULL;
 	}
 }
 
+static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
+	results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
+	if (data != NULL && is_ptr_usable(co)) {
+		atomic_thread_fence(memory_order_seq_cst);
+		results[co->rid]->result.object = data;
+		results[co->rid]->is_ready = true;
+		co->results = &results[co->rid]->result;
+	}
+
+	if (is_ptr_usable(co)) {
+		results[co->rid]->is_terminated = true;
+		co->status = TASK_FINISH;
+	}
+	atomic_store_explicit(&sys_event.results, results, memory_order_release);
+}
+
 /* called only if tasks_t func returns */
-static void task_done(void) {
+static EVENTS_INLINE void task_done(void) {
 	active_task()->halt = true;
 	active_task()->status = TASK_DEAD;
 	task_scheduler_switch();
@@ -868,11 +906,10 @@ static void task_awaitable(void) {
 	param_t args = (param_t)co->args;
 	tasks_result_set(co, co->func(args));
 	data_delete(args);
-	if (co->result_group != NULL)
-		data_delete(co->result_group);
+	defer_cleanup(co);
 }
 
-static void task_func(void) {
+static EVENTS_INLINE void task_func(void) {
 	task_awaitable();
 	task_done(); /* called only if coroutine function returns */
 }
@@ -1062,7 +1099,9 @@ static EVENTS_INLINE void task_switch(tasks_t *co) {
 		__thread()->active_handle->status = TASK_RUNNING;
 		__thread()->current_handle = task_previous_handle;
 		__thread()->active_sig_handle = __thread()->current_handle;
-		__thread()->current_handle->status = TASK_NORMAL;
+		if (__thread()->current_handle->status != TASK_SLEEPING)
+			__thread()->current_handle->status = TASK_NORMAL;
+
 		siglongjmp(((coroutine_t *)__thread()->active_handle)->sig_ctx, 1);
 	}
 }
@@ -1134,7 +1173,9 @@ static EVENTS_INLINE void task_switch(tasks_t *co) {
 	__thread()->active_handle = co;
 	__thread()->active_handle->status = TASK_RUNNING;
 	__thread()->current_handle = task_previous_handle;
-	__thread()->current_handle->status = TASK_NORMAL;
+	if (__thread()->current_handle->status != TASK_SLEEPING)
+		__thread()->current_handle->status = TASK_NORMAL;
+
 	if (swapcontext((ucontext_t *)__thread()->current_handle, (ucontext_t *)__thread()->active_handle))
 		perror("Error! `swapcontext`");
 }
@@ -1156,6 +1197,7 @@ static results_data_t tasks_create_result(void) {
 		results = events_realloc(results, (id + sys_event.queue_size) * sizeof(results[0]));
 
 	result->is_ready = false;
+	result->is_terminated = false;
 	result->id = id;
 	result->result.object = NULL;
 	result->type = DATA_OBJ;
@@ -1170,7 +1212,7 @@ static EVENTS_INLINE size_t _tasks_align_forward(size_t addr, size_t align) {
 }
 
 /* Create new task. */
-static tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
+tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	void *memory = NULL;
 	tasks_t *co = NULL;
 	/* Stack size should be at least `TASK_STACK_SIZE`. */
@@ -1206,7 +1248,7 @@ static tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	co->user_data = NULL;
 	co->context = NULL;
 	co->task_group = NULL;
-	co->result_group = NULL;
+	co->garbage = NULL;
 	co->stack_size = heapsize + sizeof(_results_data_t);
 	co->stack_base = (unsigned char *)(co + 1);
 	co->magic_number = TASK_MAGIC_NUMBER;
@@ -1214,12 +1256,14 @@ static tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	return co;
 }
 
-static EVENTS_INLINE unsigned int task_push(tasks_t *t) {
+unsigned int task_push(tasks_t *t, bool is_thread) {
 	if (t && t->status == TASK_SUSPENDED && t->cid == DATA_INVALID) {
 		tasks_t *c = active_task();
 		t->cid = (unsigned int)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
 		t->rid = tasks_create_result()->id;
-		t->tid = __thread()->thrd_id;
+		if (!is_thread)
+			t->tid = __thread()->thrd_id;
+
 		if (c->group_active && c->task_group != NULL && !c->group_finish) {
 			t->waiting = true;
 			$append(c->task_group->group, t);
@@ -1243,6 +1287,13 @@ EVENTS_INLINE bool task_is_terminated(tasks_t *co) {
 	return co->halt;
 }
 
+EVENTS_INLINE values_t await_for(unsigned int id) {
+	while (!task_result_get(id)->is_terminated)
+		yield_task();
+
+	return results_for(id);
+}
+
 EVENTS_INLINE bool task_is_ready(unsigned int id) {
 	return task_result_get(id)->is_ready;
 }
@@ -1259,6 +1310,23 @@ EVENTS_INLINE values_t results_for(unsigned int id) {
 	return data_values_empty->value;
 }
 
+bool defer_free(void *data) {
+	tasks_t *t = NULL;
+	if (data == NULL)
+		return false;
+
+	if (__thread()->running != NULL)
+		t = __thread()->running;
+	else
+		t = active_task();
+
+	if (t->garbage == NULL)
+		t->garbage = array();
+
+	$append(t->garbage, data);
+	return true;
+}
+
 EVENTS_INLINE tasks_t *active_task(void) {
 	if (!__thread()->active_handle) {
 		__thread()->active_handle = __thread()->active_buffer;
@@ -1271,6 +1339,16 @@ EVENTS_INLINE tasks_t *active_task(void) {
 	return __thread()->active_handle;
 }
 
+static unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of_args, ...) {
+	va_list ap;
+
+	va_start(ap, num_of_args);
+	param_t params = data_ex(num_of_args, ap);
+	va_end(ap);
+
+	return task_push(create_task(heapsize, (data_func_t)fn, params), false);
+}
+
 unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...) {
 	va_list ap;
 
@@ -1278,7 +1356,7 @@ unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...) {
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	return task_push(create_task(Kb(18), (data_func_t)fn, params));
+	return task_push(create_task(Kb(18), (data_func_t)fn, params), false);
 }
 
 static EVENTS_INLINE task_group_t *create_task_group(void) {
@@ -1309,7 +1387,6 @@ array_t tasks_wait(task_group_t *wg) {
 	if (t->group_active && t->task_group == wg) {
 		t->group_active = false;
 		t->group_finish = true;
-		t->task_group = NULL;
 		wgr = array();
 		yield_task();
 		while ($size(wg->group) > 0) {
@@ -1338,7 +1415,7 @@ array_t tasks_wait(task_group_t *wg) {
 			itask = 0;
 		}
 
-		t->result_group = wgr;
+		defer_free(wgr);
 		$delete(wg->group);
 		events_free(wg);
 		if (!is_sleeping)
@@ -1448,5 +1525,145 @@ static int tasks_schedulering(bool do_io) {
 		}
 	}
 
-	return has_task ? 0 : -1;
+	return has_task ? 0 : TASK_ERRED;
+}
+
+static bool task_take(events_deque_t *queue) {
+	int i, available;
+	tasklist_t *l = __thread()->run_queue;
+	bool work_taken = false;
+	atomic_thread_fence(memory_order_seq_cst);
+	if ((available = (int)atomic_load_explicit(&queue->available, memory_order_relaxed)) > 0) {
+		for (i = 0; i < available; i++) {
+			tasks_t *t = deque_steal(queue);
+			if (t == TASK_ABORT_T) {
+				--i;
+				continue;
+			} else if (t == TASK_EMPTY_T)
+				break;
+
+			atomic_fetch_sub(&queue->available, 1);
+			enqueue(l, t);
+			__thread()->task_count++;
+			work_taken = true;
+		}
+	}
+
+	return work_taken;
+}
+
+void thread_result_set(os_request_t *p, void *res) {
+	atomic_lock(&p->mutex);
+	if (res != NULL) {
+		if (is_data(res)) {
+			p->result->value.object = data_copy((array_t)p->result->extended, res);
+		} else {
+			p->result->value.object = res;
+		}
+	}
+	atomic_unlock(&p->mutex);
+	atomic_flag_test_and_set(&p->done);
+}
+
+static void worker_enqueue(tasks_t *t) {
+	atomic_thread_fence(memory_order_acquire);
+	//atomic_lock(&sys_event.lock);
+	events_deque_t *queue = sys_event.local[t->tid];
+	deque_push(queue, t);
+	//atomic_unlock(&sys_event.lock);
+	atomic_fetch_add(&queue->available, 1);
+	atomic_thread_fence(memory_order_release);
+}
+
+static void *__worker_tasks_main(param_t *args) {
+	events_deque_t *queue = args[0]->object;
+	events_t *loop = args[1]->object;
+	__thread()->started = true;
+
+	task_name("worker_tasks_main #%d", (int)__thread()->thrd_id);
+	task_info(active_task(), -1);
+	task_take(queue);
+
+	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
+		if (__thread()->task_count > 1 || __thread()->loop != NULL) {
+			yield_task();
+		} else {
+			break;
+		}
+
+		task_info(active_task(), 1);
+		task_take(queue);
+	}
+
+	__thread()->loop = NULL;
+	return 0;
+}
+
+static int __worker_tasks_wrapper(void *arg) {
+	os_worker_t *work = (os_worker_t *)arg;
+	events_deque_t *queue = work->queue;
+	events_t *loop = work->loop;
+	unsigned int status, res = TASK_ERRED, tid = work->id;
+	events_free(arg);
+
+	__thread_init(false, tid);
+	while (!atomic_flag_load_explicit(&queue->started, memory_order_relaxed))
+		os_sleep(0);
+
+	if (loop == NULL)
+		__thread()->loop = queue->loop;
+	else
+		__thread()->loop = loop;
+
+	loop = __thread()->loop;
+	if ((int)async_task_ex(Kb(32), __worker_tasks_main, 2, queue, loop) > 0) {
+		res = 0;
+		do {
+			if (!__thread()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
+				|| tasks_schedulering(true) == TASK_ERRED)
+				break;
+		} while (__thread()->loop != NULL);
+		events_destroy(loop);
+	}
+
+	if (__thread()->sleep_handle != NULL
+		&& __thread()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
+#if defined(_WIN32) && defined(USE_FIBER)
+		DeleteFiber(__thread()->sleep_handle->type->fiber);
+#endif
+		events_free(__thread()->sleep_handle);
+		__thread()->sleep_handle = NULL;
+	}
+
+	os_exit(res);
+	return res;
+}
+
+os_worker_t *events_addtasks_loop(events_t *loop) {
+	events_deque_t **local = sys_event.local;
+	os_worker_t *f_work = NULL;
+	int index = loop->loop_id - 1;
+	if (index <= sys_event.cpu_count) {
+		local[index] = (events_deque_t *)events_malloc(sizeof(events_deque_t));
+		if (local[index] == NULL)
+			abort();
+
+		deque_init(local[index], sys_event.queue_size);
+		os_worker_t *f_work = events_calloc(1, sizeof(os_worker_t));
+		if (f_work == NULL)
+			abort();
+
+		atomic_unlock(&f_work->mutex);
+		f_work->id = (int)index;
+		f_work->queue = local[index];
+		f_work->loop = loop;
+		f_work->type = DATA_PTR;
+		local[index]->thread = os_create(__worker_tasks_wrapper, (void *)f_work);
+		if (local[index]->thread == OS_NULL)
+			abort();
+
+		deque_thread_set = true;
+	}
+
+	return f_work;
 }
