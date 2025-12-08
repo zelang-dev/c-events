@@ -11,7 +11,7 @@
 
 #include <events.h>
 
-static void fifo_read(sockfd_t fd, int event, void *arg) {
+static void fifo_read(fds_t fd, int event, void *arg) {
 	char buf[255];
 	int len;
 
@@ -30,7 +30,7 @@ static void fifo_read(sockfd_t fd, int event, void *arg) {
 	fprintf(stdout, "Read: %s\n", buf);
 }
 
-static void signal_cb(sockfd_t sig, int event, void *arg) {
+static void signal_cb(fds_t sig, int event, void *arg) {
 	events_t *loop = events_loop(sig);
 	unlink(mkfifo_name());
 	events_destroy(loop);

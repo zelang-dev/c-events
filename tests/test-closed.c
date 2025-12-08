@@ -3,7 +3,7 @@
 
 struct timeval timeout = {3, 0};
 
-static void closed_cb(sockfd_t fd, int event, void *arg)
+static void closed_cb(fds_t fd, int event, void *arg)
 {
 	if (EVENTS_TIMEOUT & event) {
 		printf("%s: Timeout!\n", __func__);
@@ -22,7 +22,7 @@ static void closed_cb(sockfd_t fd, int event, void *arg)
 int main(int argc, char **argv) {
 	events_t *base;
 	const char *test = "test string";
-	sockfd_t pair[2];
+	fds_t pair[2];
 	intptr_t ev;
 
 	events_init(1024);

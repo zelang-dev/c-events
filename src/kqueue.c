@@ -121,7 +121,7 @@ int events_destroy(events_t *_loop) {
 	events_kqueue *loop = (events_kqueue *)_loop;
 
 	events_set_destroy();
-	if (close(loop->kq) != 0) {
+	if (loop == NULL || close(loop->kq) != 0) {
 		return -1;
 	}
 

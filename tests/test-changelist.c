@@ -86,7 +86,7 @@ static void get_cpu_usage(struct cpu_usage_timer *timer, double *secElapsedOut,
 	*usageOut = secondsUsed / secondsPassed;
 }
 
-static void timeout_write_cb(sockfd_t fd, int event, void *arg) {
+static void timeout_write_cb(fds_t fd, int event, void *arg) {
 	if (event & EVENTS_WRITE){
 		printf("write callback. should only see this once\n");
 		events_set_event(fd, EVENTS_TIMEOUT);
@@ -103,7 +103,7 @@ static void timeout_write_cb(sockfd_t fd, int event, void *arg) {
 int main(int argc, char **argv) {
 	int ev;
 	events_t *base;
-	sockfd_t pair[2];
+	fds_t pair[2];
 	struct cpu_usage_timer timer;
 	double usage, secPassed, secUsed;
 

@@ -1,10 +1,9 @@
-
 #include <events.h>
 
 void *main_main(param_t args) {
-	os_worker_t *thrd = events_addthreads_loop(args[0].object);
-	char *ip = async_gethostbyname(thrd, args[1].char_ptr);
-	printf("\n> %s <\n", ip);
+	os_worker_t *thrd = events_add_pool(args[0].object);
+	struct hostent *ip = async_get_hostbyname(thrd, args[1].char_ptr);
+	printf("\n> %s <\n", gethostbyname_ip(ip));
 	return 0;
 }
 

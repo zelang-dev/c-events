@@ -1,5 +1,6 @@
 
 set(TARGET_LIST
+	_cat
 	_mkfifo
 	argdumper
 	bench_cascade
@@ -11,6 +12,11 @@ set(TARGET_LIST
 	task_multi-args
 	task_sleep
 	dns_ip
+	dns
+	tcp_proxy
+	helloworld
+	spawn
+	child
 )
 
 foreach (TARGET ${TARGET_LIST})

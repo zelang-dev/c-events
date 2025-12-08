@@ -81,7 +81,7 @@ int events_destroy(events_t *_loop) {
 	events_epoll *loop = (events_epoll *)_loop;
 
 	events_set_destroy();
-	if (epoll_close(loop->epfd) != 0) {
+	if (loop == NULL || epoll_close(loop->epfd) != 0) {
 		return -1;
 	}
 

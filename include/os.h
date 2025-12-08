@@ -7,6 +7,55 @@
 #   define C_API extern
 #endif
 
+#define EVENTS_IS_INITD (sys_event.max_fd != 0)
+#define EVENTS_IS_INITD_AND_FD_IN_RANGE(fd)	\
+  (((unsigned)fd) < (unsigned)sys_event.max_fd)
+#define EVENTS_TOO_MANY_LOOPS (sys_event.num_loops != 0) /* use after ++ */
+#define EVENTS_FD_BELONGS_TO_LOOP(loop, fd)		\
+  ((loop)->loop_id == sys_event.fds[fd].loop_id)
+
+#define EVENTS_TIMEOUT_VEC_OF(loop, idx)		\
+  ((loop)->timeout.vec + (idx) * sys_event.timeout_vec_size)
+#define EVENTS_TIMEOUT_VEC_OF_VEC_OF(loop, idx)	\
+  ((loop)->timeout.vec_of_vec + (idx) * sys_event.timeout_vec_of_vec_size)
+#define EVENTS_RND_UP(v, d) (((v) + (d) - 1) / (d) * (d))
+
+#define EVENTS_PAGE_SIZE 		4096
+#define EVENTS_CACHE_LINE_SIZE 	32 /* in bytes, ok if greater than the actual */
+#define EVENTS_SIMD_BITS 		128
+#define EVENTS_TIMEOUT_VEC_SIZE 128
+#define EVENTS_SHORT_BITS (sizeof(short) * 8)
+
+#define EVENTS_TIMEOUT_IDX_UNUSED (UCHAR_MAX)
+
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__attribute__)
+#	define __attribute__(a)
+#endif
+
+#define socket2fd(sock) ((int)sock)
+#define _2fd(sock) 		((int*)sock)
+#define fd2socket(fd) 	((fds_t)fd)
+#define _2socket(fd) 	((fds_t*)fd)
+
+#ifndef seconds
+#	define seconds(ms)	(1000 * ms)
+#endif
+
+#ifndef minutes
+#	define minutes(ms)	(60000 * ms)
+#endif
+
+#ifndef hours
+#	define hours(ms)	(3600000 * ms)
+#endif
+
+#ifndef trace
+#	define Statement(s) do {	\
+			s	\
+		}	while (0)
+#	define trace Statement(printf("%s:%d: Trace\n", __FILE__, __LINE__);)
+#endif
+
 #include <arrays.h>
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -29,11 +78,12 @@
 #	define EVENTS_INLINE
 #endif
 
-/* Number used only to assist checking for stack overflows. */
+/* Number used only to assist checking for stack overflows,
+will also indicate a tasks is valid, not freed. */
 #define TASK_MAGIC_NUMBER 0x7E3CB1A9
 
 #ifndef TASK_STACK_SIZE
-/* Stack size when creating a coroutine. */
+/* Stack size when creating a coroutine aka `task`. */
 #   define TASK_STACK_SIZE (8 * 1024)
 #endif
 
@@ -57,6 +107,7 @@ typedef enum {
 } async_types;
 
 typedef void (*os_cb)(intptr_t file, int bytes, void *data);
+typedef void (*exit_cb)(int exit_status, int term_signal);
 typedef void (*sigcall_t)(void);
 typedef void *(*data_func_t)(void *);
 typedef void *(*param_func_t)(param_t);
@@ -64,6 +115,8 @@ typedef intptr_t(*intptr_func_t)(intptr_t);
 typedef struct coro_events_s coroutine_t;
 typedef struct events_task_s tasks_t;
 typedef struct execinfo_s execinfo_t;
+typedef struct _thread_worker os_worker_t;
+typedef struct _thread_tasks_worker os_tasks_t;
 
 #ifdef _WIN32 /* !_WIN32 */
 #	include <windows.h>
@@ -78,7 +131,7 @@ typedef enum {
 	FD_PROCESS_ASYNC
 } FILE_TYPE;
 
-typedef SOCKET sockfd_t;
+typedef SOCKET fds_t;
 typedef DWORD mode_t;
 typedef HANDLE filefd_t;
 typedef filefd_t pid_t;
@@ -144,7 +197,7 @@ typedef unsigned long int nfds_t;
 #		define mkdir(a, b) 	_mkdir(a)
 #	endif
 #	ifndef pipe
-#		define pipe(fds) 	posix_pipe(fds)
+#		define pipe(fds) 	os_pipe(fds)
 #	endif
 #	ifndef O_NONBLOCK
 #		define O_NONBLOCK 	0x100000
@@ -188,17 +241,15 @@ typedef unsigned long int nfds_t;
 #ifdef __ANDROID__
 typedef uint16_t in_port_t;
 #endif
-#ifndef poll
-#	define poll	posix_poll
-#endif
 #ifndef closesocket
 #	define closesocket(x) closesocket(x)
 #endif
 #else /* !_WIN32 */
+#include <sys/sendfile.h>
 #include <sys/inotify.h>
 #include <sys/wait.h>
-typedef int sockfd_t;
-typedef sockfd_t filefd_t;
+typedef int fds_t;
+typedef fds_t filefd_t;
 typedef pid_t process_t;
 typedef pthread_key_t tls_emulate_t;
 typedef void (*emulate_dtor)(void *);
@@ -262,6 +313,7 @@ typedef struct os_cpumask os_cpumask;
 struct os_cpumask {
 	size_t value;
 };
+typedef PADDRINFOA *addrinfo_t;
 #else
 #include <ucontext.h>
 #include <pthread.h>
@@ -278,9 +330,13 @@ typedef cpuset_t os_cpumask;
 typedef pthread_t os_thread_t;
 #define __os_stdcall
 typedef int (__os_stdcall *os_thread_proc)(void *);
+typedef struct addrinfo *addrinfo_t;
 #endif
 
+typedef void (*spawn_cb)(fds_t writeto, char *readfrom);
+typedef void (*exec_io_cb)(fds_t input, char *output, fds_t error);
 #define open			os_open
+#define connect			os_connect
 #define mkfifo(a, b)	os_mkfifo(a, b)
 
 
@@ -310,7 +366,7 @@ C_API void os_shutdown(void);
  * @returns `-1` if fail or a `fd` if connection succeeds.
  *
  */
-C_API int os_connect(sockfd_t s, const struct sockaddr *name, int namelen);
+C_API int os_connect(fds_t s, const struct sockaddr *name, int namelen);
 
 /**
  * Pass through to the appropriate NT or unix read function.
@@ -329,39 +385,6 @@ C_API int os_read(int fd, char *buf, size_t len);
  *
  */
 C_API int os_write(int fd, char *buf, size_t len);
-
-/**
- * Asynchronous I/O `read` operation is queued for completion.
- *
- * This initiates an asynchronous read on the file handle which may
- * be a socket or named pipe.
- *
- * We also must save the `proc` and `data`, so later when
- * the io completes, we know who to call.
- *
- * @returns `-1` if error, `0` otherwise.
- *
- */
-C_API int os_asyncread(int fd, void *buf, int len, int offset, os_cb proc, void *data);
-
-/**
- * Asynchronous I/O `write` operation is queued for completion.
- *
- * This initiates an asynchronous write on the "fake" file
- * descriptor (which may be a file, socket, or named pipe).
- *
- * We also must save the `proc` and `data`, so later
- *	when the io completes, we know who to call.
- *
- *	We don't look at any results here (the WriteFile generally
- *	completes immediately) but do all completion processing
- *	in os_io_dispatch when we get the io completion port done
- *	notifications.  Then we call the callback.
- *
- * @returns `-1` if error, `0` otherwise.
- *
- */
-C_API int os_asyncwrite(int fd, void *buf, int len, int offset, os_cb proc, void *data);
 
 /**
  * Closes the descriptor.
@@ -403,6 +426,7 @@ C_API process_t exec(const char *command, const char *args, execinfo_t *info);
  */
 C_API execinfo_t *exec_info(const char *env, bool is_datached, filefd_t io_in, filefd_t io_out, filefd_t io_err);
 C_API int exec_wait(process_t ps, unsigned int timeout_ms, int *exit_code);
+//C_API int exec_io_pair(execinfo_t *info);
 
 C_API char *mkfifo_name(void);
 C_API filefd_t mkfifo_handle(void);
@@ -412,7 +436,14 @@ C_API filefd_t mkfifo_handle(void);
 #define write 	os_write
 #define close 	os_close
 
-C_API int socketpair(int domain, int type, int protocol, sockfd_t sockets[2]);
+#define R_OK    4
+#define W_OK    2
+#ifndef X_OK
+#	define X_OK    0
+#endif
+#define F_OK    0
+
+C_API int socketpair(int domain, int type, int protocol, fds_t sockets[2]);
 C_API int is_socket(int fd);
 C_API int os_open(const char *path, ...);
 
@@ -422,6 +453,7 @@ C_API int os_open(const char *path, ...);
 C_API bool assign_fd(HANDLE handle, int pseudo);
 C_API bool valid_fd(int fd);
 C_API unsigned int get_fd(int pseudo);
+C_API HANDLE get_handle(int pseudo);
 
 /**
  * Set up for I/O descriptor masquerading.
@@ -443,17 +475,9 @@ C_API void free_fd(int fd);
 
 C_API ssize_t pread(int d, void *buf, size_t nbytes, off_t offset);
 C_API ssize_t pwrite(int d, const void *buf, size_t nbytes, off_t offset);
+C_API ssize_t sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
 C_API int pipe2(int fildes[2], int flags);
-C_API int posix_pipe(int fildes[2]);
-C_API int posix_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
-C_API int posix_close(int fd);
-C_API ssize_t posix_read(int fd, void *buf, size_t count);
-C_API ssize_t posix_write(int fd, const void *buf, size_t count);
-C_API int posix_getsockopt(int sockfd, int level, int optname,
-	void *optval, socklen_t *optlen);
-C_API int posix_setsockopt(int sockfd, int level, int optname,
-	const void *optval, socklen_t optlen);
-C_API int posix_poll(struct pollfd *pfds, nfds_t nfds, int timeout_ms);
+C_API int os_pipe(int fildes[2]);
 #else
 C_API int os_open(const char *path, int flags, mode_t mode);
 #endif
@@ -653,7 +677,7 @@ C_API void os_tls_free(tls_emulate_t key);
 C_API void *os_tls_get(tls_emulate_t key);
 C_API int os_tls_set(tls_emulate_t key, void *val);
 
-/** Create a thread, returns `NULL` on error. */
+/** Create a thread, returns `OS_NULL` on error. */
 C_API os_thread_t os_create(os_thread_proc proc, void *param);
 
 /** Join with the thread, set timeout, optional get exit_code,
@@ -678,6 +702,90 @@ C_API int os_sleep(unsigned int msec);
 /** Exit current thread with `result` code. */
 C_API void os_exit(unsigned int exit_code);
 C_API int os_geterror(void);
+
+/** Like regular `read()`, but puts task to ~sleep~ while waiting for
+ data instead of blocking the whole program. */
+C_API int async_read(int fd, void *buf, int n);
+
+/** Like `async_read()` but always calls `async_wait()` before reading. */
+C_API int async_read2(int fd, void *buf, int n);
+
+/** Like regular `write()`, but puts task to ~sleep~ while waiting to
+ write data instead of blocking the whole program. */
+C_API int async_write(int fd, void *buf, int n);
+
+/** Start a ~network~ listener `server` running on ~address~,
+`port` number, with protocol, `proto_tcp` determents either TCP or UDP.
+
+The ~address~ is a string version of a `host name` or `IP` address.
+If `host name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup.
+If ~address~ is NULL, will bind to the given `port` on all available interfaces.
+
+- Returns a `fd` to use with `async_accept()`. */
+C_API fds_t async_listener(char *server, int port, bool proto_tcp);
+
+/** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
+
+- If `server` not NULL, it MUST be a buffer of `16 bytes` to hold remote IP address.
+- If `port` not NULL, it's filled with report port.
+
+Returns a `connected` ~client~ `fd`, SHOULD be used in an new `task` instance for handling.*/
+C_API fds_t async_accept(fds_t fd, char *server, int *port);
+
+/** Create a ~new~ connection to `hostname`, port, with protocol,
+`proto_tcp` determents either TCP or UDP.
+
+- Hostname can be an `ip` address or a `domain name`.
+- If `domain name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup. */
+C_API fds_t async_connect(char *hostname, int port, bool proto_tcp);
+
+/* Return `ip` address from `async_gethostbyname()` execution. */
+C_API char *gethostbyname_ip(struct hostent *host);
+
+/** Preform a non-blocking DNS lockup in separate `thrd` thread ~pool~ provided,
+ returns ~struct~ `hostent` address. */
+C_API struct hostent *async_get_hostbyname(os_worker_t *thrd, char *hostname);
+
+/** Preform a non-blocking DNS lockup in separate `thread`,
+ returns ~struct~ `hostent` address. */
+C_API struct hostent *async_gethostbyname(char *hostname);
+
+C_API int async_get_addrinfo(os_worker_t *thrd, const char *name,
+	const char *service, const struct addrinfo *hints, addrinfo_t result);
+
+C_API int async_getaddrinfo(const char *name,
+	const char *service, const struct addrinfo *hints, addrinfo_t result);
+
+C_API int async_fs_open(os_worker_t *thrd, const char *path, int flag, int mode);
+C_API int fs_open(const char *path, int flag, int mode);
+
+C_API int async_fs_read(os_worker_t *thrd, int fd, void *buf, unsigned int count);
+C_API int fs_read(int fd, void *buf, unsigned int count);
+
+C_API int async_fs_write(os_worker_t *thrd, int fd, const void *buf, unsigned int count);
+C_API int fs_write(int fd, const void *buf, unsigned int count);
+
+C_API ssize_t async_fs_sendfile(os_worker_t *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
+C_API ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
+
+C_API int async_fs_close(os_worker_t *thrd, int fd);
+C_API int fs_close(int fd);
+
+C_API int async_fs_unlink(os_worker_t *thrd, const char *path);
+C_API int fs_unlink(const char *path);
+
+C_API int async_fs_stat(os_worker_t *thrd, const char *path, struct stat *st);
+C_API int fs_stat(const char *path, struct stat *st);
+
+C_API int async_fs_access(os_worker_t *thrd, const char *path, int mode);
+C_API int fs_access(const char *path, int mode);
+
+C_API bool fs_exists(const char *path);
+C_API size_t fs_filesize(const char *path);
+
+C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
+C_API uintptr_t spawn_pid(execinfo_t *child);
+C_API bool spawn_is_finish(execinfo_t *child);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

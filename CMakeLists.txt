@@ -39,12 +39,12 @@ set(ev_sources
 if(WIN32)
 	set(ev_sources ${ev_sources}
 	${CMAKE_CURRENT_SOURCE_DIR}/src/os_windows.c
-	${CMAKE_CURRENT_SOURCE_DIR}/src/os_posix.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/epoll.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/wepoll.c)
 	link_libraries(ws2_32)
 else()
-	set(ev_sources ${ev_sources} ${CMAKE_CURRENT_SOURCE_DIR}/src/os_unix.c)
+	set(ev_sources ${ev_sources}
+	${CMAKE_CURRENT_SOURCE_DIR}/src/os_unix.c)
 	if(APPLE OR CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD|NetBSD|OpenBSD")
   		set(ev_sources ${ev_sources} ${CMAKE_CURRENT_SOURCE_DIR}/src/kqueue.c)
   	else()

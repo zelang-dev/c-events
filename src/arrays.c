@@ -44,6 +44,14 @@ const data_values_t data_values_empty[1] = {0};
 #	define in ,
 #endif
 
+#ifndef va_copy
+#  ifdef HAVE___VA_COPY
+#   define va_copy(dest, src) __va_copy(dest, src)
+#  else
+#   define va_copy(dest, src) (dest) = (src)
+#  endif
+#endif
+
 EVENTS_INLINE size_t data_size(array_t v) {
 	return array_length(v);
 }
@@ -400,3 +408,5 @@ EVENTS_INLINE bool str_has(const char *text, char *pattern) {
 EVENTS_INLINE bool str_is(const char *str, const char *str2) {
 	return (str != NULL && str2 != NULL) && (strcmp(str, str2) == 0);
 }
+
+#include "getopt.c"

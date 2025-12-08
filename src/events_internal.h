@@ -2,7 +2,6 @@
 #define _EVENTS_INTERNAL_H
 
 #include <events.h>
-#include <catomics.h>
 
 #if defined(USE_DEBUG)
 #   include <assert.h>
@@ -91,6 +90,13 @@ struct _thread_worker {
 	char buffer[MAX_PATH];
 };
 
+struct _thread_tasks_worker {
+	data_types type;
+	int id;
+	events_t *loop;
+	events_deque_t *queue;
+};
+
 struct _request_worker {
 	data_types type;
 	int id;
@@ -159,6 +165,7 @@ struct sys_events_s {
 	atomic_flag loop_signaled;
 	/* task unique id generator */
 	atomic_size_t id_generate;
+	/* result id generator */
 	atomic_size_t result_id_generate;
 	atomic_size_t num_loops;
 	atomic_results_t *results;
@@ -256,6 +263,7 @@ struct events_task_s {
 	tasks_t *next;
 	tasks_t *prev;
 	tasks_t *context;
+	tasks_t *sleeping;
 	task_group_t *task_group;
 	array_t garbage;
 	data_func_t func;
@@ -279,12 +287,16 @@ struct execinfo_s {
 	const char **env;
 	/* Create detached background process */
 	bool detached;
-	/* Standard file descriptors */
-	filefd_t input, output, error;
+	/* Standard ~pair~ `process` file descriptors */
+	filefd_t write_input[2], read_output[2], error;
 	/* child process id */
 	process_t ps;
 	/* child pseudo fd */
-	sockfd_t fd;
+	fds_t fd;
+	unsigned int rid;
+	tasks_t *context;
+	exit_cb exit_func;
+	exec_io_cb io_func;
 };
 
 /* scheduler queue struct */
@@ -316,7 +328,7 @@ void events_free(void *ptr);
 unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of_args, ...);
 unsigned int async_task_loop(events_t *loop, size_t heapsize, param_func_t fn, unsigned int num_of_args, ...);
 void thread_result_set(os_request_t *p, void *res);
-void thread_request_enqueue(os_worker_t *j, os_request_t *r);
+void enqueue_pool_request(os_worker_t *j, os_request_t *r);
 unsigned int task_push(tasks_t *t, bool is_thread);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args);
 

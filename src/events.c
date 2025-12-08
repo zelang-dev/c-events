@@ -64,9 +64,8 @@ typedef struct {
 	unsigned int num_others_ran;
 	/* per thread event loop */
 	events_t *loop;
+	os_worker_t *pool;
 	tasks_t *sleep_handle;
-	/* Variable holding the main target `scheduler` that gets called once an task
-	function fully completes and return. */
 	/* record which task is executing for scheduler */
 	tasks_t *running;
 	/* Variable holding the current running task per thread. */
@@ -74,6 +73,8 @@ typedef struct {
 #if defined(USE_SJLJ)
 	tasks_t *active_sig_handle;
 #endif
+	/* Variable holding the main target `scheduler` that gets called once an task
+	function fully completes and return. */
 	tasks_t *main_handle;
 	/* Variable holding the previous running task per thread. */
 	tasks_t *current_handle;
@@ -114,6 +115,10 @@ void events_set_destroy(void) {
 
 EVENTS_INLINE bool events_is_destroy(void) {
 	return __thread()->loop == NULL;
+}
+
+EVENTS_INLINE os_worker_t *events_pool(void) {
+	return __thread()->pool;
 }
 
 EVENTS_INLINE int events_set_allocator(malloc_func malloc_cb, realloc_func realloc_cb, calloc_func calloc_cb,
@@ -166,6 +171,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 
 	events_startup_set = true;
 #ifdef _WIN32
+	_setmaxstdio(8192);
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2, 0), &wsaData);
 #endif
@@ -263,16 +269,16 @@ EVENTS_INLINE void events_deinit(void) {
 #endif
 }
 
-EVENTS_INLINE int events_set_nonblocking(sockfd_t fd) {
+EVENTS_INLINE int events_set_nonblocking(fds_t fd) {
 #ifdef _WIN32
 	unsigned long flag = 1;
 	return ioctlsocket(fd, FIONBIO, &flag);
 #else
-	return fcntl(fd, F_SETFL, O_NONBLOCK);
+	return fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 #endif
 }
 
-EVENTS_INLINE void events_set_timeout(sockfd_t sfd, int secs) {
+EVENTS_INLINE void events_set_timeout(fds_t sfd, int secs) {
 	events_t *loop;
 	events_fd_t *target;
 	short *vec, *vec_of_vec;
@@ -314,7 +320,7 @@ EVENTS_INLINE events_fd_t *events_target(int fd) {
 	return (events_fd_t *)atomic_load_explicit(&sys_event.fds, memory_order_relaxed) + fd;
 }
 
-EVENTS_INLINE int events_add(events_t *loop, sockfd_t sfd, int event, int timeout_in_secs,
+EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_in_secs,
 	events_cb callback, void *cb_arg) {
 	events_fd_t *target;
 	fd_types type = FD_UNKNOWN;
@@ -339,7 +345,6 @@ EVENTS_INLINE int events_add(events_t *loop, sockfd_t sfd, int event, int timeou
 		return -1;
 	}
 
-	assert(target->loop_id == 0);
 	target->is_iodispatch = false;
 	target->backend_used = false;
 #ifdef _WIN32
@@ -377,7 +382,7 @@ EVENTS_INLINE int events_add(events_t *loop, sockfd_t sfd, int event, int timeou
 	return 0;
 }
 
-EVENTS_INLINE int events_del(sockfd_t sfd) {
+EVENTS_INLINE int events_del(fds_t sfd) {
 	events_fd_t *target = NULL;
 	events_t *loop = NULL;
 	sys_signal_t *signal_set = NULL;
@@ -411,7 +416,7 @@ EVENTS_INLINE int events_del(sockfd_t sfd) {
 	return 0;
 }
 
-EVENTS_INLINE bool events_is_registered(events_t *loop, sockfd_t sfd) {
+EVENTS_INLINE bool events_is_registered(events_t *loop, fds_t sfd) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	if (EVENTS_IS_INITD)
 		return false;
@@ -430,12 +435,12 @@ EVENTS_INLINE bool events_is_running(events_t *loop) {
 		|| __thread()->task_count > 0;
 }
 
-EVENTS_INLINE int events_get_event(events_t *loop __attribute__((unused)), sockfd_t sfd) {
+EVENTS_INLINE int events_get_event(events_t *loop __attribute__((unused)), fds_t sfd) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	return events_target(socket2fd(sfd))->events & EVENTS_READWRITE;
 }
 
-int events_set_event(sockfd_t sfd, int event) {
+int events_set_event(fds_t sfd, int event) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	events_t *loop = events_loop(sfd);
 	bool is_io = false;
@@ -457,7 +462,7 @@ int events_set_event(sockfd_t sfd, int event) {
 }
 
 EVENTS_INLINE events_cb events_get_callback(events_t *loop __attribute__((unused)),
-	sockfd_t sfd, void **cb_arg) {
+	fds_t sfd, void **cb_arg) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	if (cb_arg != NULL) {
 		*cb_arg = events_target(socket2fd(sfd))->cb_arg;
@@ -467,7 +472,7 @@ EVENTS_INLINE events_cb events_get_callback(events_t *loop __attribute__((unused
 }
 
 EVENTS_INLINE void events_set_callback(events_t *loop __attribute__((unused)),
-	sockfd_t sfd, events_cb callback, void **cb_arg) {
+	fds_t sfd, events_cb callback, void **cb_arg) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	if (cb_arg != NULL) {
 		events_target(socket2fd(sfd))->cb_arg = *cb_arg;
@@ -486,8 +491,9 @@ EVENTS_INLINE int events_once(events_t *loop, int max_wait) {
 		return -1;
 	}
 
-	if (!__thread()->in_callback && __thread()->task_count)
+	if (!__thread()->in_callback && __thread()->task_count) {
 		tasks_schedulering(false);
+	}
 
 	if (max_wait != 0) {
 		loop->now = time(NULL);
@@ -534,6 +540,10 @@ int events_init_loop_internal(events_t *loop, int max_timeout) {
 	loop->timeout.resolution = EVENTS_RND_UP(max_timeout, EVENTS_TIMEOUT_VEC_SIZE) / EVENTS_TIMEOUT_VEC_SIZE;
 	if (events_is_destroy())
 		__thread()->loop = loop;
+
+	if (atomic_load(&sys_event.num_loops) == 1) {
+		__thread()->pool = events_add_pool(loop);
+	}
 
 	return 0;
 }
@@ -649,7 +659,6 @@ EVENTS_INLINE uint64_t events_now(void) {
 
 static actor_t *events_actor_timeout(events_t *loop, int ms, actor_cb timer, void *args, actor_t *timeout) {
 	size_t when;
-	struct timeval lasttime;
 	actor_t *t = NULL, *actor_running = (timeout == NULL)
 		? events_calloc(1, sizeof(actor_t))
 		: timeout;
@@ -702,7 +711,7 @@ EVENTS_INLINE actor_t *events_actor(events_t *loop, int ms, actor_cb timer, void
 	return events_actor_timeout(loop, ms, timer, args, NULL);
 }
 
-EVENTS_INLINE events_t *events_loop(sockfd_t sfd) {
+EVENTS_INLINE events_t *events_loop(fds_t sfd) {
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
 	events_fd_t *target = events_target(socket2fd(sfd));
 	return (target->signal_set)
@@ -825,6 +834,7 @@ static void __thread_init(bool is_main, unsigned int thread_id) {
 	__thread()->current_handle = NULL;
 	__thread()->main_handle = NULL;
 	__thread()->loop = NULL;
+	__thread()->pool = NULL;
 	__thread()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL), !__thread()->is_main) >= 0;
 }
 
@@ -868,6 +878,8 @@ static EVENTS_INLINE void defer_cleanup(tasks_t *t) {
 			if (is_ptr_usable(arr.object)) {
 				if (is_data(arr.object))
 					$delete(arr.object);
+				else if (data_type(arr.object) == DATA_OBJ)
+					((data_object_t *)arr.object)->dtor(arr.object);
 				else if (arr.object != NULL)
 					events_free(arr.object);
 			}
@@ -925,6 +937,8 @@ static EVENTS_INLINE const char *task_state(int status) {
 			return "Active/Running";
 		case TASK_SUSPENDED:
 			return "Suspended/Not started";
+		case TASK_SLEEPING:
+			return "Sleeping/Waiting";
 		case TASK_EVENT:
 			return "Events running";
 		case TASK_ERRED:
@@ -932,6 +946,26 @@ static EVENTS_INLINE const char *task_state(int status) {
 		default:
 			return "Unknown";
 	}
+}
+
+EVENTS_INLINE int task_err_code(void) {
+	return active_task()->err_code;
+}
+
+EVENTS_INLINE ptrdiff_t task_code(void) {
+	return (ptrdiff_t)active_task()->err_code;
+}
+
+EVENTS_INLINE void *task_data(void) {
+	return active_task()->user_data;
+}
+
+EVENTS_INLINE void task_data_set(tasks_t *t, void *data) {
+	t->user_data = data;
+}
+
+EVENTS_INLINE void *task_data_get(tasks_t *t) {
+	return t->user_data;
 }
 
 EVENTS_INLINE void task_info(tasks_t *t, int pos) {
@@ -1006,10 +1040,12 @@ static void *task_wait_system(void *v) {
 			if (!t->halt) {
 				t->status = TASK_NORMAL;
 				l = __thread()->run_queue;
+				t->ready = true;
 				enqueue(l, t);
-				if (t->context != NULL) {
-					t = t->context;
-					t->context = NULL;
+				if (t->sleeping != NULL) {
+					t = t->sleeping;
+					t->ready = true;
+					t->sleeping = NULL;
 					enqueue(l, t);
 				}
 			}
@@ -1058,6 +1094,29 @@ EVENTS_INLINE unsigned int sleep_task(unsigned int ms) {
 	task_switch(__thread()->current_handle);
 
 	return (unsigned int)(events_now() - now) / 1000000;
+}
+
+static void wait_cb(fds_t fd, int event, void *arg) {
+	tasks_t *t = (tasks_t *)arg;
+	tasklist_t *l = __thread()->run_queue;
+	t->ready = true;
+	enqueue(l, t);
+	events_del(fd);
+}
+
+void async_wait(int fd, int rw) {
+	int bits = 0;
+	switch (rw) {
+		case 'r':
+			bits |= EVENTS_READ;
+			break;
+		case 'w':
+			bits |= EVENTS_WRITE;
+			break;
+	}
+
+	events_add(__thread()->loop, fd, bits, 0, wait_cb, (void *)__thread()->running);
+	task_switch(__thread()->current_handle);
 }
 
 #if defined(_WIN32) && defined(USE_FIBER)
@@ -1247,6 +1306,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	co->cid = DATA_INVALID;
 	co->user_data = NULL;
 	co->context = NULL;
+	co->sleeping = NULL;
 	co->task_group = NULL;
 	co->garbage = NULL;
 	co->stack_size = heapsize + sizeof(_results_data_t);
@@ -1282,9 +1342,8 @@ static EVENTS_INLINE results_data_t task_result_get(unsigned int id) {
 	return (results_data_t)atomic_load_explicit(&sys_event.results[id], memory_order_relaxed);
 }
 
-/* Check for task completetion and return. */
 EVENTS_INLINE bool task_is_terminated(tasks_t *co) {
-	return co->halt;
+	return is_ptr_usable(co) ? co->halt : true;
 }
 
 EVENTS_INLINE values_t await_for(unsigned int id) {
@@ -1404,7 +1463,7 @@ array_t tasks_wait(task_group_t *wg) {
 						enqueue(l, worker);
 					} else if (worker->status == TASK_SLEEPING) {
 						is_sleeping = true;
-						worker->context = __thread()->running;
+						worker->sleeping = __thread()->running;
 						suspend_task();
 					}
 
@@ -1426,6 +1485,7 @@ array_t tasks_wait(task_group_t *wg) {
 }
 
 EVENTS_INLINE void async_run(events_t *loop) {
+	__thread()->loop = loop;
 	int status;
 	do {
 		if (!__thread()->task_count	|| (status = tasks_schedulering(true)) == TASK_ERRED)
@@ -1439,7 +1499,8 @@ EVENTS_INLINE void suspend_task(void) {
 
 EVENTS_INLINE void yield_task(void) {
 	tasks_t *t = __thread()->running;
-	tasklist_t *l =__thread()->run_queue;
+	tasklist_t *l = __thread()->run_queue;
+	t->ready = true;
 	enqueue(l, t);
 	suspend_task();
 }
@@ -1481,6 +1542,7 @@ void task_name(char *fmt, ...) {
 	va_end(args);
 }
 
+/* Collect `tasks` with references preventing immediate cleanup. */
 static EVENTS_INLINE void task_gc(tasks_t *co) {
 	atomic_lock(&sys_event.lock);
 	if (sys_event.gc == NULL)
@@ -1543,6 +1605,7 @@ static bool task_take(events_deque_t *queue) {
 				break;
 
 			atomic_fetch_sub(&queue->available, 1);
+			t->ready = true;
 			enqueue(l, t);
 			__thread()->task_count++;
 			work_taken = true;
@@ -1565,14 +1628,13 @@ void thread_result_set(os_request_t *p, void *res) {
 	atomic_flag_test_and_set(&p->done);
 }
 
-static void worker_enqueue(tasks_t *t) {
-	atomic_thread_fence(memory_order_acquire);
-	//atomic_lock(&sys_event.lock);
+static void task_worker_enqueue(tasks_t *t) {
+	atomic_thread_fence(memory_order_seq_cst);
+	atomic_lock(&sys_event.lock);
 	events_deque_t *queue = sys_event.local[t->tid];
 	deque_push(queue, t);
-	//atomic_unlock(&sys_event.lock);
+	atomic_unlock(&sys_event.lock);
 	atomic_fetch_add(&queue->available, 1);
-	atomic_thread_fence(memory_order_release);
 }
 
 static void *__worker_tasks_main(param_t *args) {
@@ -1639,9 +1701,9 @@ static int __worker_tasks_wrapper(void *arg) {
 	return res;
 }
 
-os_worker_t *events_addtasks_loop(events_t *loop) {
+os_tasks_t *events_addtasks_pool(events_t *loop) {
 	events_deque_t **local = sys_event.local;
-	os_worker_t *f_work = NULL;
+	os_tasks_t *f_work = NULL;
 	int index = loop->loop_id - 1;
 	if (index <= sys_event.cpu_count) {
 		local[index] = (events_deque_t *)events_malloc(sizeof(events_deque_t));
@@ -1649,11 +1711,10 @@ os_worker_t *events_addtasks_loop(events_t *loop) {
 			abort();
 
 		deque_init(local[index], sys_event.queue_size);
-		os_worker_t *f_work = events_calloc(1, sizeof(os_worker_t));
+		os_tasks_t *f_work = events_calloc(1, sizeof(os_tasks_t));
 		if (f_work == NULL)
 			abort();
 
-		atomic_unlock(&f_work->mutex);
 		f_work->id = (int)index;
 		f_work->queue = local[index];
 		f_work->loop = loop;

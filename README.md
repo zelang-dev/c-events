@@ -11,7 +11,18 @@ It differs from [libev](https://software.schmorp.de/pkg/libev.html), [libeio](ht
 
 Some **Libevent** [examples](https://github.com/libevent/libevent/tree/master/sample) and [tests](https://github.com/libevent/libevent/tree/master/test) have been brought in and modified for *basic* testing this library.
 
-## features
+## Table of Contents
+
+* [Features](#features)
+* [Design](#design)
+  * [API layout](#api)
+* [Synopsis](#synopsis)
+* [Usage](#usage)
+* [Installation](#installation)
+* [Contributing](#contributing)
+* [License](#license)
+
+## Features
 
 **events** provides a mechanism to execute a callback function when a specific event occurs on a file descriptor or after a timeout has been reached. Every event represents a set of conditions, including:
 
@@ -30,83 +41,67 @@ Once you call `events_init(1024)` and `events_t *loop = events_create(60)` funct
 
 When the conditions that would trigger an event occur (e.g., its file descriptor changes state or its timeout expires), the event becomes *ready*, and its (user-provided) callback function is run. All events are *persistent*, until `events_del(listen_sock)` is called, only user-triggered are one off, if not set to repeat. MUST call `events_once(loop, 5)` to monitor for changes, add a wait time in *seconds*, SHOULD be combined with `events_is_running(loop)` to ensure all events are captured.
 
-## usage
+## Design
+
+### API
+
+## Synopsis
+
+## Usage
 
 ```c
-#include <events.h>
 
-static void fifo_read(sockfd_t fd, int event, void *arg) {
- char buf[255];
- int len;
-
- fprintf(stderr, "fifo_read called with fd: %d, event: %d, arg: %p\n", socket2fd(fd), event, arg);
- len = read(fd, buf, sizeof(buf) - 1);
- if (len <= 0) {
-  if (len == -1)
-   perror("read");
-  else if (len == 0)
-   fprintf(stderr, "Connection closed\n");
-  events_del(fd);
-  return;
- }
-
- buf[len] = '\0';
- fprintf(stdout, "Read: %s\n", buf);
-}
-
-static void signal_cb(sockfd_t sig, int event, void *arg) {
- events_t *loop = events_loop(sig);
- unlink(mkfifo_name());
- events_destroy(loop);
-}
-
-int main(int argc, char **argv) {
- events_t *base;
- struct stat st;
- const char *fifo = "event.fifo";
- int socket;
-
- if (lstat(fifo, &st) == 0) {
-  if ((st.st_mode & S_IFMT) == S_IFREG) {
-   errno = EEXIST;
-   perror("lstat");
-   exit(1);
-  }
- }
-
- unlink(fifo);
- if (mkfifo(fifo, 0600) == -1) {
-  perror("mkfifo");
-  exit(1);
- }
-
- /* Initialize the event library */
- base = events_create(6);
-
- socket = open(fifo, O_RDWR | O_NONBLOCK, 0);
- if (socket == -1) {
-  perror("open");
-  unlink(mkfifo_name());
-  events_destroy(base);
-  exit(1);
- }
-
- fprintf(stderr, "Write data to %s\n", mkfifo_name());
-
- /* catch SIGINT so that event.fifo can be cleaned up*/
- events_add(base, SIGINT, EVENTS_SIGNAL, 0, signal_cb, NULL);
-
- /* Initialize one event */
- events_add(base, socket, EVENTS_READ, 0, fifo_read, NULL);
-
- while (events_is_running(base)) {
-  events_once(base, 1);
- }
-
- close(socket);
- unlink(fifo);
- events_destroy(base);
-
- return (0);
-}
 ```
+
+## Installation
+
+Any **commit** with an **tag** is considered *stable* for **release** at that *version* point.
+
+If there are no *binary* available for your platform under **Releases** then build using **cmake**,
+which produces **static** libraries by default.
+
+### Linux
+
+```shell
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug/Release -D BUILD_TESTS=OFF -D BUILD_EXAMPLES=OFF # use to not build tests and examples
+cmake --build .
+```
+
+### Windows
+
+```shell
+mkdir build
+cd build
+cmake .. -D BUILD_TESTS=OFF -D BUILD_EXAMPLES=OFF # use to not build tests and examples
+cmake --build . --config Debug/Release
+```
+
+### As cmake project dependency
+
+> For **CMake** versions earlier than `3.14`, see <https://cmake.org/cmake/help/v3.14/module/FetchContent.html>
+
+Add to **CMakeLists.txt**
+
+```c
+find_package(events QUIET)
+if(NOT events_FOUND)
+    FetchContent_Declare(events
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.1.0.zip
+        URL_MD5 0256bd86ca474383070bb1000d3f77c5
+    )
+    FetchContent_MakeAvailable(events)
+endif()
+
+target_include_directories(your_project PUBLIC $<BUILD_INTERFACE:${EVENTS_INCLUDE_DIR} $<INSTALL_INTERFACE:${EVENTS_INCLUDE_DIR})
+target_link_libraries(your_project PUBLIC events)
+```
+
+## Contributing
+
+Contributions are encouraged and welcome; I am always happy to get feedback or pull requests on Github :) Create [Github Issues](https://github.com/zelang-dev/c-events/issues) for bugs and new features and comment on the ones you are interested in.
+
+## License
+
+The MIT License (MIT). Please see [License File](LICENSE.md) for more information.

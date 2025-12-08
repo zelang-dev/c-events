@@ -8,7 +8,7 @@
 
 int called = 0;
 
-static void signal_cb(sockfd_t sig, int event, void *arg) {
+static void signal_cb(fds_t sig, int event, void *arg) {
 	events_t *loop = events_loop(sig);
 
 	printf("signal_cb: got signal %d\n", socket2fd(sig));

@@ -4,9 +4,13 @@
 void *main_main(param_t args) {
 	ASSERT_TASK(is_data(args));
 	ASSERT_EQU($size(args), 1);
-	os_worker_t *thrd = events_addthreads_loop(args->object);
+	struct hostent *host = NULL;
+	os_worker_t *thrd = events_add_pool(args->object);
 	ASSERT_TASK((data_type(thrd) == DATA_PTR));
-	ASSERT_TASK((async_gethostbyname(thrd, "www.google.com") != NULL));
+	ASSERT_TASK((data_type(events_pool()) == DATA_PTR));
+	ASSERT_TASK((events_pool() != thrd));
+	ASSERT_TASK(((host = async_get_hostbyname(thrd, "dns.google")) != NULL));
+	ASSERT_TASK(str_is(gethostbyname_ip(host), "8.8.8.8") || str_is(gethostbyname_ip(host), "8.8.4.4"));
 	return 0;
 }
 

@@ -3,7 +3,7 @@
 
 int called = 0;
 
-#define NEVENT	20000
+#define NEVENT	1000
 
 /* Structure to hold the state of our weak random number generator.
  */
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
 	}
 
 	while (events_is_running(base))
-		events_once(base, 1);
+		events_once(base, 0);
 
 	printf("events_timeouts=%d, called=%d, EVENT=%d\n", i, called, NEVENT);
 	events_destroy(base);

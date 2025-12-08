@@ -1,6 +1,7 @@
 #ifndef _ARRAY_H
 #define _ARRAY_H
 
+#include <catomics.h>
 #include <stdint.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -16,6 +17,7 @@
 extern "C" {
 #endif
 
+typedef void (*dtor_func_t)(void *);
 typedef void *(*data_func_t)(void *);
 typedef void *(*param_func_t)(param_t);
 typedef intptr_t(*intptr_func_t)(intptr_t);
@@ -61,6 +63,7 @@ typedef union {
 	signed long s_long;
 	unsigned long u_long;
 	long long long_long;
+	long long *long_long_ptr;
 	size_t max_size;
 	uintptr_t ulong_long;
 	float point;
@@ -92,6 +95,12 @@ typedef struct {
 	values_t value;
 	void *extended;
 } data_values_t;
+
+typedef struct {
+	data_types type;
+	void *value;
+	dtor_func_t dtor;
+} data_object_t;
 
 typedef struct {
 	array_t group;
@@ -155,6 +164,36 @@ C_API char **str_slice(const char *s, const char *delim, int *count);
 C_API char *str_swap(const char *haystack, const char *needle, const char *swap);
 C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
 
+/*
+* Returns `argv[index]` or next `argv[]`, from matching `getopt_has()`.
+*/
+C_API char *getopts(void);
+/**
+* Parse and check command-line options.
+*
+* If `flag` match, MUST call `getopts()` to ~retrieve~ next `argv[]`.
+*
+* @param flag argument/options to match against, if `NULL`, `getopts()` returns `argv[1]`
+*  or current `argv[index]`, if ~ordered~ set in `getopt_message_set()`.
+* @param is_single or `is_boolean` argument, if `true`, only `flag` is returned by `getopts()`.
+*
+* - NOTE: `is_single` WILL also parse `-flag=XXXX`, where `getopts()` returns `XXXX`.
+*/
+C_API bool getopt_has(const char *flag, bool is_single);
+/**
+* Set usage `message` to display to `user`
+* documenting all defined ~command-line~ options/flags.
+*
+* @param message usage/help menu.
+* @param minium set number of required command-line arguments.
+* @param is_ordered command-line arguments in specificied order, allows duplicates.
+*
+* - If ~is_ordered~ `true` will retain each `argv[]` index in `getopt_has()` calls.
+*/
+C_API void getopt_message_set(const char *message, int minium, bool is_ordered);
+/** Set/store ~main~ `argc`, `**argv` arguments. */
+C_API void getopt_arguments_set(int argc, char **argv);
+
 #ifndef casting
 	/* Cast ~val~, a `non-pointer` to `pointer` like value,
 	makes reference if variable. */
@@ -206,6 +245,9 @@ C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
 #endif
 #ifndef LN_CLR
 #	define LN_CLR  "\n\033[0K"
+#endif
+#ifndef CLR
+#	define CLR  "\033[0K"
 #endif
 #ifndef CLR_LN
 #	define CLR_LN  "\033[0K\n"

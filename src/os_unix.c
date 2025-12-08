@@ -6,6 +6,7 @@
 #undef write
 #undef close
 #undef open
+#undef connect
 #undef mkfifo
 
 static sigset_t events_siglock, events_siglock_all;
@@ -185,55 +186,6 @@ static int release_lock(int sock) {
 	return -1;
 }
 
-int os_asyncread(int fd, void *buf, int len, int offset, os_cb proc, void *data) {
-	int index = AIO_RD_IX(fd);
-
-	assert(fdTable != NULL);
-	asyncIoInUse = true;
-
-	if (fd > maxFd)
-		maxFd = fd;
-
-	while (index >= ioTableSize) {
-		grow_ioTable();
-	}
-
-	assert(fdTable[index].inUse == 0);
-	fdTable[index].proc = proc;
-	fdTable[index].data = data;
-	fdTable[index].fd = fd;
-	fdTable[index].len = len;
-	fdTable[index].offset = offset;
-	fdTable[index].buf = buf;
-	fdTable[index].inUse = 1;
-	FD_SET(fd, &readFdSet);
-	return 0;
-}
-
-int os_asyncwrite(int fd, void *buf, int len, int offset, os_cb proc, void *data) {
-	int index = AIO_WR_IX(fd);
-
-	asyncIoInUse = true;
-
-	if (fd > maxFd)
-		maxFd = fd;
-
-	while (index >= ioTableSize) {
-		grow_ioTable();
-	}
-
-	assert(fdTable[index].inUse == 0);
-	fdTable[index].proc = proc;
-	fdTable[index].data = data;
-	fdTable[index].fd = fd;
-	fdTable[index].len = len;
-	fdTable[index].offset = offset;
-	fdTable[index].buf = buf;
-	fdTable[index].inUse = 1;
-	FD_SET(fd, &writeFdSet);
-	return 0;
-}
-
 EVENTS_INLINE int os_iodispatch(int ms) {
 	return 0;
 }
@@ -251,6 +203,10 @@ EVENTS_INLINE int os_open(const char *path, int flags, mode_t mode) {
 	}
 
 	return open(path, flags, mode);
+}
+
+EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) {
+	return connect(s, name, namelen);
 }
 
 static int new_fd(int fd) {
@@ -284,8 +240,10 @@ static int new_fd(int fd) {
 		fdTable[index].process->fd = index;
 		fdTable[index].process->env = NULL;
 		fdTable[index].process->detached = false;
-		fdTable[index].process->input = inherit;
-		fdTable[index].process->output = inherit;
+		fdTable[index].process->write_input[0] = inherit;
+		fdTable[index].process->write_input[1] = inherit;
+		fdTable[index].process->read_output[0] = inherit;
+		fdTable[index].process->read_output[1] = inherit;
 		fdTable[index].process->error = inherit;
 		fdTable[index].process->ps = -1;
 	}
@@ -320,10 +278,10 @@ static inline process_t os_exec_info(const char *filename, execinfo_t *info) {
 		sa.sa_handler = SIG_DFL;
 		sigaction(SIGPIPE, &sa, NULL);
 
-		if (info->input != -1)
-			dup2(info->input, STDIN_FILENO);
-		if (info->output != -1)
-			dup2(info->output, STDOUT_FILENO);
+		if (info->write_input[1] != -1)
+			dup2(info->write_input[1], STDIN_FILENO);
+		if (info->read_output[1] != -1)
+			dup2(info->read_output[1], STDOUT_FILENO);
 		if (info->error != -1)
 			dup2(info->error, STDERR_FILENO);
 	}
@@ -347,10 +305,10 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 		info->env = (const char **)str_slice(env, ";", NULL);
 
 	if (io_in)
-		info->input = io_in;
+		info->write_input[1] = io_in;
 
 	if (io_out)
-		info->output = io_out;
+		info->read_output[1] = io_out;
 
 	if (io_err)
 		info->error = io_err;

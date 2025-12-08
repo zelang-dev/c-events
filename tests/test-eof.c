@@ -5,7 +5,7 @@ int test_okay = 1;
 int called = 0;
 struct timeval timeout = {60, 0};
 
-static void read_cb(sockfd_t fd, int event, void *ar) {
+static void read_cb(fds_t fd, int event, void *ar) {
 	char buf[256];
 	int len;
 
@@ -31,7 +31,7 @@ static void read_cb(sockfd_t fd, int event, void *ar) {
 int main(int argc, char **argv) {
 	events_t *base;
 	const char *test = "test string";
-	sockfd_t pair[2];
+	fds_t pair[2];
 
 	/* Initialize the event library */
 	if (events_init(1024) || socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == -1)

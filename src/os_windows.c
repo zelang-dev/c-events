@@ -4,6 +4,7 @@
 #undef write
 #undef close
 #undef open
+#undef connect
 
 #define LOCALHOST "localhost"
 static CRITICAL_SECTION events_siglock;
@@ -135,6 +136,10 @@ EVENTS_INLINE unsigned int get_fd(int pseudo) {
 	return fdTable[pseudo].fid.value;
 }
 
+EVENTS_INLINE HANDLE get_handle(int pseudo) {
+	return fdTable[pseudo].fid.fileHandle;
+}
+
 int new_fd(FILE_TYPE type, int fd, int desiredFd) {
 	int index = -1;
 	events_fd_t *target = events_target(fd);
@@ -178,9 +183,12 @@ int new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].process->fd = -1;
 		fdTable[index].process->env = NULL;
 		fdTable[index].process->detached = false;
-		fdTable[index].process->input = inherit;
-		fdTable[index].process->output = inherit;
+		fdTable[index].process->write_input[0] = inherit;
+		fdTable[index].process->write_input[1] = inherit;
+		fdTable[index].process->read_output[0] = inherit;
+		fdTable[index].process->read_output[1] = inherit;
 		fdTable[index].process->error = inherit;
+		fdTable[index].process->context = NULL;
 		fdTable[index].process->ps = INVALID_HANDLE_VALUE;
 	}
 
@@ -237,6 +245,13 @@ void os_shutdown(void) {
 	os_initialized = false;
 }
 
+EVENTS_INLINE int is_socket(int fd) {
+	if (fd < 3)
+		return 0;
+	WSANETWORKEVENTS events;
+	return (WSAEnumNetworkEvents((SOCKET)fd, NULL, &events) == 0);
+}
+
 void free_fd(int fd) {
 	/* Catch it if fd is a bogus value */
 	assert((fd >= 0) && (fd < ioTableSize));
@@ -270,37 +285,24 @@ void free_fd(int fd) {
 	return;
 }
 
-static short getPort(const char *bind_path) {
-	short port = 0;
-	char *p = strchr(bind_path, ':');
+EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) {
+	if (sys_event.num_loops == 0 || !valid_fd(s))
+		return connect(s, name, namelen);
 
-	if (p && *++p) {
-		char buf[6];
-
-		strncpy(buf, p, 6);
-		buf[5] = '\0';
-
-		port = (short)atoi(buf);
-	}
-
-	return port;
-}
-
-int os_connect(sockfd_t s, const struct sockaddr *name, int namelen) {
-	int pseudoFd = -1;
-	if (sys_event.num_loops == 0 || !valid_fd(s)) {
-		return posix_connect(s, name, namelen);
-	} else {
-		return os_accept_pipe(s);
-	}
+	return os_accept_pipe(s);
 }
 
 int os_read(int fd, char *buf, size_t len) {
-	if (sys_event.num_loops == 0 || fdTable[fd].type == FD_UNUSED)
-		return posix_read(fd, buf, len);
-
-	DWORD bytesRead;
 	int ret = -1;
+	DWORD bytesRead;
+	if (sys_event.num_loops == 0 || fdTable[fd].type == FD_UNUSED || is_socket(fd)) {
+		if (is_socket(fd)) {
+			if ((ret = recv(fd, buf, len, 0)) == SOCKET_ERROR)
+				os_geterror();
+			return ret;
+		}
+		return _read(fd, buf, len);
+	}
 
 	assert((fd >= 0) && (fd < ioTableSize));
 	switch (fdTable[fd].type) {
@@ -322,11 +324,16 @@ int os_read(int fd, char *buf, size_t len) {
 }
 
 int os_write(int fd, char *buf, size_t len) {
-	if (sys_event.num_loops == 0 || fdTable[fd].type == FD_UNUSED)
-		return posix_write(fd, buf, len);
-
-	DWORD bytesWritten;
 	int ret = -1;
+	DWORD bytesWritten;
+	if (sys_event.num_loops == 0 || fdTable[fd].type == FD_UNUSED || is_socket(fd)) {
+		if (is_socket(fd)) {
+			if ((ret = send(fd, buf, len, 0)) == SOCKET_ERROR)
+				os_geterror();
+			return ret;
+		}
+		return _write(fd, buf, len);
+	}
 
 	assert(fd >= 0 && fd < ioTableSize);
 	switch (fdTable[fd].type) {
@@ -347,133 +354,18 @@ int os_write(int fd, char *buf, size_t len) {
 	return ret;
 }
 
-int os_asyncread(int fd, void *buf, int len, int offset, os_cb proc, void *data) {
-	DWORD bytesRead;
-
-	/*
-	 * Catch any bogus fd values
-	 */
-	assert((fd >= 0) && (fd < ioTableSize));
-
-	/*
-	 * Confirm that this is an async fd
-	 */
-	assert(fdTable[fd].type != FD_UNUSED);
-	assert(fdTable[fd].type != FD_FILE_SYNC);
-	assert(fdTable[fd].type != FD_PIPE_SYNC);
-	assert(fdTable[fd].type != FD_SOCKET_SYNC);
-	/*
-	 * Only file offsets should be non-zero, but make sure.
-	 */
-	if (fdTable[fd].type == FD_FILE_ASYNC)
-		if (fdTable[fd].offset >= 0)
-			fdTable[fd].ovList->overlapped.Offset = fdTable[fd].offset;
-		else
-			fdTable[fd].ovList->overlapped.Offset = offset;
-	fdTable[fd].ovList->instance = fdTable[fd].instance;
-	fdTable[fd].ovList->proc = proc;
-	fdTable[fd].ovList->data = data;
-	bytesRead = fd;
-	/*
-	 * ReadFile returns: true success, false failure
-	 */
-	if (!ReadFile(fdTable[fd].fid.fileHandle, buf, len, &bytesRead,
-		(LPOVERLAPPED)fdTable[fd].ovList)) {
-		fdTable[fd].Errno = GetLastError();
-		if (fdTable[fd].Errno == ERROR_NO_DATA ||
-			fdTable[fd].Errno == ERROR_PIPE_NOT_CONNECTED) {
-			PostQueuedCompletionStatus(hIoCompPort, 0, fd, (LPOVERLAPPED)fdTable[fd].ovList);
-			return 0;
-		}
-		if (fdTable[fd].Errno != ERROR_IO_PENDING) {
-			PostQueuedCompletionStatus(hIoCompPort, 0, fd, (LPOVERLAPPED)fdTable[fd].ovList);
-			return -1;
-		}
-		fdTable[fd].Errno = 0;
-	}
-	return 0;
-}
-
-int os_asyncwrite(int fd, void *buf, int len, int offset, os_cb proc, void *data) {
-	DWORD bytesWritten;
-
-	/*
-	 * Catch any bogus fd values
-	 */
-	assert((fd >= 0) && (fd < ioTableSize));
-
-	/*
-	 * Confirm that this is an async fd
-	 */
-	assert(fdTable[fd].type != FD_UNUSED);
-	assert(fdTable[fd].type != FD_FILE_SYNC);
-	assert(fdTable[fd].type != FD_PIPE_SYNC);
-	assert(fdTable[fd].type != FD_SOCKET_SYNC);
-
-	/*
-	 * Only file offsets should be non-zero, but make sure.
-	 */
-	if (fdTable[fd].type == FD_FILE_ASYNC)
-	/*
-	 * Only file opened via OS_AsyncWrite with
-	 * O_APPEND will have an offset != -1.
-	 */
-		if (fdTable[fd].offset >= 0)
-			/*
-			 * If the descriptor has a memory mapped file
-			 * handle, take the offsets from there.
-			 */
-			if (fdTable[fd].hMapMutex != NULL) {
-			/*
-			 * Wait infinitely; this *should* not cause problems.
-			 */
-				WaitForSingleObject(fdTable[fd].hMapMutex, INFINITE);
-
-				/*
-				 * Retrieve the shared offset values.
-				 */
-				fdTable[fd].ovList->overlapped.OffsetHigh = *(fdTable[fd].offsetHighPtr);
-				fdTable[fd].ovList->overlapped.Offset = *(fdTable[fd].offsetLowPtr);
-
-				/*
-				 * Update the shared offset values for the next write
-				 */
-				*(fdTable[fd].offsetHighPtr) += 0;	/* TODO How do I handle overflow */
-				*(fdTable[fd].offsetLowPtr) += len;
-
-				ReleaseMutex(fdTable[fd].hMapMutex);
-			} else
-				fdTable[fd].ovList->overlapped.Offset = fdTable[fd].offset;
-		else
-			fdTable[fd].ovList->overlapped.Offset = offset;
-	fdTable[fd].ovList->instance = fdTable[fd].instance;
-	fdTable[fd].ovList->proc = proc;
-	fdTable[fd].ovList->data = data;
-	bytesWritten = fd;
-	/*
-	 * WriteFile returns: true success, false failure
-	 */
-	if (!WriteFile(fdTable[fd].fid.fileHandle, buf, len, &bytesWritten,
-		(LPOVERLAPPED)fdTable[fd].ovList)) {
-		fdTable[fd].Errno = GetLastError();
-		if (fdTable[fd].Errno != ERROR_IO_PENDING) {
-			PostQueuedCompletionStatus(hIoCompPort, 0, fd, (LPOVERLAPPED)fdTable[fd].ovList);
-			return -1;
-		}
-		fdTable[fd].Errno = 0;
-	}
-	if (fdTable[fd].offset >= 0)
-		fdTable[fd].offset += len;
-	return 0;
-}
-
 int os_close(int fd) {
+	int ret = 0;
 	if (fd == -1) return 0;
 
-	if (sys_event.num_loops == 0 || !valid_fd(fd))
-		return posix_close(fd);
-
-	int ret = 0;
+	if (sys_event.num_loops == 0 || !valid_fd(fd)) {
+		if (is_socket(fd)) {
+			if ((ret = closesocket(fd)) == SOCKET_ERROR)
+				os_geterror();
+			return ret;
+		}
+		return _close(fd);
+	}
 
 	/*
 	 * Catch it if fd is a bogus value
@@ -657,7 +549,7 @@ static int _os_open(const char *path, int mode, int shared) {
 	if (share_mode)
 		file_mode |= SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION;
 
-	HANDLE h = CreateFile(path, osmode, share_mode, &sec, creation_mode, file_mode, NULL);
+	HANDLE h = CreateFileA(path, osmode, share_mode, &sec, creation_mode, file_mode, NULL);
 	if (share_mode)
 		type_mode = FD_PIPE_ASYNC;
 
@@ -694,15 +586,42 @@ int os_open(const char *path, ...) {
 	return _open(path, flags, mode);
 }
 
+int exec_io_pair(execinfo_t *info) {
+	SECURITY_ATTRIBUTES saAttr;
+
+ 	// Set the bInheritHandle flag so pipe handles are inherited.
+	saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+	saAttr.bInheritHandle = TRUE;
+	saAttr.lpSecurityDescriptor = NULL;
+
+ 	// Create a pipe for the child process's STDOUT.
+	if (!CreatePipe(&info->read_output[0], &info->read_output[1], &saAttr, 0))
+		return -1;
+
+  	// Ensure the read handle to the pipe for STDOUT is not inherited.
+	if (!SetHandleInformation((filefd_t)info->read_output[0], HANDLE_FLAG_INHERIT, 1))
+		return -1;
+
+  	// Create a pipe for the child process's STDIN.
+	if (!CreatePipe(&info->write_input[0], &info->write_input[1], &saAttr, 0))
+		return -1;
+
+  	// Ensure the write handle to the pipe for STDIN is not inherited.
+	if (!SetHandleInformation(info->write_input[1], HANDLE_FLAG_INHERIT, 0))
+		return -1;
+
+	return 0;
+}
+
 /** Start a new process with the specified command line */
 static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
-	STARTUPINFOA si = {0, NULL, NULL, NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL};
-	PROCESS_INFORMATION info = {NULL, NULL, 0, 0};
+	STARTUPINFOA si = {0};
+	PROCESS_INFORMATION info = {0};
 	BOOL inherit_handles = 0;
 
 	si.cb = sizeof(STARTUPINFO);
 	if (!i->detached) {
-		if (i->input != INVALID_HANDLE_VALUE || i->output != INVALID_HANDLE_VALUE || i->error != INVALID_HANDLE_VALUE) {
+		if (i->write_input[1] != INVALID_HANDLE_VALUE || i->read_output[1] != INVALID_HANDLE_VALUE || i->error != INVALID_HANDLE_VALUE) {
 			si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 			si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
 			si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
@@ -710,14 +629,14 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 			inherit_handles = 1;
 		}
 
-		if (i->input != inherit) {
-			si.hStdInput = i->input;
-			SetHandleInformation(i->input, HANDLE_FLAG_INHERIT, 1);
+		if (i->write_input[1] != inherit) {
+			si.hStdInput = i->write_input[1];
+			SetHandleInformation(i->write_input[1], HANDLE_FLAG_INHERIT, 1);
 		}
 
-		if (i->output != inherit) {
-			si.hStdOutput = i->output;
-			SetHandleInformation(i->output, HANDLE_FLAG_INHERIT, 1);
+		if (i->read_output[1] != inherit) {
+			si.hStdOutput = i->read_output[1];
+			SetHandleInformation(i->read_output[1], HANDLE_FLAG_INHERIT, 1);
 		}
 
 		if (i->error != inherit) {
@@ -746,6 +665,9 @@ static EVENTS_INLINE process_t os_exec_info(const char *filename, execinfo_t *in
 	if(info->env != NULL)
 		events_free(info->env);
 
+	if (ps == INVALID_HANDLE_VALUE)
+		return OS_NULL;
+
 	info->ps = ps;
 	fdTable[info->fd].fid.fileHandle = ps;
 	return (process_t)info->fd;
@@ -761,10 +683,10 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_datached,
 		info->env = (const char **)str_slice(env, ";", NULL);
 
 	if (io_in != inherit)
-		info->input = io_in;
+		info->write_input[1] = io_in;
 
 	if (io_out != inherit)
-		info->output = io_out;
+		info->read_output[1] = io_out;
 
 	if (io_err != inherit)
 		info->error = io_err;
@@ -785,8 +707,8 @@ EVENTS_INLINE process_t exec(const char *command, const char *args, execinfo_t *
 }
 
 int exec_wait(process_t ps, unsigned int timeout_ms, int *exit_code) {
-	process_t pid = fdTable[(intptr_t)ps].process->ps;
-	if (fdTable[(intptr_t)ps].process->detached)
+	process_t pid = fdTable[(uintptr_t)ps].process->ps;
+	if (fdTable[(uintptr_t)ps].process->detached)
 		return 0;
 
 	int r = WaitForSingleObject(pid, timeout_ms);
@@ -883,91 +805,126 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 static int convert_wsa_error(int wsaerr) {
 	switch (wsaerr) {
 		case WSAEINTR:
-			return EINTR;
+			errno = EINTR;
+			break;
 		case WSAEBADF:
-			return EBADF;
+			errno = EBADF;
+			break;
 		case WSAEACCES:
-			return EACCES;
+			errno = EACCES;
+			break;
 		case WSAEFAULT:
-			return EFAULT;
-		case WSAEINVAL:
-			return EINVAL;
+			errno = EFAULT;
+			break;
+		case WSANOTINITIALISED:
+			errno = EPERM;
+			break;
 		case WSAEMFILE:
-			return EMFILE;
-		case WSAEWOULDBLOCK:
-			return EWOULDBLOCK;
+			errno = EMFILE;
+			break;
 		case WSAEINPROGRESS:
-			return EINPROGRESS;
+			errno = EINPROGRESS;
+			break;
 		case WSAEALREADY:
-			return EALREADY;
+			errno = EALREADY;
+			break;
 		case WSAENOTSOCK:
-			return ENOTSOCK;
+			errno = ENOTSOCK;
+			break;
 		case WSAEDESTADDRREQ:
-			return EDESTADDRREQ;
+			errno = EDESTADDRREQ;
+			break;
 		case WSAEMSGSIZE:
-			return EMSGSIZE;
+			errno = EMSGSIZE; //EFBIG;
+			break;
 		case WSAEPROTOTYPE:
-			return EPROTOTYPE;
+			errno = EPROTOTYPE;
+			break;
 		case WSAENOPROTOOPT:
-			return ENOPROTOOPT;
+			errno = ENOPROTOOPT;
+			break;
 		case WSAEPROTONOSUPPORT:
-			return EPROTONOSUPPORT;
+			errno = EPROTONOSUPPORT;
+			break;
 		case WSAEOPNOTSUPP:
-			return EOPNOTSUPP;
+			errno = ENOTSUP;
+			break;
 		case WSAEAFNOSUPPORT:
-			return EAFNOSUPPORT;
+			errno = EAFNOSUPPORT;
+			break;
 		case WSAEADDRINUSE:
-			return EADDRINUSE;
+			errno = EADDRINUSE;
+			break;
 		case WSAEADDRNOTAVAIL:
-			return EADDRNOTAVAIL;
+			errno = EADDRNOTAVAIL;
+			break;
 		case WSAENETDOWN:
-			return ENETDOWN;
+			errno = ENETDOWN;
+			break;
 		case WSAENETUNREACH:
-			return ENETUNREACH;
+			errno = ENETUNREACH;
+			break;
 		case WSAENETRESET:
-			return ENETRESET;
+			errno = ENETRESET;
+			break;
 		case WSAECONNABORTED:
-			return ECONNABORTED;
+			errno = ECONNABORTED;
+			break;
 		case WSAECONNRESET:
-			return ECONNRESET;
+			errno = ECONNRESET;
+			break;
 		case WSAENOBUFS:
-			return ENOBUFS;
+			errno = ENOMEM;
+			break;
 		case WSAEISCONN:
-			return EISCONN;
+			errno = EISCONN;
+			break;
 		case WSAENOTCONN:
-			return ENOTCONN;
+			errno = ENOTCONN;
+			break;
 		case WSAESHUTDOWN:
-			return ECONNRESET;
+			errno = ECONNRESET;
+			break;
 		case WSAETIMEDOUT:
-			return ETIMEDOUT;
+			errno = ETIMEDOUT;
+			break;
 		case WSAECONNREFUSED:
-			return ECONNREFUSED;
+			errno = ECONNREFUSED;
+			break;
 		case WSAELOOP:
-			return ELOOP;
+			errno = ELOOP;
+			break;
 		case WSAENAMETOOLONG:
-			return ENAMETOOLONG;
+			errno = ENAMETOOLONG;
+			break;
 		case WSAEHOSTDOWN:
-			return ENETDOWN;		/* EHOSTDOWN is not defined */
+			errno = ENETDOWN;	/* EHOSTDOWN is not defined */
+			break;
 		case WSAEHOSTUNREACH:
-			return EHOSTUNREACH;
+			errno = EHOSTUNREACH; //EIO
+			break;
 		case WSAENOTEMPTY:
-			return ENOTEMPTY;
+			errno = ENOTEMPTY;
+			break;
 		case WSAEPROCLIM:
-			return EAGAIN;
 		case WSAEUSERS:
-			return EAGAIN;
 		case WSAEDQUOT:
-			return EAGAIN;
-#ifdef WSAECANCELLED
-		case WSAECANCELLED:		 /* New in WinSock2 */
-			return ECANCELED;
-#endif
+		case WSAEWOULDBLOCK:
+			errno = EAGAIN;
+			break;
+		case WSAECANCELLED:
+			errno = ECANCELED;
+			break;
+		case WSAEINVAL:
+		default:
+			errno = EINVAL;
+			break;
 	}
 
-	return EINVAL;
+	return errno;
 }
 
-int socketpair(int domain, int type, int protocol, sockfd_t sockets[2]) {
+int socketpair(int domain, int type, int protocol, fds_t sockets[2]) {
 	SOCKET listener = SOCKET_ERROR;
 	struct sockaddr_in listener_addr;
 	SOCKET connector = SOCKET_ERROR;
@@ -1005,7 +962,7 @@ int socketpair(int domain, int type, int protocol, sockfd_t sockets[2]) {
 		goto fail_win32_socketpair;
 	}
 
-	connector = socket(AF_INET, SOCK_STREAM, 0);
+	connector = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
 	if (connector == -1) {
 		goto fail_win32_socketpair;
 	}
@@ -1020,8 +977,9 @@ int socketpair(int domain, int type, int protocol, sockfd_t sockets[2]) {
 		goto abort_win32_socketpair;
 	}
 
+	events_set_nonblocking(connector);
 	if (connect(connector, (struct sockaddr *)&connector_addr,
-		addr_size) < 0) {
+		addr_size) < 0 && os_geterror() != EAGAIN) {
 		goto fail_win32_socketpair;
 	}
 
@@ -1048,7 +1006,6 @@ int socketpair(int domain, int type, int protocol, sockfd_t sockets[2]) {
 		goto abort_win32_socketpair;
 	}
 
-	events_set_nonblocking(connector);
 	events_set_nonblocking(acceptor);
 	sockets[0] = connector;
 	sockets[1] = acceptor;
@@ -1060,7 +1017,7 @@ abort_win32_socketpair:
 
 fail_win32_socketpair:
 	if (!errno) {
-		errno = convert_wsa_error(WSAGetLastError());
+		errno = os_geterror();
 	}
 
 	saved_errno = errno;
@@ -1193,7 +1150,6 @@ EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code
 	int r = WaitForSingleObject(t, timeout_ms);
 
 	if (r == WAIT_OBJECT_0) {
-
 		if (exit_code != OS_NULL)
 			GetExitCodeThread(t, (DWORD *)exit_code);
 
@@ -1201,7 +1157,8 @@ EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code
 		return 0;
 
 	} else if (r == WAIT_TIMEOUT) {
-		SetLastError(ETIMEDOUT);
+		errno = ETIMEDOUT;
+		SetLastError(WSAETIMEDOUT);
 	}
 
 	return -1;
@@ -1233,5 +1190,201 @@ EVENTS_INLINE uintptr_t os_self(void) {
 }
 
 EVENTS_INLINE int os_geterror(void) {
-	return GetLastError();
+	return convert_wsa_error(WSAGetLastError());
+}
+
+void os_perror(const char *s) {
+	fprintf(stderr, "%s: %s\n", s, strerror(errno));
+}
+
+int os_rename(const char *oldpath, const char *newpath) {
+	return MoveFileEx(oldpath, newpath, MOVEFILE_REPLACE_EXISTING) ? 0 : -1;
+}
+
+ssize_t pwrite(int d, const void *buf, size_t nbytes, off_t offset) {
+	off_t cpos, opos, rpos;
+	ssize_t bytes;
+	if ((cpos = lseek(d, 0, SEEK_CUR)) == -1)
+		return -1;
+	if ((opos = lseek(d, offset, SEEK_SET)) == -1)
+		return -1;
+	if ((bytes = os_write(d, (char *)buf, nbytes)) == -1)
+		return -1;
+	if ((rpos = lseek(d, cpos, SEEK_SET)) == -1)
+		return -1;
+	return bytes;
+}
+
+ssize_t pread(int d, void *buf, size_t nbytes, off_t offset) {
+	off_t cpos, opos, rpos;
+	ssize_t bytes;
+	if ((cpos = lseek(d, 0, SEEK_CUR)) == -1)
+		return -1;
+	if ((opos = lseek(d, offset, SEEK_SET)) == -1)
+		return -1;
+	if ((bytes = os_read(d, (char *)buf, nbytes)) == -1)
+		return -1;
+	if ((rpos = lseek(d, cpos, SEEK_SET)) == -1)
+		return -1;
+	return bytes;
+}
+
+ssize_t sendfile(int fd_out, int fd_in, off_t *offset, size_t length) {
+	const size_t max_buf_size = 65536;
+	size_t buf_size = length < max_buf_size ? length : max_buf_size;
+	ssize_t result = 0;
+	int n;
+	off_t result_offset = 0;
+	char *buf = (char *)events_malloc(buf_size);
+	if (!buf) {
+		errno = ENOMEM;
+		result = -1;
+	} else {
+		if (*offset != -1)
+			result_offset = _lseeki64(fd_in, *offset, SEEK_SET);
+
+		if (result_offset == -1) {
+			result = -1;
+		} else {
+			while (length > 0) {
+				n = _read(fd_in, buf, length < buf_size ? length : buf_size);
+				if (n == 0) {
+					break;
+				} else if (n == -1) {
+					result = -1;
+					break;
+				}
+
+				length -= n;
+
+				n = _write(fd_out, buf, n);
+				if (n == -1) {
+					result = -1;
+					break;
+				}
+
+				result += n;
+			}
+		}
+		*offset = result_offset;
+		events_free(buf);
+	}
+
+	return result;
+}
+
+static int setfd(int fd, int flag) {
+	int rc = -1;
+	if (flag & FD_CLOEXEC) {
+		HANDLE h = (HANDLE)_get_osfhandle(fd);
+		if (h != NULL)
+			rc = SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0) == 0 ? -1 : 0;
+	}
+	return rc;
+}
+
+static int setfl(int fd, int flag) {
+	int rc = -1;
+	if (flag & O_NONBLOCK) {
+		long mode = 1;
+		rc = ioctlsocket(fd, FIONBIO, &mode);
+	}
+	return rc;
+}
+
+int os_pipe(int fildes[2]) {
+	return socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, PF_UNSPEC, _2socket(fildes));
+}
+
+int pipe2(int fildes[2], int flags) {
+	int rc = os_pipe(fildes);
+	if (rc == 0) {
+		if (flags & O_NONBLOCK) {
+			rc |= setfl(fildes[0], O_NONBLOCK);
+			rc |= setfl(fildes[1], O_NONBLOCK);
+		}
+		if (flags & O_CLOEXEC) {
+			rc |= setfd(fildes[0], FD_CLOEXEC);
+			rc |= setfd(fildes[1], FD_CLOEXEC);
+		}
+		if (rc != 0) {
+			int e = errno;
+			os_close(fildes[0]);
+			os_close(fildes[1]);
+			errno = e;
+		}
+	}
+	return rc;
+}
+
+int getcontext(ucontext_t *ucp) {
+	int ret;
+
+	/* Retrieve the full machine context */
+	ucp->uc_mcontext.ContextFlags = CONTEXT_FULL;
+	ret = GetThreadContext(GetCurrentThread(), &ucp->uc_mcontext);
+
+	return (ret == 0) ? -1 : 0;
+}
+
+int setcontext(const ucontext_t *ucp) {
+	int ret;
+
+	/* Restore the full machine context (already set) */
+	ret = SetThreadContext(GetCurrentThread(), &ucp->uc_mcontext);
+	return (ret == 0) ? -1 : 0;
+}
+
+int makecontext(ucontext_t *ucp, void (*func)(), int argc, ...) {
+	int i;
+	va_list ap;
+	char *sp;
+
+	/* Stack grows down */
+	sp = (char *)(size_t)ucp->uc_stack.ss_sp + ucp->uc_stack.ss_size;
+
+	/* Reserve stack space for the arguments (maximum possible: argc*(8 bytes per argument)) */
+	sp -= argc * 8;
+
+	if (sp < (char *)ucp->uc_stack.ss_sp) {
+		/* errno = ENOMEM;*/
+		return -1;
+	}
+
+	/* Set the instruction and the stack pointer */
+#if defined(_X86_)
+	ucp->uc_mcontext.Eip = (unsigned long long)func;
+	ucp->uc_mcontext.Esp = (unsigned long long)(sp - 4);
+#else
+	ucp->uc_mcontext.Rip = (unsigned long long)func;
+	ucp->uc_mcontext.Rsp = (unsigned long long)(sp - 40);
+#endif
+	/* Save/Restore the full machine context */
+	ucp->uc_mcontext.ContextFlags = CONTEXT_FULL;
+
+	/* Copy the arguments */
+	va_start(ap, argc);
+	for (i = 0; i < argc; i++) {
+		memcpy(sp, ap, 8);
+		ap += 8;
+		sp += 8;
+	}
+	va_end(ap);
+
+	return 0;
+}
+
+int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
+	int ret;
+
+	if (oucp == NULL || (void *)ucp == NULL) {
+		/*errno = EINVAL;*/
+		return -1;
+	}
+
+	ret = getcontext(oucp);
+	if (ret == 0) {
+		ret = setcontext(ucp);
+	}
+	return ret;
 }

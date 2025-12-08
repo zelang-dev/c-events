@@ -10,7 +10,7 @@
 
 static int fired;
 events_t *base;
-static sockfd_t *pipes;
+static fds_t *pipes;
 
 #define	get_timersub(tvp, uvp, vvp)		\
 	do {								\
@@ -22,9 +22,9 @@ static sockfd_t *pipes;
 		}								\
 	} while (0)
 
-static void read_cb(sockfd_t fd, int events, void *arg) {
+static void read_cb(fds_t fd, int events, void *arg) {
 	char ch;
-	sockfd_t sock = (sockfd_t)(intptr_t)arg;
+	fds_t sock = (fds_t)(intptr_t)arg;
 	(void)recv(fd, &ch, sizeof(ch), 0);
 	if (sock >= 0) {
 		if (send(sock, "e", 1, 0) < 0)
@@ -36,10 +36,10 @@ static void read_cb(sockfd_t fd, int events, void *arg) {
 
 static struct timeval *run_once(int num_pipes) {
 	int i;
-	sockfd_t *cp;
+	fds_t *cp;
 	static struct timeval ts, te, tv_timeout;
 
-	sockfd_t *pipes = (sockfd_t *)calloc(num_pipes * 2, sizeof(sockfd_t));
+	fds_t *pipes = (fds_t *)calloc(num_pipes * 2, sizeof(fds_t));
 	if (pipes == NULL) {
 		perror("calloc");
 		exit(1);
@@ -59,8 +59,8 @@ static struct timeval *run_once(int num_pipes) {
 	timerclear(&tv_timeout);
 
 	for (cp = pipes, i = 0; i < num_pipes; i++, cp += 2) {
-		sockfd_t fd = i < num_pipes - 1 ? cp[3] : -1;
-		events_add(base, cp[0], EVENTS_READ, 0, read_cb, (void*)(intptr_t)fd);
+		fds_t fd = i < num_pipes - 1 ? cp[3] : -1;
+		events_add(base, cp[0], EVENTS_READ, 0, read_cb, casting(fd));
 	}
 
 	fired = 0;
@@ -69,8 +69,7 @@ static struct timeval *run_once(int num_pipes) {
 	if (send(pipes[1], "e", 1, 0) < 0)
 		perror("send");
 
-	while (events_is_running(base))
-		events_once(base, 1);
+	events_once(base, 1);
 
 	events_timeofday(&te, NULL);
 	get_timersub(&te, &ts, &te);
@@ -91,7 +90,7 @@ int main(int argc, char **argv) {
 
 	/* init events */
 	events_init(1024);
-	base = events_create(5);
+	base = events_create(60);
 	for (i = 0; i < 25; i++) {
 		tv = run_once(num_pipes);
 		if (tv == NULL)

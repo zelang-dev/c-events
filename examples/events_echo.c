@@ -6,7 +6,7 @@
 #define MAX_FDS 1024
 #define TIMEOUT_SECS 10
 
-static void setup_sock(sockfd_t fd) {
+static void setup_sock(fds_t fd) {
 	char on = 1, r;
 	r = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
 	assert(r == 0);
@@ -15,13 +15,13 @@ static void setup_sock(sockfd_t fd) {
 }
 
 static void close_conn(events_t *loop, int fd) {
-	sockfd_t sfd = fd2socket(fd);
+	fds_t sfd = fd2socket(fd);
 	events_del(sfd);
 	close(sfd);
 	printf("closed: %d\n", fd);
 }
 
-static void rw_callback(sockfd_t sfd, int events, void *cb_arg) {
+static void rw_callback(fds_t sfd, int events, void *cb_arg) {
 	int fd = socket2fd(sfd);
 	events_t *loop = events_loop(sfd);
 	if ((events & EVENTS_TIMEOUT) != 0) {
@@ -53,8 +53,8 @@ static void rw_callback(sockfd_t sfd, int events, void *cb_arg) {
 	}
 }
 
-static void accept_callback(sockfd_t fd, int events, void *cb_arg) {
-	sockfd_t newfd = accept(fd, NULL, NULL);
+static void accept_callback(fds_t fd, int events, void *cb_arg) {
+	fds_t newfd = accept(fd, NULL, NULL);
 	events_t *loop = events_loop(fd);
 	int sfd = socket2fd(newfd);
 	if (sfd != -1) {
@@ -69,7 +69,7 @@ static void accept_callback(sockfd_t fd, int events, void *cb_arg) {
 
 int main(void) {
 	events_t *loop;
-	sockfd_t listen_sock;
+	fds_t listen_sock;
 	char flag = 1;
 
 	/* init events */
