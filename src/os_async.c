@@ -158,7 +158,7 @@ int async_write(int fd, void *buf, int n) {
 	return tot;
 }
 
-static EVENTS_INLINE void enqueue_pool_request(os_worker_t *j, os_request_t *r) {
+EVENTS_INLINE void enqueue_pool_request(os_worker_t *j, os_request_t *r) {
 	atomic_lock(&j->mutex);
 	events_deque_t *queue = sys_event.local[j->id];
 	$append(queue->jobs, r);

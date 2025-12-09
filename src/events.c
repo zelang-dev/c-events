@@ -86,10 +86,10 @@ typedef struct {
 	/* task's FIFO scheduler queue */
 	tasklist_t run_queue[1];
 } events_thread_t;
-tls_static(events_thread_t, __thread, NULL)
+tls_static(events_thread_t, __thrd, NULL)
 
-static void __thread_init(bool is_main, unsigned int thread_id);
-static int __thread_wrapper(void *arg);
+static void __thrd_init(bool is_main, unsigned int thread_id);
+static int __thrd_wrapper(void *arg);
 static int __main_wrapper(void *arg);
 static void task_switch(tasks_t *co);
 static void task_scheduler_switch(void);
@@ -110,15 +110,15 @@ EVENTS_INLINE bool events_is_shutdown(void) {
 }
 
 void events_set_destroy(void) {
-	__thread()->loop = NULL;
+	__thrd()->loop = NULL;
 }
 
 EVENTS_INLINE bool events_is_destroy(void) {
-	return __thread()->loop == NULL;
+	return __thrd()->loop == NULL;
 }
 
 EVENTS_INLINE os_worker_t *events_pool(void) {
-	return __thread()->pool;
+	return __thrd()->pool;
 }
 
 EVENTS_INLINE int events_set_allocator(malloc_func malloc_cb, realloc_func realloc_cb, calloc_func calloc_cb,
@@ -212,7 +212,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 	mach_timebase_info(&sys_event.timer);
 #endif
 
-	__thread_init(true, 0);
+	__thrd_init(true, 0);
 	sys_event.local = (events_deque_t **)events_realloc(sys_event.local,
 		(sys_event.cpu_count + 1) * sizeof(sys_event.local[0]));
 	return 0;
@@ -239,13 +239,13 @@ EVENTS_INLINE void events_deinit(void) {
 		sys_event.gc = NULL;
 	}
 
-	if (__thread()->sleep_handle != NULL
-		&& __thread()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
+	if (__thrd()->sleep_handle != NULL
+		&& __thrd()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
 #if defined(_WIN32) && defined(USE_FIBER)
-		DeleteFiber(__thread()->sleep_handle->type->fiber);
+		DeleteFiber(__thrd()->sleep_handle->type->fiber);
 #endif
-		events_free(__thread()->sleep_handle);
-		__thread()->sleep_handle = NULL;
+		events_free(__thrd()->sleep_handle);
+		__thrd()->sleep_handle = NULL;
 	}
 
 	events_free(sys_event._fds_free_addr);
@@ -432,7 +432,7 @@ EVENTS_INLINE bool events_is_running(events_t *loop) {
 		|| (int)loop->active_timers > 0
 		|| (int)loop->active_io > 0
 		|| (int)loop->active_signals > 0
-		|| __thread()->task_count > 0;
+		|| __thrd()->task_count > 0;
 }
 
 EVENTS_INLINE int events_get_event(events_t *loop __attribute__((unused)), fds_t sfd) {
@@ -491,7 +491,7 @@ EVENTS_INLINE int events_once(events_t *loop, int max_wait) {
 		return -1;
 	}
 
-	if (!__thread()->in_callback && __thread()->task_count) {
+	if (!__thrd()->in_callback && __thrd()->task_count) {
 		tasks_schedulering(false);
 	}
 
@@ -539,10 +539,10 @@ int events_init_loop_internal(events_t *loop, int max_timeout) {
 	loop->timeout.base_time = time(NULL);
 	loop->timeout.resolution = EVENTS_RND_UP(max_timeout, EVENTS_TIMEOUT_VEC_SIZE) / EVENTS_TIMEOUT_VEC_SIZE;
 	if (events_is_destroy())
-		__thread()->loop = loop;
+		__thrd()->loop = loop;
 
 	if (atomic_load(&sys_event.num_loops) == 1) {
-		__thread()->pool = events_add_pool(loop);
+		__thrd()->pool = events_add_pool(loop);
 	}
 
 	return 0;
@@ -728,9 +728,9 @@ static int events_execute(events_t *loop, int max_wait) {
 	timerlist_t *l;
 
 	if (loop->active_io)
-		os_iodispatch((__thread()->task_count ? 0 : max_wait));
+		os_iodispatch((__thrd()->task_count ? 0 : max_wait));
 
-	if (events_poll_once_internal(loop, (__thread()->task_count || loop->active_io ? 0 : max_wait)) != 0) {
+	if (events_poll_once_internal(loop, (__thrd()->task_count || loop->active_io ? 0 : max_wait)) != 0) {
 		return -1;
 	}
 
@@ -820,26 +820,26 @@ fd_types events_fd_type(int fd) {
 #endif
 }
 
-static void __thread_init(bool is_main, unsigned int thread_id) {
-	__thread()->is_main = is_main;
-	__thread()->thrd_id = thread_id;
-	__thread()->started = false;
-	__thread()->exiting = 0;
-	__thread()->in_callback = 0;
-	__thread()->active_timer = 0;
-	__thread()->sleep_count = 0;
-	__thread()->task_count = 0;
-	__thread()->sleep_handle = NULL;
-	__thread()->active_handle = NULL;
-	__thread()->current_handle = NULL;
-	__thread()->main_handle = NULL;
-	__thread()->loop = NULL;
-	__thread()->pool = NULL;
-	__thread()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL), !__thread()->is_main) >= 0;
+static void __thrd_init(bool is_main, unsigned int thread_id) {
+	__thrd()->is_main = is_main;
+	__thrd()->thrd_id = thread_id;
+	__thrd()->started = false;
+	__thrd()->exiting = 0;
+	__thrd()->in_callback = 0;
+	__thrd()->active_timer = 0;
+	__thrd()->sleep_count = 0;
+	__thrd()->task_count = 0;
+	__thrd()->sleep_handle = NULL;
+	__thrd()->active_handle = NULL;
+	__thrd()->current_handle = NULL;
+	__thrd()->main_handle = NULL;
+	__thrd()->loop = NULL;
+	__thrd()->pool = NULL;
+	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL), !__thrd()->is_main) >= 0;
 }
 
 static EVENTS_INLINE void task_scheduler_switch(void) {
-	task_switch(__thread()->main_handle);
+	task_switch(__thrd()->main_handle);
 }
 
 static EVENTS_INLINE tasks_t *task_dequeue(tasklist_t *l) {
@@ -993,11 +993,11 @@ EVENTS_INLINE void task_info(tasks_t *t, int pos) {
 /* Mark the current task as a ``system`` coroutine. These are ignored for the
 purposes of deciding the program is done running */
 static EVENTS_INLINE void task_system(void) {
-	if (!__thread()->running->system) {
-		__thread()->running->system = true;
-		--__thread()->task_count;
-		__thread()->running->tid = __thread()->thrd_id;
-		__thread()->sleep_handle = __thread()->running;
+	if (!__thrd()->running->system) {
+		__thrd()->running->system = true;
+		--__thrd()->task_count;
+		__thrd()->running->tid = __thrd()->thrd_id;
+		__thrd()->sleep_handle = __thrd()->running;
 	}
 }
 
@@ -1005,9 +1005,9 @@ static EVENTS_INLINE void task_system(void) {
 other currently-ready tasks have a chance to run. Returns
 the number of other tasks that ran while the current task was waiting. */
 static EVENTS_INLINE int task_yielding_active(void) {
-	int n = __thread()->num_others_ran;
+	int n = __thrd()->num_others_ran;
 	yield_task();
-	return __thread()->num_others_ran - n - 1;
+	return __thrd()->num_others_ran - n - 1;
 }
 
 static void *task_wait_system(void *v) {
@@ -1017,29 +1017,29 @@ static void *task_wait_system(void *v) {
 	(void)v;
 
 	task_system();
-	if (__thread()->is_main)
+	if (__thrd()->is_main)
 		task_name("task_wait_system");
 	else
-		task_name("task_wait_system #%d", (int)__thread()->thrd_id);
+		task_name("task_wait_system #%d", (int)__thrd()->thrd_id);
 
-	while (!__thread()->exiting) {
-		__thread()->active_timer++;
+	while (!__thrd()->exiting) {
+		__thrd()->active_timer++;
 		/* let everyone else run */
 		while (task_yielding_active() > 0)
 			;
-		__thread()->active_timer--;
+		__thrd()->active_timer--;
 
 		now = events_now();
 		task_info(active_task(), 1);
-		while ((t = __thread()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
-			l = __thread()->sleep_queue;
+		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
+			l = __thrd()->sleep_queue;
 			dequeue(l, t);
-			if (!t->system && --__thread()->sleep_count == 0)
-				__thread()->task_count--;
+			if (!t->system && --__thrd()->sleep_count == 0)
+				__thrd()->task_count--;
 
 			if (!t->halt) {
 				t->status = TASK_NORMAL;
-				l = __thread()->run_queue;
+				l = __thrd()->run_queue;
 				t->ready = true;
 				enqueue(l, t);
 				if (t->sleeping != NULL) {
@@ -1059,14 +1059,14 @@ static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, unsign
 	size_t when = now + (size_t)ms * 1000000;
 	tasks_t *t = NULL;
 
-	for (t = __thread()->sleep_queue->head; t != NULL && t->alarm_time < when; t = t->next)
+	for (t = __thrd()->sleep_queue->head; t != NULL && t->alarm_time < when; t = t->next)
 		;
 
 	if (t) {
 		context->prev = t->prev;
 		context->next = t;
 	} else {
-		context->prev = __thread()->sleep_queue->tail;
+		context->prev = __thrd()->sleep_queue->tail;
 		context->next = NULL;
 	}
 
@@ -1076,29 +1076,29 @@ static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, unsign
 	if (t->prev)
 		t->prev->next = t;
 	else
-		__thread()->sleep_queue->head = t;
+		__thrd()->sleep_queue->head = t;
 
 	if (t->next)
 		t->next->prev = t;
 	else
-		__thread()->sleep_queue->tail = t;
+		__thrd()->sleep_queue->tail = t;
 
-	if (!running->system && __thread()->sleep_count++ == 0)
-		__thread()->task_count++;
+	if (!running->system && __thrd()->sleep_count++ == 0)
+		__thrd()->task_count++;
 }
 
 EVENTS_INLINE unsigned int sleep_task(unsigned int ms) {
 	size_t now = events_now();
 
-	add_timeout(__thread()->running, __thread()->running, ms, now);
-	task_switch(__thread()->current_handle);
+	add_timeout(__thrd()->running, __thrd()->running, ms, now);
+	task_switch(__thrd()->current_handle);
 
 	return (unsigned int)(events_now() - now) / 1000000;
 }
 
 static void wait_cb(fds_t fd, int event, void *arg) {
 	tasks_t *t = (tasks_t *)arg;
-	tasklist_t *l = __thread()->run_queue;
+	tasklist_t *l = __thrd()->run_queue;
 	t->ready = true;
 	enqueue(l, t);
 	events_del(fd);
@@ -1115,8 +1115,8 @@ void async_wait(int fd, int rw) {
 			break;
 	}
 
-	events_add(__thread()->loop, fd, bits, 0, wait_cb, (void *)__thread()->running);
-	task_switch(__thread()->current_handle);
+	events_add(__thrd()->loop, fd, bits, 0, wait_cb, (void *)__thrd()->running);
+	task_switch(__thrd()->current_handle);
 }
 
 #if defined(_WIN32) && defined(USE_FIBER)
@@ -1133,35 +1133,35 @@ static EVENTS_INLINE tasks_t *task_derive(void *memory, unsigned int heapsize) {
 }
 
 EVENTS_INLINE void task_switch(tasks_t *handle) {
-	tasks_t *coro_previous_handle = __thread()->active_handle;
-	__thread()->active_handle = handle;
-	__thread()->active_handle->status = TASK_RUNNING;
-	__thread()->current_handle = coro_previous_handle;
-	if (__thread()->current_handle->status != TASK_SLEEPING)
-		__thread()->current_handle->status = TASK_NORMAL;
+	tasks_t *coro_previous_handle = __thrd()->active_handle;
+	__thrd()->active_handle = handle;
+	__thrd()->active_handle->status = TASK_RUNNING;
+	__thrd()->current_handle = coro_previous_handle;
+	if (__thrd()->current_handle->status != TASK_SLEEPING)
+		__thrd()->current_handle->status = TASK_NORMAL;
 
 	SwitchToFiber(handle->type->fiber);
 }
 
 #elif defined(USE_SJLJ)
-static EVENTS_INLINE void _spring_board(int ignored) {
-	if (sigsetjmp(((coroutine_t *)__thread()->active_sig_handle)->sig_ctx, 0)) {
-		((coroutine_t *)__thread()->active_handle)->sig_func();
+static void _spring_board(int ignored) {
+	if (sigsetjmp(((coroutine_t *)__thrd()->active_sig_handle)->sig_ctx, 0)) {
+		((coroutine_t *)__thrd()->active_handle)->sig_func();
 	}
 }
 
 /* Switch to specified coroutine. */
-static EVENTS_INLINE void task_switch(tasks_t *co) {
+static void task_switch(tasks_t *co) {
 	if (!sigsetjmp(((coroutine_t *)active_task())->sig_ctx, 0)) {
-		tasks_t *task_previous_handle = __thread()->active_handle;
-		__thread()->active_handle = co;
-		__thread()->active_handle->status = TASK_RUNNING;
-		__thread()->current_handle = task_previous_handle;
-		__thread()->active_sig_handle = __thread()->current_handle;
-		if (__thread()->current_handle->status != TASK_SLEEPING)
-			__thread()->current_handle->status = TASK_NORMAL;
+		tasks_t *task_previous_handle = __thrd()->active_handle;
+		__thrd()->active_handle = co;
+		__thrd()->active_handle->status = TASK_RUNNING;
+		__thrd()->current_handle = task_previous_handle;
+		__thrd()->active_sig_handle = __thrd()->current_handle;
+		if (__thrd()->current_handle->status != TASK_SLEEPING)
+			__thrd()->current_handle->status = TASK_NORMAL;
 
-		siglongjmp(((coroutine_t *)__thread()->active_handle)->sig_ctx, 1);
+		siglongjmp(((coroutine_t *)__thrd()->active_handle)->sig_ctx, 1);
 	}
 }
 
@@ -1185,7 +1185,7 @@ static tasks_t *task_derive(void *co, size_t stack_size) {
 			handler.sa_handler = _spring_board;
 			handler.sa_flags = SA_ONSTACK;
 			sigemptyset(&handler.sa_mask);
-			__thread()->active_sig_handle = (tasks_t *)co;
+			__thrd()->active_sig_handle = (tasks_t *)co;
 
 			if (!sigaction(SIGUSR1, &handler, &old_handler)) {
 				if (!raise(SIGUSR1)) {
@@ -1218,7 +1218,7 @@ static tasks_t *task_derive(void *co, size_t stack_size) {
 		return NULL;
 	}
 
-	ctx->uc_link = (ucontext_t *)__thread()->main_handle;
+	ctx->uc_link = (ucontext_t *)__thrd()->main_handle;
 	ctx->uc_stack.ss_sp = (unsigned char *)co + 8;
 	ctx->uc_stack.ss_size = size - 64;
 	makecontext(ctx, (void (*)(void))task_func, 0);
@@ -1228,20 +1228,20 @@ static tasks_t *task_derive(void *co, size_t stack_size) {
 
 /* Switch to specified coroutine. */
 static EVENTS_INLINE void task_switch(tasks_t *co) {
-	tasks_t *task_previous_handle = __thread()->active_handle;
-	__thread()->active_handle = co;
-	__thread()->active_handle->status = TASK_RUNNING;
-	__thread()->current_handle = task_previous_handle;
-	if (__thread()->current_handle->status != TASK_SLEEPING)
-		__thread()->current_handle->status = TASK_NORMAL;
+	tasks_t *task_previous_handle = __thrd()->active_handle;
+	__thrd()->active_handle = co;
+	__thrd()->active_handle->status = TASK_RUNNING;
+	__thrd()->current_handle = task_previous_handle;
+	if (__thrd()->current_handle->status != TASK_SLEEPING)
+		__thrd()->current_handle->status = TASK_NORMAL;
 
-	if (swapcontext((ucontext_t *)__thread()->current_handle, (ucontext_t *)__thread()->active_handle))
+	if (swapcontext((ucontext_t *)__thrd()->current_handle, (ucontext_t *)__thrd()->active_handle))
 		perror("Error! `swapcontext`");
 }
 
 #endif
 static EVENTS_INLINE void task_yielding(tasks_t *co) {
-	if (!__thread()->in_callback && !__thread()->active_timer)
+	if (!__thrd()->in_callback && !__thrd()->active_timer)
 		tasks_stack_check(0);
 
 	task_switch(co);
@@ -1285,11 +1285,11 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 		return NULL;
 	}
 
-	if (!__thread()->current_handle)
-		__thread()->current_handle = active_task();
+	if (!__thrd()->current_handle)
+		__thrd()->current_handle = active_task();
 
-	if (!__thread()->main_handle)
-		__thread()->main_handle = __thread()->active_handle;
+	if (!__thrd()->main_handle)
+		__thrd()->main_handle = __thrd()->active_handle;
 
 	co->func = func;
 	co->args = args;
@@ -1322,16 +1322,16 @@ unsigned int task_push(tasks_t *t, bool is_thread) {
 		t->cid = (unsigned int)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
 		t->rid = tasks_create_result()->id;
 		if (!is_thread)
-			t->tid = __thread()->thrd_id;
+			t->tid = __thrd()->thrd_id;
 
 		if (c->group_active && c->task_group != NULL && !c->group_finish) {
 			t->waiting = true;
 			$append(c->task_group->group, t);
 		}
 
-		__thread()->task_count++;
+		__thrd()->task_count++;
 		t->ready = true;
-		tasklist_t *l = __thread()->run_queue;
+		tasklist_t *l = __thrd()->run_queue;
 		enqueue(l, t);
 	}
 
@@ -1374,8 +1374,8 @@ bool defer_free(void *data) {
 	if (data == NULL)
 		return false;
 
-	if (__thread()->running != NULL)
-		t = __thread()->running;
+	if (__thrd()->running != NULL)
+		t = __thrd()->running;
 	else
 		t = active_task();
 
@@ -1387,18 +1387,18 @@ bool defer_free(void *data) {
 }
 
 EVENTS_INLINE tasks_t *active_task(void) {
-	if (!__thread()->active_handle) {
-		__thread()->active_handle = __thread()->active_buffer;
+	if (!__thrd()->active_handle) {
+		__thrd()->active_handle = __thrd()->active_buffer;
 #if defined(_WIN32) && defined(USE_FIBER)
 		ConvertThreadToFiber(0);
-		__thread()->active_handle->type->fiber = GetCurrentFiber();
+		__thrd()->active_handle->type->fiber = GetCurrentFiber();
 #endif
 	}
 
-	return __thread()->active_handle;
+	return __thrd()->active_handle;
 }
 
-static unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of_args, ...) {
+unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of_args, ...) {
 	va_list ap;
 
 	va_start(ap, num_of_args);
@@ -1434,13 +1434,13 @@ EVENTS_INLINE task_group_t *task_group(void) {
 }
 
 array_t tasks_wait(task_group_t *wg) {
-	if (!__thread()->started && __thread()->is_main) {
-		__thread()->started = true;
+	if (!__thrd()->started && __thrd()->is_main) {
+		__thrd()->started = true;
 		task_name("main_task");
 	}
 
 	tasks_t *worker, *t = active_task();
-	tasklist_t *l = __thread()->run_queue;
+	tasklist_t *l = __thrd()->run_queue;
 	array_t wgr = NULL;
 	bool is_sleeping = false;
 	if (t->group_active && t->task_group == wg) {
@@ -1463,7 +1463,7 @@ array_t tasks_wait(task_group_t *wg) {
 						enqueue(l, worker);
 					} else if (worker->status == TASK_SLEEPING) {
 						is_sleeping = true;
-						worker->sleeping = __thread()->running;
+						worker->sleeping = __thrd()->running;
 						suspend_task();
 					}
 
@@ -1478,35 +1478,35 @@ array_t tasks_wait(task_group_t *wg) {
 		$delete(wg->group);
 		events_free(wg);
 		if (!is_sleeping)
-			__thread()->task_count--;
+			__thrd()->task_count--;
 	}
 
 	return wgr;
 }
 
 EVENTS_INLINE void async_run(events_t *loop) {
-	__thread()->loop = loop;
+	__thrd()->loop = loop;
 	int status;
 	do {
-		if (!__thread()->task_count	|| (status = tasks_schedulering(true)) == TASK_ERRED)
+		if (!__thrd()->task_count	|| (status = tasks_schedulering(true)) == TASK_ERRED)
 			break;
 	} while (is_ptr_usable(loop) || (!events_shutdown_set && !events_got_signal));
 }
 
 EVENTS_INLINE void suspend_task(void) {
-	task_yielding(__thread()->current_handle);
+	task_yielding(__thrd()->current_handle);
 }
 
 EVENTS_INLINE void yield_task(void) {
-	tasks_t *t = __thread()->running;
-	tasklist_t *l = __thread()->run_queue;
+	tasks_t *t = __thrd()->running;
+	tasklist_t *l = __thrd()->run_queue;
 	t->ready = true;
 	enqueue(l, t);
 	suspend_task();
 }
 
 EVENTS_INLINE void tasks_stack_check(int n) {
-	tasks_t *t = __thread()->running;
+	tasks_t *t = __thrd()->running;
 	if ((char *)&t <= (char *)t->stack_base
 		|| (char *)&t - (char *)t->stack_base < 256 + n
 		|| t->magic_number != TASK_MAGIC_NUMBER) {
@@ -1536,7 +1536,7 @@ EVENTS_INLINE size_t tasks_cpu_count(void) {
 
 void task_name(char *fmt, ...) {
 	va_list args;
-	tasks_t *t = __thread()->running;
+	tasks_t *t = __thrd()->running;
 	va_start(args, fmt);
 	vsnprintf(t->name, sizeof(t->name), fmt, args);
 	va_end(args);
@@ -1556,28 +1556,28 @@ static EVENTS_INLINE void task_gc(tasks_t *co) {
 
 static int tasks_schedulering(bool do_io) {
 	bool has_task = false;
-	tasks_t *t = task_dequeue(__thread()->run_queue);
+	tasks_t *t = task_dequeue(__thrd()->run_queue);
 	if (t != NULL) {
 		has_task = true;
 		t->ready = false;
 		t->cycles++;
 
-		__thread()->num_others_ran++;
-		__thread()->running = t;
-		if (do_io && __thread()->loop != NULL) {
-			__thread()->in_callback++;
-			events_once(__thread()->loop, 0);
-			__thread()->in_callback--;
+		__thrd()->num_others_ran++;
+		__thrd()->running = t;
+		if (do_io && __thrd()->loop != NULL) {
+			__thrd()->in_callback++;
+			events_once(__thrd()->loop, 0);
+			__thrd()->in_callback--;
 		}
 
 		if (!t->halt)
 			task_switch(t);
 	}
 
-	__thread()->running = NULL;
+	__thrd()->running = NULL;
 	if (t && t->halt) {
 		if (!t->system) {
-			--__thread()->task_count;
+			--__thrd()->task_count;
 		}
 
 		if (!t->waiting && !t->referenced) {
@@ -1592,7 +1592,7 @@ static int tasks_schedulering(bool do_io) {
 
 static bool task_take(events_deque_t *queue) {
 	int i, available;
-	tasklist_t *l = __thread()->run_queue;
+	tasklist_t *l = __thrd()->run_queue;
 	bool work_taken = false;
 	atomic_thread_fence(memory_order_seq_cst);
 	if ((available = (int)atomic_load_explicit(&queue->available, memory_order_relaxed)) > 0) {
@@ -1607,7 +1607,7 @@ static bool task_take(events_deque_t *queue) {
 			atomic_fetch_sub(&queue->available, 1);
 			t->ready = true;
 			enqueue(l, t);
-			__thread()->task_count++;
+			__thrd()->task_count++;
 			work_taken = true;
 		}
 	}
@@ -1637,17 +1637,17 @@ static void task_worker_enqueue(tasks_t *t) {
 	atomic_fetch_add(&queue->available, 1);
 }
 
-static void *__worker_tasks_main(param_t *args) {
-	events_deque_t *queue = args[0]->object;
-	events_t *loop = args[1]->object;
-	__thread()->started = true;
+static void *__worker_tasks_main(param_t args) {
+	events_deque_t *queue = args[0].object;
+	events_t *loop = args[1].object;
+	__thrd()->started = true;
 
-	task_name("worker_tasks_main #%d", (int)__thread()->thrd_id);
+	task_name("worker_tasks_main #%d", (int)__thrd()->thrd_id);
 	task_info(active_task(), -1);
 	task_take(queue);
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
-		if (__thread()->task_count > 1 || __thread()->loop != NULL) {
+		if (__thrd()->task_count > 1 || __thrd()->loop != NULL) {
 			yield_task();
 		} else {
 			break;
@@ -1657,7 +1657,7 @@ static void *__worker_tasks_main(param_t *args) {
 		task_take(queue);
 	}
 
-	__thread()->loop = NULL;
+	__thrd()->loop = NULL;
 	return 0;
 }
 
@@ -1668,33 +1668,33 @@ static int __worker_tasks_wrapper(void *arg) {
 	unsigned int status, res = TASK_ERRED, tid = work->id;
 	events_free(arg);
 
-	__thread_init(false, tid);
+	__thrd_init(false, tid);
 	while (!atomic_flag_load_explicit(&queue->started, memory_order_relaxed))
 		os_sleep(0);
 
 	if (loop == NULL)
-		__thread()->loop = queue->loop;
+		__thrd()->loop = queue->loop;
 	else
-		__thread()->loop = loop;
+		__thrd()->loop = loop;
 
-	loop = __thread()->loop;
+	loop = __thrd()->loop;
 	if ((int)async_task_ex(Kb(32), __worker_tasks_main, 2, queue, loop) > 0) {
 		res = 0;
 		do {
-			if (!__thread()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
+			if (!__thrd()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
 				|| tasks_schedulering(true) == TASK_ERRED)
 				break;
-		} while (__thread()->loop != NULL);
+		} while (__thrd()->loop != NULL);
 		events_destroy(loop);
 	}
 
-	if (__thread()->sleep_handle != NULL
-		&& __thread()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
+	if (__thrd()->sleep_handle != NULL
+		&& __thrd()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
 #if defined(_WIN32) && defined(USE_FIBER)
-		DeleteFiber(__thread()->sleep_handle->type->fiber);
+		DeleteFiber(__thrd()->sleep_handle->type->fiber);
 #endif
-		events_free(__thread()->sleep_handle);
-		__thread()->sleep_handle = NULL;
+		events_free(__thrd()->sleep_handle);
+		__thrd()->sleep_handle = NULL;
 	}
 
 	os_exit(res);

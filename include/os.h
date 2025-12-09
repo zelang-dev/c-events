@@ -330,7 +330,7 @@ typedef cpuset_t os_cpumask;
 typedef pthread_t os_thread_t;
 #define __os_stdcall
 typedef int (__os_stdcall *os_thread_proc)(void *);
-typedef struct addrinfo *addrinfo_t;
+typedef struct addrinfo **__restrict__ addrinfo_t;
 #endif
 
 typedef void (*spawn_cb)(fds_t writeto, char *readfrom);
@@ -606,7 +606,7 @@ C_API int os_open(const char *path, int flags, mode_t mode);
 #	define tls_local_external(type, variable) tls_local_proto(type, variable, C_API)
 #else
 #   define tls_local_return(type, var)    return (type)events_##var##_tls;
-#   define tls_local_get(type, var, _initial, prefix)	\
+#   define tls_local_get(type, var, _initial, prefix)		\
         prefix EVENTS_INLINE type var(void) {			\
             if (events_##var##_tls == _initial) {		\
                 events_##var##_tls = &events_##var##_buffer;	\
@@ -614,7 +614,7 @@ C_API int os_open(const char *path, int flags, mode_t mode);
             tls_local_return(type, var)        			\
         }
 
-#   define tls_local_setup(type, var, _initial, prefix)	\
+#   define tls_local_setup(type, var, _initial, prefix)		\
         prefix thread_local type events_##var##_tls = _initial;	\
         prefix EVENTS_INLINE void var##_reset(void) {	\
             events_##var##_tls = NULL;					\
