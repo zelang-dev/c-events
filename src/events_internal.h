@@ -9,6 +9,10 @@
 #   define assert
 #endif
 
+#ifndef MAX_PATH
+#	define MAX_PATH          260
+#endif
+
 #if defined(_MSC_VER)
   #undef  MPROTECT
   #define MPROTECT

@@ -38,7 +38,7 @@ void deque_init(events_deque_t *q, int size_hint) {
 	deque_thread_set = true;
 }
 
-static void deque_resize(events_deque_t *q) {
+void deque_resize(events_deque_t *q) {
 	deque_array_t *a = (deque_array_t *)atomic_load_explicit(&q->array, memory_order_relaxed);
 	size_t old_size = a->size;
 	size_t new_size = old_size * 2;
@@ -70,7 +70,7 @@ static void deque_resize(events_deque_t *q) {
 	events_free(a);
 }
 
-static tasks_t *deque_take(events_deque_t *q) {
+tasks_t *deque_take(events_deque_t *q) {
 	size_t b = atomic_load_explicit(&q->bottom, memory_order_relaxed) - 1;
 	size_t t = atomic_load_explicit(&q->top, memory_order_relaxed);
 	deque_array_t *a = (deque_array_t *)atomic_load_explicit(&q->array, memory_order_relaxed);
@@ -96,7 +96,7 @@ static tasks_t *deque_take(events_deque_t *q) {
 	return x;
 }
 
-static void deque_push(events_deque_t *q, tasks_t *w) {
+void deque_push(events_deque_t *q, tasks_t *w) {
 	size_t b = atomic_load_explicit(&q->bottom, memory_order_relaxed);
 	size_t t = atomic_load_explicit(&q->top, memory_order_acquire);
 	deque_array_t *a = (deque_array_t *)atomic_load_explicit(&q->array, memory_order_relaxed);
@@ -110,7 +110,7 @@ static void deque_push(events_deque_t *q, tasks_t *w) {
 	atomic_store_explicit(&q->bottom, b + 1, memory_order_relaxed);
 }
 
-static tasks_t *deque_steal(events_deque_t *q) {
+tasks_t *deque_steal(events_deque_t *q) {
 	size_t t = atomic_load_explicit(&q->top, memory_order_acquire);
 	atomic_thread_fence(memory_order_seq_cst);
 	size_t b = atomic_load_explicit(&q->bottom, memory_order_acquire);
@@ -128,7 +128,7 @@ static tasks_t *deque_steal(events_deque_t *q) {
 	return x;
 }
 
-static void deque_free(events_deque_t *q) {
+void deque_free(events_deque_t *q) {
 	deque_array_t *a = NULL;
 	if (q != NULL) {
 		a = atomic_get(deque_array_t *, &q->array);
@@ -142,7 +142,7 @@ static void deque_free(events_deque_t *q) {
 	}
 }
 
-static void deque_destroy(void) {
+void deque_destroy(void) {
 	events_deque_t **queue = sys_event.local;
 	if (queue != NULL) {
 		size_t i, count = atomic_load(&sys_event.num_loops);
@@ -166,7 +166,7 @@ static void deque_destroy(void) {
 	}
 }
 
-static tasks_t *deque_peek(events_deque_t *q, int index) {
+tasks_t *deque_peek(events_deque_t *q, int index) {
 	deque_array_t *a = (deque_array_t *)atomic_load(&q->array);
 	if ((a != NULL) && (index <= a->size))
 		return (tasks_t *)atomic_load_explicit(&a->buffer[index % a->size], memory_order_relaxed);

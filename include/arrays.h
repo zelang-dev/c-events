@@ -19,7 +19,6 @@ extern "C" {
 
 typedef void (*dtor_func_t)(void *);
 typedef void *(*data_func_t)(void *);
-typedef void *(*param_func_t)(param_t);
 typedef intptr_t(*intptr_func_t)(intptr_t);
 typedef enum {
 	DATA_INVALID = -1,

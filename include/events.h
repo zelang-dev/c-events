@@ -31,7 +31,7 @@ If `assembly`, reduced to:
 
 #ifndef _WIN32
 #	define _GNU_SOURCE
-#	define _BSD_SOURCE
+#	define _DEFAULT_SOURCE
 # 	undef USE_FIBER
 # 	undef USE_UCONTEXT
 #else
