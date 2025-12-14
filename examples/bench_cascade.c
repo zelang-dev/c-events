@@ -50,6 +50,8 @@ static struct timeval *run_once(int num_pipes) {
 			perror("socketpair");
 			exit(1);
 		}
+		events_set_nonblocking(cp[0]);
+		events_set_nonblocking(cp[1]);
 	}
 
 	/* measurements includes event setup */
@@ -69,7 +71,7 @@ static struct timeval *run_once(int num_pipes) {
 	if (send(pipes[1], "e", 1, 0) < 0)
 		perror("send");
 
-	events_once(base, 1);
+	events_once(base, 0);
 
 	events_timeofday(&te, NULL);
 	get_timersub(&te, &ts, &te);

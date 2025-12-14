@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
 
 	events_timeofday(&lasttime, NULL);
 	while (events_is_running(base))
-		events_once(base, 1);
+		events_once(base, 0);
 
 	/* Finalize library */
 	events_destroy(base);

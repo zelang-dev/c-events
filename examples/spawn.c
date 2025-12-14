@@ -5,13 +5,8 @@ void _on_exit(int exit_status, int term_signal) {
 		exit_status, term_signal);
 }
 
-void _on_output(fds_t input, char *buf) {
-	printf(".%s", buf);
-}
-
-
 void *main_main(param_t args) {
-	execinfo_t *child = spawn("child", "test-dir", _on_output, _on_exit);
+	execinfo_t *child = spawn("child_command", "test-dir", NULL, _on_exit);
 	if (child != NULL) {
 		fprintf(stderr, "\nLaunched process with ID %zu\n", spawn_pid(child));
 		while (!spawn_is_finish(child))

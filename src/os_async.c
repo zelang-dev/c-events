@@ -166,7 +166,7 @@ EVENTS_INLINE void enqueue_pool_request(os_worker_t *j, os_request_t *r) {
 	atomic_fetch_add(&queue->available, 1);
 }
 
-static unsigned int async_loop(events_t *loop, size_t heapsize, param_func_t fn, unsigned int num_of_args, ...) {
+static uint32_t async_loop(events_t *loop, size_t heapsize, param_func_t fn, uint32_t num_of_args, ...) {
 	va_list ap;
 
 	va_start(ap, num_of_args);
@@ -254,7 +254,7 @@ static void *queue_work_handler(param_t args) {
 	return job->result->value.object;
 }
 
-unsigned int queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...) {
+uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...) {
 	va_list ap;
 
 	va_start(ap, num_args);
@@ -266,7 +266,7 @@ unsigned int queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...
 	f->func = fn;
 	atomic_unlock(&f->mutex);
 	atomic_flag_clear(&f->done);
-	unsigned int id = async_loop(thrd->loop, Kb(9), queue_work_handler, 2, thrd, f);
+	uint32_t id = async_loop(thrd->loop, Kb(64), queue_work_handler, 2, thrd, f);
 	yield_task();
 	return id;
 }
@@ -375,19 +375,19 @@ EVENTS_INLINE int fs_open(const char *path, int flag, int mode) {
 	return async_fs_open(events_pool(), path, flag, mode);
 }
 
-EVENTS_INLINE int async_fs_read(os_worker_t *thrd, int fd, void *buf, unsigned int count) {
+EVENTS_INLINE int async_fs_read(os_worker_t *thrd, int fd, void *buf, uint32_t count) {
 	return await_for(queue_work(thrd, _os_read, 3, casting(fd), buf, casting(count))).integer;
 }
 
-EVENTS_INLINE int fs_read(int fd, void *buf, unsigned int count) {
+EVENTS_INLINE int fs_read(int fd, void *buf, uint32_t count) {
 	return async_fs_read(events_pool(), fd, buf, count);
 }
 
-EVENTS_INLINE int async_fs_write(os_worker_t *thrd, int fd, const void *buf, unsigned int count) {
+EVENTS_INLINE int async_fs_write(os_worker_t *thrd, int fd, const void *buf, uint32_t count) {
 	return await_for(queue_work(thrd, _os_write, 3, casting(fd), buf, casting(count))).integer;
 }
 
-EVENTS_INLINE int fs_write(int fd, const void *buf, unsigned int count) {
+EVENTS_INLINE int fs_write(int fd, const void *buf, uint32_t count) {
 	return async_fs_write(events_pool(), fd, buf, count);
 }
 
@@ -445,18 +445,12 @@ EVENTS_INLINE size_t fs_filesize(const char *path) {
 }
 
 static void spawn_io(fds_t fd, int events, void *arg) {
-	char data[1024] = {0};
-	int len;
+	char data[Kb(32)] = {0};
+	int count;
 	execinfo_t *info = (execinfo_t *)arg;
-	spawn_cb func = (spawn_cb)info->io_func;
-	if (events & EVENTS_CLOSED) {
-		events_del(fd);
-		events_destroy(events_loop(fd));
-	} else if ((len = recv(fd, data, sizeof(data), 0))) {
-		func((fds_t)info->write_input[0], data);
-	} else {
-		perror("spawn_io");
-	}
+	spawn_cb func = info->io_func;
+	if ((count = read((fds_t)info->read_output[0], data, sizeof(data))) > 0)
+		func((fds_t)info->write_input[1], count, data);
 }
 
 static void *spawning(param_t args) {
@@ -472,9 +466,11 @@ static void *spawning(param_t args) {
 	}
 #endif
 	task_name("spawn #%d", task_id());
-	//status = events_add(events_pool()->loop, (fds_t)info->read_output[0], EVENTS_READ | EVENTS_CLOSED, 0, spawn_io, info);
 	pid = exec((const char *)command, args[1].const_char_ptr, info);
-	if (pid > 0) {
+	if (info->io_func)
+		status = events_add(events_pool()->loop, (fds_t)info->read_output[1], EVENTS_WRITE, 0, spawn_io, info);
+
+	if (!status && pid > 0) {
 		info->context = t;
 		yield_task();
 		while (exec_wait(pid, 0, &status) && os_geterror() == ETIMEDOUT) {
@@ -483,6 +479,14 @@ static void *spawning(param_t args) {
 		}
 
 		info->context = NULL;
+		if (info->io_func) {
+			events_del((fds_t)info->read_output[1]);
+			close(info->read_output[0]);
+			close(info->read_output[1]);
+			close(info->write_input[0]);
+			close(info->write_input[1]);
+		}
+
 		if (info->exit_func)
 			info->exit_func(status, status);
 	} else {
@@ -493,38 +497,27 @@ static void *spawning(param_t args) {
 }
 
 execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func) {
-	/*if (mkfifo("spawn", 0600) == -1) {
-		perror("mkfifo");
-		return NULL;
+	execinfo_t *info = exec_info(NULL, false, inherit, inherit, inherit);
+	if (io_func) {
+#ifdef _WIN32
+		if (pipe(_2fd(info->write_input))
+			|| pipe(_2fd(info->read_output))) {
+			perror("pipe");
+			return NULL;
+		}
+#else
+		if (pipe2(_2fd(info->write_input), O_NONBLOCK)
+			|| pipe2(_2fd(info->read_output), O_NONBLOCK)) {
+			perror("pipe2");
+			return NULL;
+		}
+#endif
 	}
 
-	fds_t socket = open("spawn", O_RDONLY | O_NONBLOCK, 0);
-	if (socket == -1) {
-		perror("open");
-		unlink(mkfifo_name());
-		return NULL;
-	}
-	info->read_output[0] = (filefd_t)socket;*/
-	execinfo_t *info = exec_info(NULL, false, inherit, inherit, inherit);
-	/*
-#ifdef _WIN32
-	if (pipe(_2fd(info->write_input))
-		|| pipe(_2fd(info->read_output))) {
-		perror("pipe");
-		return NULL;
-	}
-#else
-	if (pipe2(_2fd(info->write_input), O_NONBLOCK)
-		|| pipe2(_2fd(info->read_output), O_NONBLOCK)) {
-		perror("pipe2");
-		return NULL;
-	}
-#endif
-*/
-	//assign_fd(info->read_output[0], (intptr_t)info->fd);
-	info->io_func = (exec_io_cb)io_func;
+	info->io_func = io_func;
 	info->exit_func = exit_func;
-	info->rid = async_task(spawning, 3, command, args, info);
+	info->is_spawn = true;
+	info->rid = async_task_ex(Kb(64), spawning, 3, command, args, info);
 	yield_task();
 	return info->context == NULL ? NULL : info;
 }
@@ -535,7 +528,6 @@ EVENTS_INLINE uintptr_t spawn_pid(execinfo_t *child) {
 #else
 	return (uintptr_t)child->ps;
 #endif
-
 }
 
 EVENTS_INLINE bool spawn_is_finish(execinfo_t *child) {

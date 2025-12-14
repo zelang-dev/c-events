@@ -27,10 +27,12 @@ typedef struct {
 	os_cb proc;	    /* callout completion procedure */
 	void *data;	    /* caller private data */
 	int fd;
+	int event_fd;
 	int len;
 	int offset;
 	void *buf;
 	int inUse;
+	inotify_event_t *inotify;	/* for watched directory handles */
 	execinfo_t process[1];
 } FD_TABLE;
 
@@ -205,23 +207,37 @@ EVENTS_INLINE int os_open(const char *path, int flags, mode_t mode) {
 	return open(path, flags, mode);
 }
 
+EVENTS_INLINE int os_close(int fd) {
+	if (fd == -1) return 0;
+	int r, can_clear = events_valid_fd(fd);
+	if (can_clear)
+		events_free_fd(fd);
+
+	r = close(events_get_fd(fd));
+	if (can_clear) {
+		fdTable[fd].type = FD_UNUSED;
+		fdTable[fd].fd = TASK_ERRED;
+	}
+
+	return r;
+}
+
 EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) {
 	return connect(s, name, namelen);
 }
 
-static int new_fd(int fd) {
+int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 	int i, index = -1;
-
 	events_fd_t *target = events_target(fd);
 	acquire_lock(fd);
 	while (target->loop && target->loop->active_descriptors >= ioTableSize)
 		grow_ioTable();
 
-	if (fd > 0 && fd < ioTableSize && fdTable[fd].type == FD_UNKNOWN) {
+	if (fd > 0 && fd < ioTableSize && fdTable[fd].type == FD_UNUSED) {
 		index = fd;
 	} else {
 		for (i = 1; i < ioTableSize; ++i) {
-			if (fdTable[i].type == FD_UNKNOWN) {
+			if (fdTable[i].type == FD_UNUSED) {
 				index = i;
 				break;
 			}
@@ -231,29 +247,66 @@ static int new_fd(int fd) {
 	if (index != -1) {
 		fdTable[index].proc = NULL;
 		fdTable[index].data = NULL;
-		fdTable[index].fd = fd;
-		fdTable[index].len = -1;
-		fdTable[index].offset = -1;
+		fdTable[index].fd = TASK_ERRED;
+		fdTable[index].event_fd = fd;
+		fdTable[index].len = DATA_INVALID;
+		fdTable[index].offset = DATA_INVALID;
 		fdTable[index].buf = NULL;
+		fdTable[index].inotify = NULL;
 		fdTable[index].inUse = 0;
-		fdTable[index].type = FD_CHILD;
+		fdTable[index].type = type;
 		fdTable[index].process->fd = index;
 		fdTable[index].process->env = NULL;
+		fdTable[index].process->io_func = NULL;
+		fdTable[index].process->exit_func = NULL;
 		fdTable[index].process->detached = false;
+		fdTable[index].process->is_spawn = false;
 		fdTable[index].process->write_input[0] = inherit;
 		fdTable[index].process->write_input[1] = inherit;
 		fdTable[index].process->read_output[0] = inherit;
 		fdTable[index].process->read_output[1] = inherit;
 		fdTable[index].process->error = inherit;
-		fdTable[index].process->ps = -1;
+		fdTable[index].process->ps = DATA_INVALID;
 	}
 
 	release_lock(fd);
 	return index;
 }
 
-static EVENTS_INLINE unsigned int get_fd(int pseudo) {
-	return fdTable[pseudo].process->ps;
+EVENTS_INLINE bool events_valid_fd(int fd) {
+	return (fd >= 0) && (fd < ioTableSize)
+		&& fdTable[fd].type != FD_UNUSED
+		&& fdTable[fd].fd != TASK_ERRED;
+}
+
+EVENTS_INLINE bool events_assign_fd(filefd_t handle, int pseudo) {
+	if ((pseudo >= 0) && (pseudo < ioTableSize)) {
+		fdTable[pseudo].fd = handle;
+		fdTable[pseudo].event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+		return true;
+	}
+
+	errno = EINVAL;
+	return false;
+}
+
+EVENTS_INLINE uint32_t events_get_fd(int pseudo) {
+	if (events_valid_fd(pseudo))
+		return fdTable[pseudo].fd;
+
+	return pseudo;
+}
+
+void events_free_fd(int fd) {
+	if ((fd >= 0) && (fd < ioTableSize)) {
+		acquire_lock(fd);
+		if (fdTable[fd].type != FD_UNUSED) {
+			close(fdTable[fd].event_fd);
+			fdTable[fd].event_fd = TASK_ERRED;
+		}
+
+		release_lock(fd);
+	}
 }
 
 static inline process_t os_exec_info(const char *filename, execinfo_t *info) {
@@ -265,6 +318,7 @@ static inline process_t os_exec_info(const char *filename, execinfo_t *info) {
 		if (info->env != NULL)
 			events_free(info->env);
 
+		fdTable[info->fd].fd = p;
 		info->ps = p;
 		info->argv = NULL;
 		info->env = NULL;
@@ -275,13 +329,32 @@ static inline process_t os_exec_info(const char *filename, execinfo_t *info) {
 		goto end;
 	} else {
 		struct sigaction sa = {0};
+		bool is_spawn = info->is_spawn;
 		sa.sa_handler = SIG_DFL;
 		sigaction(SIGPIPE, &sa, NULL);
 
-		if (info->write_input[1] != -1)
-			dup2(info->write_input[1], STDIN_FILENO);
-		if (info->read_output[1] != -1)
-			dup2(info->read_output[1], STDOUT_FILENO);
+		if (info->write_input[(is_spawn ? 0 : 1)] != -1) {
+			if (dup2(info->write_input[(is_spawn ? 0 : 1)], STDIN_FILENO) < 0) {
+				perror("dup2");
+				goto end;
+			}
+
+			// Close the unwanted write side
+			if (is_spawn)
+				close(info->write_input[1]);
+		}
+
+		if (info->read_output[1] != -1) {
+			if (dup2(info->read_output[1], STDOUT_FILENO) < 0){
+				perror("dup2");
+				goto end;
+			}
+
+			// Close the unwanted read side
+			if (is_spawn)
+				close(info->read_output[0]);
+		}
+
 		if (info->error != -1)
 			dup2(info->error, STDERR_FILENO);
 	}
@@ -298,7 +371,7 @@ end:
 
 EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 	filefd_t io_in, filefd_t io_out, filefd_t io_err) {
-	int pseudofd = new_fd(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
+	int pseudofd = events_new_fd(FD_CHILD, eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK), -1);
 	execinfo_t *info = fdTable[pseudofd].process;
 	info->detached = is_detached;
 	if (env != NULL && str_has(env, "=") && str_has(env, ";"))
@@ -328,7 +401,7 @@ EVENTS_INLINE process_t exec(const char *command, const char *args, execinfo_t *
 	return os_exec_info(command, info);
 }
 
-int exec_wait(process_t ps, unsigned int timeout_ms, int *exit_code) {
+int exec_wait(process_t ps, uint32_t timeout_ms, int *exit_code) {
 	siginfo_t s;
 	int r, f = 0;
 
@@ -340,7 +413,7 @@ int exec_wait(process_t ps, unsigned int timeout_ms, int *exit_code) {
 		s.si_pid = 0;
 	}
 	do {
-		r = waitid(P_PID, (id_t)get_fd(ps), &s, WEXITED | f);
+		r = waitid(P_PID, (id_t)fdTable[(intptr_t)ps].process->ps, &s, WEXITED | f);
 	} while (r != 0 && errno == EINTR);
 	if (r != 0)
 		return -1;
@@ -356,6 +429,8 @@ int exec_wait(process_t ps, unsigned int timeout_ms, int *exit_code) {
 		else
 			*exit_code = -s.si_status;
 	}
+
+	os_close((intptr_t)ps);
 	return 0;
 }
 
@@ -486,11 +561,11 @@ EVENTS_INLINE void _timespec_addms(struct timespec *ts, size_t ms) {
 	}
 }
 
-EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code) {
+EVENTS_INLINE int os_join(os_thread_t t, uint32_t timeout_ms, int *exit_code) {
 	void *result;
 	int r;
 
-	if (timeout_ms == (unsigned int)-1) {
+	if (timeout_ms == (uint32_t)-1) {
 		r = pthread_join(t, &result);
 	}
 
@@ -529,7 +604,7 @@ EVENTS_INLINE uintptr_t os_self() {
 	return (uintptr_t)pthread_self();
 }
 
-EVENTS_INLINE void os_exit(unsigned int exit_code) {
+EVENTS_INLINE void os_exit(uint32_t exit_code) {
 	pthread_exit((void *)(intptr_t)exit_code);
 }
 
@@ -537,7 +612,7 @@ EVENTS_INLINE int os_detach(os_thread_t t) {
 	return pthread_detach(t);
 }
 
-EVENTS_INLINE void os_cpumask_set(os_cpumask *mask, unsigned int i) {
+EVENTS_INLINE void os_cpumask_set(os_cpumask *mask, uint32_t i) {
 	CPU_SET(i, mask);
 }
 
@@ -550,7 +625,7 @@ EVENTS_INLINE int os_affinity(os_thread_t t, const os_cpumask *mask) {
 #endif
 }
 
-EVENTS_INLINE int os_sleep(unsigned int msec) {
+EVENTS_INLINE int os_sleep(uint32_t msec) {
 	struct timespec ts = {
 		.tv_sec = msec / 1000,
 		.tv_nsec = (msec % 1000) * 1000000,

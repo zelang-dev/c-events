@@ -6,7 +6,6 @@
 #undef open
 #undef connect
 
-#define LOCALHOST "localhost"
 static CRITICAL_SECTION events_siglock;
 static volatile sig_atomic_t signal_running = false;
 volatile sig_atomic_t events_got_signal = 0;
@@ -27,7 +26,7 @@ static int ioTableSize = 256;
 typedef union {
 	HANDLE fileHandle;
 	SOCKET sock;
-	unsigned int value;
+	uint32_t value;
 } DESCRIPTOR;
 
 struct OVERLAPPED_REQUEST {
@@ -52,6 +51,7 @@ struct FD_TABLE {
 	unsigned long instance;
 	int status;
 	int offset;			/* only valid for async file writes */
+	array_t inotify;	/* for watched directory handles */
 	LPDWORD offsetHighPtr;	/* pointers to offset high and low words */
 	LPDWORD offsetLowPtr;	/* only valid for async file writes (logs) */
 	HANDLE  hMapMutex;		/* mutex handle for multi-proc offset update */
@@ -117,14 +117,34 @@ static void os_error(const char *text) {
 	LocalFree(buf);
 }
 
-EVENTS_INLINE bool valid_fd(int fd) {
+EVENTS_INLINE void clear_fd_events(void) {
+	int i;
+	EnterCriticalSection(&fdTableCritical);
+	for (i = 0; i < ioTableSize; ++i) {
+		if (fdTable[i].type != FD_UNUSED) {
+			fdTable[i].status = -1;
+			PostQueuedCompletionStatus(hIoCompPort, -1, i, &fdTable[i].ovList->overlapped);
+			if (fdTable[i].inotify != NULL) {
+				foreach(watch in fdTable[i].inotify) {
+					CloseHandle((filefd_t)watch.ulong_long);
+					//$remove(fdTable[i].inotify, iwatch);
+				}
+				$delete(fdTable[i].inotify);
+				fdTable[i].inotify = NULL;
+			}
+		}
+	}
+	LeaveCriticalSection(&fdTableCritical);
+}
+
+EVENTS_INLINE bool events_valid_fd(int fd) {
 	return (fd >= 0) && (fd < ioTableSize) ? fdTable[fd].type != FD_UNUSED : false ;
 }
 
-bool assign_fd(HANDLE handle, int pseudo) {
+bool events_assign_fd(filefd_t handle, int pseudo) {
 	if (!CreateIoCompletionPort(handle, hIoCompPort, pseudo, 0)) {
-		os_error("CreateIoCompletionPort");
-		free_fd(pseudo);
+		os_error("events_assign_fd");
+		events_free_fd(pseudo);
 		CloseHandle(handle);
 		return false;
 	}
@@ -132,15 +152,11 @@ bool assign_fd(HANDLE handle, int pseudo) {
 	return true;
 }
 
-EVENTS_INLINE unsigned int get_fd(int pseudo) {
-	return fdTable[pseudo].fid.value;
+EVENTS_INLINE uint32_t events_get_fd(int pseudo) {
+	return events_valid_fd(pseudo) ? fdTable[pseudo].fid.value : pseudo;
 }
 
-EVENTS_INLINE HANDLE get_handle(int pseudo) {
-	return fdTable[pseudo].fid.fileHandle;
-}
-
-int new_fd(FILE_TYPE type, int fd, int desiredFd) {
+int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 	int index = -1;
 	events_fd_t *target = events_target(fd);
 	EnterCriticalSection(&fdTableCritical);
@@ -176,13 +192,15 @@ int new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].path = NULL;
 		fdTable[index].Errno = NO_ERROR;
 		fdTable[index].status = 0;
-		fdTable[index].offset = -1;
+		fdTable[index].offset = DATA_INVALID;
 		fdTable[index].offsetHighPtr = fdTable[index].offsetLowPtr = NULL;
 		fdTable[index].hMapMutex = NULL;
+		fdTable[index].inotify = NULL;
 		fdTable[index].ovList->overlapped.hEvent = CreateEvent(NULL, FALSE,	FALSE, NULL);
-		fdTable[index].process->fd = -1;
+		fdTable[index].process->fd = TASK_ERRED;
 		fdTable[index].process->env = NULL;
 		fdTable[index].process->detached = false;
+		fdTable[index].process->is_spawn = false;
 		fdTable[index].process->write_input[0] = inherit;
 		fdTable[index].process->write_input[1] = inherit;
 		fdTable[index].process->read_output[0] = inherit;
@@ -190,6 +208,8 @@ int new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].process->error = inherit;
 		fdTable[index].process->context = NULL;
 		fdTable[index].process->ps = INVALID_HANDLE_VALUE;
+		if (type == FD_MONITOR_ASYNC)
+			fdTable[index].inotify = array();
 	}
 
 	LeaveCriticalSection(&fdTableCritical);
@@ -213,7 +233,7 @@ int os_init(void) {
 	 * Create the I/O completion port to be used for our I/O queue.
 	 */
 	if (hIoCompPort == INVALID_HANDLE_VALUE) {
-		hIoCompPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
+		hIoCompPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 		if (hIoCompPort == INVALID_HANDLE_VALUE) {
 			fprintf(stderr, "CreateIoCompletionPort!  ERROR: %d\r\n\r\n", GetLastError());
 			os_shutdown();
@@ -252,7 +272,7 @@ EVENTS_INLINE int is_socket(int fd) {
 	return (WSAEnumNetworkEvents((SOCKET)fd, NULL, &events) == 0);
 }
 
-void free_fd(int fd) {
+void events_free_fd(int fd) {
 	/* Catch it if fd is a bogus value */
 	assert((fd >= 0) && (fd < ioTableSize));
 
@@ -261,9 +281,9 @@ void free_fd(int fd) {
 		switch (fdTable[fd].type) {
 			case FD_FILE_SYNC:
 			case FD_FILE_ASYNC:
-				/* Free file path string */
-				assert(fdTable[fd].path != NULL);
-				free(fdTable[fd].path);
+			case FD_MONITOR_ASYNC:
+				if (fdTable[fd].path != NULL)
+					events_free(fdTable[fd].path);
 				fdTable[fd].path = NULL;
 				break;
 			default:
@@ -282,11 +302,10 @@ void free_fd(int fd) {
 	}
 
 	LeaveCriticalSection(&fdTableCritical);
-	return;
 }
 
 EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) {
-	if (sys_event.num_loops == 0 || !valid_fd(s))
+	if (sys_event.num_loops == 0 || !events_valid_fd(s))
 		return connect(s, name, namelen);
 
 	return os_accept_pipe(s);
@@ -358,7 +377,7 @@ int os_close(int fd) {
 	int ret = 0;
 	if (fd == -1) return 0;
 
-	if (sys_event.num_loops == 0 || !valid_fd(fd)) {
+	if (sys_event.num_loops == 0 || !events_valid_fd(fd)) {
 		if (is_socket(fd)) {
 			if ((ret = closesocket(fd)) == SOCKET_ERROR)
 				os_geterror();
@@ -390,7 +409,7 @@ int os_close(int fd) {
 			ret = -1;		/* fake failure */
 	}
 
-	free_fd(fd);
+	events_free_fd(fd);
 	return ret;
 }
 
@@ -424,9 +443,10 @@ int os_iodispatch(int ms) {
 				| (target->events & EVENTS_WRITE ? EVENTS_WRITE : 0)
 				| (target->events & EVENTS_CLOSED ? EVENTS_CLOSED : 0);
 
-			if (revents != 0 && target->is_iodispatch && target->loop_id != 0)
+			if (revents != 0 && target->is_iodispatch && target->loop_id != 0
+				&& fdTable[fd].type != FD_MONITOR_ASYNC)
 				(target->callback)((target->backend_used ? fdTable[fd].fid.value : fd), revents, target->cb_arg);
-			else if (target->events & EVENTS_WATCH)
+			else if (fdTable[fd].type == FD_MONITOR_ASYNC)
 				(target->callback)(fd, EVENTS_WATCH, target->cb_arg);
 			else if (fdTable[fd].type == FD_FILE_ASYNC)
 				(pOv->proc)((intptr_t)fdTable[fd].fid.value, bytes, pOv->data);
@@ -465,7 +485,7 @@ static int os_accept_pipe(int fd) {
 		}
 	}
 
-	ipcFd = new_fd(FD_PIPE_ASYNC, (intptr_t)fdTable[fd].fid.fileHandle, -1);
+	ipcFd = events_new_fd(FD_PIPE_ASYNC, (intptr_t)fdTable[fd].fid.fileHandle, -1);
 	if (ipcFd == -1) {
 		DisconnectNamedPipe(fdTable[fd].fid.fileHandle);
 	}
@@ -553,8 +573,8 @@ static int _os_open(const char *path, int mode, int shared) {
 	if (share_mode)
 		type_mode = FD_PIPE_ASYNC;
 
-	fd = new_fd((FILE_TYPE)type_mode, (intptr_t)h, -1);
-	return assign_fd(h, fd) ? fd : -1;
+	fd = events_new_fd((FILE_TYPE)type_mode, (intptr_t)h, -1);
+	return events_assign_fd(h, fd) ? fd : -1;
 }
 
 int os_open(const char *path, ...) {
@@ -562,9 +582,9 @@ int os_open(const char *path, ...) {
 	int fake, pipe, flags, mode = 0, ipc = str_has(path, SYS_PIPE_PRE);
 
 	if (str_has((const char *)sys_event.pNamed, (char *)path)) {
-		fake = new_fd(FD_PIPE_ASYNC, (intptr_t)sys_event.pHandle, -1);
+		fake = events_new_fd(FD_PIPE_ASYNC, (intptr_t)sys_event.pHandle, -1);
 		pipe = os_accept_pipe(fake);
-		return assign_fd(sys_event.pHandle, pipe) ? pipe : -1;
+		return events_assign_fd(sys_event.pHandle, pipe) ? pipe : -1;
 	}
 
 	va_start(ap, path);
@@ -586,38 +606,11 @@ int os_open(const char *path, ...) {
 	return _open(path, flags, mode);
 }
 
-int exec_io_pair(execinfo_t *info) {
-	SECURITY_ATTRIBUTES saAttr;
-
- 	// Set the bInheritHandle flag so pipe handles are inherited.
-	saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
-	saAttr.bInheritHandle = TRUE;
-	saAttr.lpSecurityDescriptor = NULL;
-
- 	// Create a pipe for the child process's STDOUT.
-	if (!CreatePipe(&info->read_output[0], &info->read_output[1], &saAttr, 0))
-		return -1;
-
-  	// Ensure the read handle to the pipe for STDOUT is not inherited.
-	if (!SetHandleInformation((filefd_t)info->read_output[0], HANDLE_FLAG_INHERIT, 1))
-		return -1;
-
-  	// Create a pipe for the child process's STDIN.
-	if (!CreatePipe(&info->write_input[0], &info->write_input[1], &saAttr, 0))
-		return -1;
-
-  	// Ensure the write handle to the pipe for STDIN is not inherited.
-	if (!SetHandleInformation(info->write_input[1], HANDLE_FLAG_INHERIT, 0))
-		return -1;
-
-	return 0;
-}
-
 /** Start a new process with the specified command line */
 static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 	STARTUPINFOA si = {0};
 	PROCESS_INFORMATION info = {0};
-	BOOL inherit_handles = 0;
+	BOOL is_spawn = i->is_spawn, inherit_handles = 0;
 
 	si.cb = sizeof(STARTUPINFO);
 	if (!i->detached) {
@@ -629,9 +622,9 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 			inherit_handles = 1;
 		}
 
-		if (i->write_input[1] != inherit) {
-			si.hStdInput = i->write_input[1];
-			SetHandleInformation(i->write_input[1], HANDLE_FLAG_INHERIT, 1);
+		if (i->write_input[(is_spawn ? 0 : 1)] != inherit) {
+			si.hStdInput = i->write_input[(is_spawn ? 0 : 1)];
+			SetHandleInformation(i->write_input[(is_spawn ? 0 : 1)], HANDLE_FLAG_INHERIT, 1);
 		}
 
 		if (i->read_output[1] != inherit) {
@@ -675,7 +668,7 @@ static EVENTS_INLINE process_t os_exec_info(const char *filename, execinfo_t *in
 
 EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_datached,
 	filefd_t io_in, filefd_t io_out, filefd_t io_err) {
-	int pseudofd = new_fd(FD_PROCESS_ASYNC, (intptr_t)hIoCompPort, -1);
+	int pseudofd = events_new_fd(FD_PROCESS_ASYNC, (intptr_t)hIoCompPort, -1);
 	execinfo_t *info = fdTable[pseudofd].process;
 
 	info->detached = is_datached;
@@ -706,7 +699,7 @@ EVENTS_INLINE process_t exec(const char *command, const char *args, execinfo_t *
 	return os_exec_info(command, info);
 }
 
-int exec_wait(process_t ps, unsigned int timeout_ms, int *exit_code) {
+int exec_wait(process_t ps, uint32_t timeout_ms, int *exit_code) {
 	process_t pid = fdTable[(uintptr_t)ps].process->ps;
 	if (fdTable[(uintptr_t)ps].process->detached)
 		return 0;
@@ -1146,7 +1139,7 @@ EVENTS_INLINE os_thread_t os_create(os_thread_proc proc, void *param) {
 	return thrd == 0 ? OS_NULL : (os_thread_t)thrd;
 }
 
-EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code) {
+EVENTS_INLINE int os_join(os_thread_t t, uint32_t timeout_ms, int *exit_code) {
 	int r = WaitForSingleObject(t, timeout_ms);
 
 	if (r == WAIT_OBJECT_0) {
@@ -1164,7 +1157,7 @@ EVENTS_INLINE int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code
 	return -1;
 }
 
-EVENTS_INLINE void os_exit(unsigned int exit_code) {
+EVENTS_INLINE void os_exit(uint32_t exit_code) {
 	_endthreadex(exit_code);
 }
 
@@ -1172,7 +1165,7 @@ EVENTS_INLINE int os_detach(os_thread_t t) {
 	return 0 == CloseHandle(t);
 }
 
-EVENTS_INLINE void os_cpumask_set(os_cpumask *mask, unsigned int i) {
+EVENTS_INLINE void os_cpumask_set(os_cpumask *mask, uint32_t i) {
 	mask->value |= ((size_t)1 << i);
 }
 
@@ -1180,7 +1173,7 @@ EVENTS_INLINE int os_affinity(os_thread_t t, const os_cpumask *mask) {
 	return (0 == SetThreadAffinityMask(t, mask->value));
 }
 
-EVENTS_INLINE int os_sleep(unsigned int msec) {
+EVENTS_INLINE int os_sleep(uint32_t msec) {
 	Sleep(msec);
 	return 0;
 }
@@ -1387,4 +1380,50 @@ int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
 		ret = setcontext(ucp);
 	}
 	return ret;
+}
+
+EVENTS_INLINE int inotify_init(void) {
+	return events_new_fd(FD_MONITOR_ASYNC, (intptr_t)hIoCompPort, -1);
+}
+
+EVENTS_INLINE int inotify_init1(int flags) {
+	(void)flags;
+	return inotify_init();
+}
+
+filefd_t inotify_add_watch(int fd, const char *name, uint32_t mask) {
+	struct stat st;
+	if (!fs_stat(name, &st) && (st.st_mode & S_IFMT) == S_IFDIR) {
+		// create a handle for a directory to look for
+		HANDLE hDir = CreateFileA(name, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
+		if (hDir != INVALID && events_assign_fd(hDir, fd)) {
+			if (fdTable[fd].path == NULL)
+				fdTable[fd].path = (char *)events_calloc(1, 4096);
+
+			int r = ReadDirectoryChangesW(hDir, fdTable[fd].path, 4096, true, mask, NULL, &fdTable[fd].ovList->overlapped, NULL);
+			if (r == 1) {
+				SetLastError(ERROR_IO_PENDING);
+			} else if (GetLastError() != ERROR_IO_PENDING) {
+				CloseHandle(hDir);
+				events_free_fd(fd);
+				return TASK_ERRED;
+			}
+
+			//fdTable[fd].fid.fileHandle = hDir;
+			$append(fdTable[fd].inotify, hDir);
+			return hDir;
+		}
+	}
+
+	return TASK_ERRED;
+}
+
+EVENTS_INLINE int inotify_rm_watch(int fd, filefd_t wd) {
+	foreach(watch in fdTable[fd].inotify) {
+		if ((filefd_t)watch.ulong_long == wd) {
+			$remove(fdTable[fd].inotify, iwatch);
+			//CloseHandle((filefd_t)wd);
+			break;
+		}
+	}
 }

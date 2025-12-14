@@ -43,7 +43,7 @@ void *worker(param_t args) {
 
 	sleep_task(seconds(1));
 
-	printf(LN_CLR"Worker %d done, task id: #%d", id, task_id());
+	printf(LN_CLR"Worker %d done, task id: #%d\n", id, task_id());
 	return 0;
 }
 

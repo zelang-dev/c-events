@@ -57,11 +57,11 @@ typedef struct {
 	/* track the number of tasks used */
 	int task_count;
 	/* indicator for thread termination. */
-	unsigned int exiting;
+	uint32_t exiting;
 	/* thread id assigned */
-	unsigned int thrd_id;
+	uint32_t thrd_id;
 	/* number of other task that ran while the current task was waiting.*/
-	unsigned int num_others_ran;
+	uint32_t num_others_ran;
 	/* per thread event loop */
 	events_t *loop;
 	os_worker_t *pool;
@@ -86,13 +86,19 @@ typedef struct {
 	/* task's FIFO scheduler queue */
 	tasklist_t run_queue[1];
 } events_thread_t;
-tls_static(events_thread_t, __thrd, NULL)
+thrd_static(events_thread_t, __thrd, NULL)
 
-static void __thrd_init(bool is_main, unsigned int thread_id);
+struct task_group_s {
+	data_types type;
+	array_t group;
+};
+
+static void __thrd_init(bool is_main, uint32_t thread_id);
 static int __thrd_wrapper(void *arg);
 static int __main_wrapper(void *arg);
 static void task_switch(tasks_t *co);
 static void task_scheduler_switch(void);
+static void task_sleep_switch(void);
 static int tasks_schedulering(bool do_io);
 static void *task_wait_system(void *v);
 static void defer_cleanup(tasks_t *t);
@@ -348,13 +354,13 @@ EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_i
 	target->is_iodispatch = false;
 	target->backend_used = false;
 #ifdef _WIN32
-	if (valid_fd(fd) || !is_socket(fd)) {
+	if (events_valid_fd(fd) || !is_socket(fd)) {
 		is_io = true;
-		if (valid_fd(fd)) {
-			target->_backend = (intptr_t)get_fd(fd);
+		if (events_valid_fd(fd)) {
+			target->_backend = (intptr_t)events_get_fd(fd);
 		} else {
 			target->backend_used = true;
-			target->_backend = (intptr_t)new_fd(FD_FILE_ASYNC, fd, -1);
+			target->_backend = (intptr_t)events_new_fd(FD_FILE_ASYNC, fd, -1);
 		}
 
 		loop->active_io++;
@@ -445,7 +451,7 @@ int events_set_event(fds_t sfd, int event) {
 	events_t *loop = events_loop(sfd);
 	bool is_io = false;
 #ifdef _WIN32
-	if ((is_io = (valid_fd(sfd) || !is_socket(sfd)))) {
+	if ((is_io = (events_valid_fd(sfd) || !is_socket(sfd)))) {
 		if (events_target(socket2fd(sfd))->events != event)
 			return -1;
 
@@ -820,7 +826,7 @@ fd_types events_fd_type(int fd) {
 #endif
 }
 
-static void __thrd_init(bool is_main, unsigned int thread_id) {
+static void __thrd_init(bool is_main, uint32_t thread_id) {
 	__thrd()->is_main = is_main;
 	__thrd()->thrd_id = thread_id;
 	__thrd()->started = false;
@@ -864,6 +870,7 @@ static void task_delete(tasks_t *co) {
 	} else {
 		if (co->magic_number == TASK_MAGIC_NUMBER) {
 			co->magic_number = TASK_ERRED;
+			co->garbage = NULL;
 #if defined(_WIN32) && defined(USE_FIBER)
 			DeleteFiber(co->type->fiber);
 #endif
@@ -924,6 +931,11 @@ static void task_awaitable(void) {
 static EVENTS_INLINE void task_func(void) {
 	task_awaitable();
 	task_done(); /* called only if coroutine function returns */
+}
+
+static EVENTS_INLINE void task_sleep_switch(void) {
+	task_switch(__thrd()->sleep_handle);
+	task_scheduler_switch();
 }
 
 /* Returns task status state string. */
@@ -1023,13 +1035,11 @@ static void *task_wait_system(void *v) {
 		task_name("task_wait_system #%d", (int)__thrd()->thrd_id);
 
 	while (!__thrd()->exiting) {
-		__thrd()->active_timer++;
 		/* let everyone else run */
 		while (task_yielding_active() > 0)
 			;
-		__thrd()->active_timer--;
 
-		now = events_now();
+		now = events_nsec();
 		task_info(active_task(), 1);
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
 			l = __thrd()->sleep_queue;
@@ -1055,7 +1065,7 @@ static void *task_wait_system(void *v) {
 	return 0;
 }
 
-static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, unsigned int ms, size_t now) {
+static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, uint32_t ms, size_t now) {
 	size_t when = now + (size_t)ms * 1000000;
 	tasks_t *t = NULL;
 
@@ -1087,13 +1097,13 @@ static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, unsign
 		__thrd()->task_count++;
 }
 
-EVENTS_INLINE unsigned int sleep_task(unsigned int ms) {
-	size_t now = events_now();
+EVENTS_INLINE uint32_t sleep_task(uint32_t ms) {
+	size_t now = events_nsec();
 
 	add_timeout(__thrd()->running, __thrd()->running, ms, now);
 	task_switch(__thrd()->current_handle);
 
-	return (unsigned int)(events_now() - now) / 1000000;
+	return (uint32_t)(events_nsec() - now) / 1000000;
 }
 
 static void wait_cb(fds_t fd, int event, void *arg) {
@@ -1125,7 +1135,7 @@ static EVENTS_INLINE void __stdcall fiber_thunk(void *func) {
 }
 
 /* Windows fibers do not allow users to supply their own memory */
-static EVENTS_INLINE tasks_t *task_derive(void *memory, unsigned int heapsize) {
+static EVENTS_INLINE tasks_t *task_derive(void *memory, uint32_t heapsize) {
 	active_task();
 	coroutine_t *co = (coroutine_t *)memory;
 	co->fiber = CreateFiber(heapsize, fiber_thunk, (void *)task_func);
@@ -1167,8 +1177,8 @@ static void task_switch(tasks_t *co) {
 
 static tasks_t *task_derive(void *co, size_t stack_size) {
 	coroutine_t *contxt = (coroutine_t *)co;
-	size_t size = stack_size + sizeof(_results_data_t);
-	size -= sizeof(tasks_t);
+	void *memory = (unsigned char *)co + sizeof(_results_data_t);
+	stack_size -= sizeof(tasks_t);
 	if (contxt) {
 		struct sigaction handler;
 		struct sigaction old_handler;
@@ -1179,8 +1189,8 @@ static tasks_t *task_derive(void *co, size_t stack_size) {
 		contxt->sig_func = contxt->stack = NULL;
 
 		stack.ss_flags = 0;
-		stack.ss_size = size;
-		contxt->stack = stack.ss_sp = (void *)co;
+		stack.ss_size = stack_size;
+		contxt->stack = stack.ss_sp = memory;
 		if (stack.ss_sp && !sigaltstack(&stack, &old_stack)) {
 			handler.sa_handler = _spring_board;
 			handler.sa_flags = SA_ONSTACK;
@@ -1259,7 +1269,7 @@ static results_data_t tasks_create_result(void) {
 	result->is_terminated = false;
 	result->id = id;
 	result->result.object = NULL;
-	result->type = DATA_OBJ;
+	result->type = DATA_PTR;
 	results[id] = result;
 	atomic_store_explicit(&sys_event.results, results, memory_order_release);
 	return result;
@@ -1277,6 +1287,9 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	/* Stack size should be at least `TASK_STACK_SIZE`. */
 	if ((heapsize != 0 && heapsize < TASK_STACK_SIZE) || heapsize == 0)
 		heapsize = TASK_STACK_SIZE;
+
+	if (atomic_load(&sys_event.id_generate) == 1)
+		heapsize = heapsize * 4;
 
 	heapsize = _tasks_align_forward(heapsize + sizeof(tasks_t), 16); /* Stack size should be aligned to 16 bytes. */
 	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL
@@ -1316,10 +1329,10 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	return co;
 }
 
-unsigned int task_push(tasks_t *t, bool is_thread) {
+uint32_t task_push(tasks_t *t, bool is_thread) {
 	if (t && t->status == TASK_SUSPENDED && t->cid == DATA_INVALID) {
 		tasks_t *c = active_task();
-		t->cid = (unsigned int)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
+		t->cid = (uint32_t)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
 		t->rid = tasks_create_result()->id;
 		if (!is_thread)
 			t->tid = __thrd()->thrd_id;
@@ -1338,7 +1351,7 @@ unsigned int task_push(tasks_t *t, bool is_thread) {
 	return (t == NULL) ? TASK_ERRED : t->rid;
 }
 
-static EVENTS_INLINE results_data_t task_result_get(unsigned int id) {
+static EVENTS_INLINE results_data_t task_result_get(uint32_t id) {
 	return (results_data_t)atomic_load_explicit(&sys_event.results[id], memory_order_relaxed);
 }
 
@@ -1346,22 +1359,22 @@ EVENTS_INLINE bool task_is_terminated(tasks_t *co) {
 	return is_ptr_usable(co) ? co->halt : true;
 }
 
-EVENTS_INLINE values_t await_for(unsigned int id) {
+EVENTS_INLINE values_t await_for(uint32_t id) {
 	while (!task_result_get(id)->is_terminated)
 		yield_task();
 
 	return results_for(id);
 }
 
-EVENTS_INLINE bool task_is_ready(unsigned int id) {
+EVENTS_INLINE bool task_is_ready(uint32_t id) {
 	return task_result_get(id)->is_ready;
 }
 
-EVENTS_INLINE unsigned int task_id(void) {
+EVENTS_INLINE uint32_t task_id(void) {
 	return active_task()->rid;
 }
 
-EVENTS_INLINE values_t results_for(unsigned int id) {
+EVENTS_INLINE values_t results_for(uint32_t id) {
 	results_data_t result = task_result_get(id);
 	if (result->is_ready)
 		return result->result;
@@ -1398,7 +1411,7 @@ EVENTS_INLINE tasks_t *active_task(void) {
 	return __thrd()->active_handle;
 }
 
-unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of_args, ...) {
+uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...) {
 	va_list ap;
 
 	va_start(ap, num_of_args);
@@ -1408,7 +1421,7 @@ unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of
 	return task_push(create_task(heapsize, (data_func_t)fn, params), false);
 }
 
-unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...) {
+uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
 	va_list ap;
 
 	va_start(ap, num_of_args);
@@ -1421,6 +1434,7 @@ unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...) {
 static EVENTS_INLINE task_group_t *create_task_group(void) {
 	task_group_t *wg = events_calloc(1, sizeof(task_group_t));
 	wg->group = array();
+	wg->type = DATA_TASK;
 	return wg;
 }
 
@@ -1431,6 +1445,13 @@ EVENTS_INLINE task_group_t *task_group(void) {
 	t->task_group = create_task_group();
 
 	return t->task_group;
+}
+
+EVENTS_INLINE size_t tasks_count(task_group_t *wg) {
+	if (is_group(wg))
+		return $size(wg->group);
+
+	return 0;
 }
 
 array_t tasks_wait(task_group_t *wg) {
@@ -1474,8 +1495,15 @@ array_t tasks_wait(task_group_t *wg) {
 			itask = 0;
 		}
 
-		defer_free(wgr);
+		if ($size(wgr) == 0) {
+			$delete(wgr);
+			wgr = NULL;
+		} else {
+			defer_free(wgr);
+		}
+
 		$delete(wg->group);
+		wg->group = NULL;
 		events_free(wg);
 		if (!is_sleeping)
 			__thrd()->task_count--;
@@ -1503,6 +1531,11 @@ EVENTS_INLINE void yield_task(void) {
 	t->ready = true;
 	enqueue(l, t);
 	suspend_task();
+	if (task_id() == 1 && __thrd()->sleep_count == 1) {
+		__thrd()->active_timer++;
+		task_sleep_switch();
+		__thrd()->active_timer--;
+	}
 }
 
 EVENTS_INLINE void tasks_stack_check(int n) {
@@ -1665,7 +1698,7 @@ static int __worker_tasks_wrapper(void *arg) {
 	os_worker_t *work = (os_worker_t *)arg;
 	events_deque_t *queue = work->queue;
 	events_t *loop = work->loop;
-	unsigned int status, res = TASK_ERRED, tid = work->id;
+	uint32_t status, res = TASK_ERRED, tid = work->id;
 	events_free(arg);
 
 	__thrd_init(false, tid);

@@ -117,7 +117,17 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
     } \
   } while (0)
 
+#define ASSERT_FUNC_TASK(FNC_CALL) do { \
+    if (FNC_CALL) { \
+      return casting(1); \
+    } \
+  } while (0)
+
 #define TEST_FUNC(name) ASSERT_FUNC(test_##name);  \
+    printf("\nAll tests successful!\n"); \
+    return 0
+
+#define TEST_TASK(name) ASSERT_FUNC_TASK(test_##name);  \
     printf("\nAll tests successful!\n"); \
     return 0
 #endif

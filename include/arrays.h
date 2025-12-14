@@ -47,6 +47,7 @@ typedef enum {
 	DATA_PTR,
 	DATA_FUNC,
 	DATA_ARRAY,
+	DATA_TASK,
 	DATA_DEQUE,
 	DATA_UDP,
 	DATA_TCP,
@@ -101,10 +102,6 @@ typedef struct {
 	dtor_func_t dtor;
 } data_object_t;
 
-typedef struct {
-	array_t group;
-} task_group_t;
-
 C_API const data_values_t data_values_empty[1];
 
 /* Returns ~empty~ data `array`. */
@@ -130,6 +127,7 @@ C_API void data_remove(array_t, size_t);
 C_API array_t data_reset(array_t);
 C_API size_t data_queue_size(void);
 C_API bool is_data(void *);
+C_API bool is_group(void *);
 C_API data_types data_type(void *self);
 C_API bool is_ptr_usable(void *self);
 C_API bool defer_free(void *data);
@@ -158,6 +156,9 @@ C_API bool str_is(const char *str, const char *str2);
 C_API bool str_has(const char *text, char *pattern);
 C_API int str_pos(const char *text, char *pattern);
 C_API char *str_cpy(char *dest, const char *src, size_t len);
+C_API char *str_trim(const char *str, size_t length);
+C_API char *str_trim_at(const char *str, int pos, size_t length);
+C_API char *str_dup(const char *str);
 C_API char *str_cat(int num_args, ...);
 C_API char **str_slice(const char *s, const char *delim, int *count);
 C_API char *str_swap(const char *haystack, const char *needle, const char *swap);

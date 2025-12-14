@@ -115,29 +115,35 @@ typedef intptr_t(*intptr_func_t)(intptr_t);
 typedef struct coro_events_s coroutine_t;
 typedef struct events_task_s tasks_t;
 typedef struct execinfo_s execinfo_t;
+typedef struct inotify_event inotify_event_t;
 typedef struct _thread_worker os_worker_t;
 typedef struct _thread_tasks_worker os_tasks_t;
 
 #ifdef _WIN32 /* !_WIN32 */
 #	include <windows.h>
-typedef enum {
-	FD_UNUSED,
-	FD_FILE_SYNC,
-	FD_FILE_ASYNC,
-	FD_SOCKET_SYNC,
-	FD_SOCKET_ASYNC,
-	FD_PIPE_SYNC,
-	FD_PIPE_ASYNC,
-	FD_PROCESS_ASYNC
-} FILE_TYPE;
 
 typedef SOCKET fds_t;
 typedef DWORD mode_t;
 typedef HANDLE filefd_t;
 typedef filefd_t pid_t;
+typedef uint32_t uid_t;
 typedef pid_t process_t;
 typedef int socklen_t;
 typedef DWORD tls_emulate_t;
+#if defined(_MSC_VER)
+#	define S_IRUSR S_IREAD  /* read, user */
+#	define S_IWUSR S_IWRITE /* write, user */
+#	define S_IXUSR 0 /* execute, user */
+#	define S_IRGRP 0 /* read, group */
+#	define S_IWGRP 0 /* write, group */
+#	define S_IXGRP 0 /* execute, group */
+#	define S_IROTH 0 /* read, others */
+#	define S_IWOTH 0 /* write, others */
+#	define S_IXOTH 0 /* execute, others */
+#	define S_IRWXU 0
+#	define S_IRWXG 0
+#	define S_IRWXO 0
+#endif
 #ifdef _WIN32_PLATFORM_X86
 /* see TLS_MAXIMUM_AVAILABLE */
 #define EMULATED_THREADS_TSS_DTOR_SLOTS 1088
@@ -146,6 +152,7 @@ typedef void (*emulate_dtor)(void *);
 typedef void(__stdcall *emulate_dtor)(PVOID lpFlsData);
 #endif
 #define inherit  INVALID_HANDLE_VALUE
+#define INVALID  INVALID_HANDLE_VALUE
 #define OS_NULL  NULL
 
 /* Type used for the number of file descriptors. */
@@ -162,6 +169,9 @@ typedef unsigned long int nfds_t;
 #	endif
 #	ifndef ftruncate
 #		define ftruncate 	_chsize
+#	endif
+#	ifndef fsync
+#		define fsync 		_commit
 #	endif
 #	ifndef fileno
 #		define fileno 		_fileno
@@ -244,6 +254,22 @@ typedef uint16_t in_port_t;
 #ifndef closesocket
 #	define closesocket(x) closesocket(x)
 #endif
+#define WNOHANG 		0
+#define P_PID 			0
+#define WEXITED 		0
+#define CLD_EXITED 		0
+#define EFD_CLOEXEC 	0
+#define EFD_NONBLOCK 	0
+#define	IN_CREAT		FILE_ACTION_ADDED
+#define IN_DELETE		FILE_ACTION_REMOVED
+#define IN_MODIFY 		FILE_ACTION_MODIFIED
+#define IN_MOVED_FROM 	FILE_ACTION_RENAMED_OLD_NAME
+#define IN_MOVED_TO		FILE_ACTION_RENAMED_NEW_NAME
+#define IN_MOVE			(IN_MOVED_FROM | IN_MOVED_TO) /* moves */
+#define EVENTS_DIR_CHANGED	\
+	(FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME /*rename, delete, create*/ \
+		| FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE \
+		| FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_SECURITY)
 #else /* !_WIN32 */
 #include <sys/sendfile.h>
 #include <sys/inotify.h>
@@ -254,7 +280,12 @@ typedef pid_t process_t;
 typedef pthread_key_t tls_emulate_t;
 typedef void (*emulate_dtor)(void *);
 #define inherit  -1
-#define OS_NULL  0
+#define INVALID  -1
+#define OS_NULL	 0
+#define EVENTS_DIR_CHANGED	\
+	(IN_CREATE | IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE \
+		| IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO \
+		| IN_DELETE_SELF | IN_MOVE_SELF)
 #endif
 
 #ifndef STDIN_FILENO
@@ -314,6 +345,7 @@ struct os_cpumask {
 	size_t value;
 };
 typedef PADDRINFOA *addrinfo_t;
+typedef int id_t;
 #else
 #include <ucontext.h>
 #include <pthread.h>
@@ -333,12 +365,232 @@ typedef int (__os_stdcall *os_thread_proc)(void *);
 typedef struct addrinfo **__restrict__ addrinfo_t;
 #endif
 
-typedef void (*spawn_cb)(fds_t writeto, char *readfrom);
-typedef void (*exec_io_cb)(fds_t input, char *output, fds_t error);
+#ifdef _WIN32
+#define read 	os_read
+#define write 	os_write
+
+#define R_OK    4
+#define W_OK    2
+#ifndef X_OK
+#	define X_OK    0
+#endif
+#define F_OK    0
+
+C_API int os_open(const char *path, ...);
+C_API int os_pipe(int fildes[2]);
+C_API int is_socket(int fd);
+
+C_API int socketpair(int domain, int type, int protocol, fds_t sockets[2]);
+C_API ssize_t pread(int d, void *buf, size_t nbytes, off_t offset);
+C_API ssize_t pwrite(int d, const void *buf, size_t nbytes, off_t offset);
+C_API ssize_t sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
+C_API int pipe2(int fildes[2], int flags);
+
+C_API int inotify_init(void);
+C_API int inotify_init1(int flags);
+C_API filefd_t inotify_add_watch(int fd, const char *name, uint32_t mask);
+C_API int inotify_rm_watch(int fd, filefd_t wd);
+
+#else
+C_API int os_open(const char *path, int flags, mode_t mode);
+#endif
+
+#if !defined(thread_local) /* User can override thread_local for obscure compilers */
+	 /* Running in multi-threaded environment */
+#	if defined(__STDC__) /* Compiling as C Language */
+#		if defined(_MSC_VER) /* Don't rely on MSVC's C11 support */
+#			define thread_local __declspec(thread)
+#		elif __STDC_VERSION__ < 201112L /* If we are on C90/99 */
+#			if defined(__clang__) || defined(__GNUC__) /* Clang and GCC */
+#				define thread_local __thread
+#			else /* Otherwise, we ignore the directive (unless user provides their own) */
+#				define thread_local
+#				define emulate_tls 1
+#			endif
+#		elif __APPLE__ && __MACH__
+#			define thread_local __thread
+#		else /* C11 and newer define thread_local in threads.h */
+#			define HAS_C11_THREADS 1
+#			include <threads.h>
+#		endif
+#	elif defined(__cplusplus) /* Compiling as C++ Language */
+#		if __cplusplus < 201103L /* thread_local is a C++11 feature */
+#			if defined(_MSC_VER)
+#				define thread_local __declspec(thread)
+#			elif defined(__clang__) || defined(__GNUC__)
+#				define thread_local __thread
+#			else /* Otherwise, we ignore the directive (unless user provides their own) */
+#				define thread_local
+#				define emulate_tls 1
+#			endif
+#		else /* In C++ >= 11, thread_local in a builtin keyword */
+  			/* Don't do anything */
+#		endif
+#		define HAS_C11_THREADS 1
+#	endif
+#endif
+
+#if !defined(thrd_local)
+#if defined(__TINYC__) || defined(emulate_tls)
+#	define thrd_local_return(type, var)    return (type *)os_tls_get(emulate_##var##_tss);
+#	define thrd_local_get(type, var, _initial, prefix)	\
+        prefix type* var(void) {						\
+            if (events_##var##_tls == 0) {				\
+                events_##var##_tls = sizeof(type);		\
+                if (os_tls_alloc(&events_##var##_tss, (emulate_dtor)events_free) == 0)	\
+                    atexit(var##_reset);				\
+                else									\
+                    goto err;							\
+            }                                           \
+            void *ptr = os_tls_get(events_##var##_tss); \
+            if (ptr == NULL) {                          \
+                ptr = events_calloc(1, events_##var##_tls);		\
+                if (ptr == NULL)                        \
+                    goto err;                           \
+                if ((os_tls_set(events_##var##_tss, ptr)) != 0)	\
+                    goto err;                           \
+            }                                           \
+            return (type *)ptr;                         \
+        err:                                            \
+            return NULL;                                \
+        }
+
+#	define thrd_local_delete(type, var, _initial, prefix)	\
+        prefix void var##_reset(void) {					\
+            if(events_##var##_tls != 0) { 				\
+                events_##var##_tls = 0;   				\
+                os_tls_free(events_##var##_tss);		\
+                events_##var##_tss = -1;   				\
+            }                               			\
+        }
+
+#   define thrd_local_setup(type, var, _initial, prefix)	\
+        static type events_##var##_buffer;				\
+        prefix int events_##var##_tls = 0;				\
+        prefix tls_emulate_t events_##var##_tss = 0;	\
+        thrd_local_delete(type, var, _initial, prefix)	\
+        prefix EVENTS_INLINE void var##_set(type *value) {	\
+            *var() = *value;							\
+        }												\
+        prefix EVENTS_INLINE bool is_##var##_null(void) {	\
+            return (type *)os_tls_get(events_##var##_tss) == (type *)_initial;	\
+        }
+
+	/* Initialize and setup thread local storage `var` as functions.
+	- var();
+	- var_reset();
+	- is_var_null();
+	- var_set(data); */
+#	define thrd_local(type, var, _initial)					\
+        thrd_local_setup(type, var, _initial, )	\
+        thrd_local_get(type, var, _initial, )
+
+#   define thrd_local_simple(type, var, _initial)	\
+        thrd_local_setup(type, var, _initial, )  	\
+        thrd_local_get(type, var, _initial, )
+
+	/* Initialize and setup thread local storage `var` as functions.
+	- var();
+	- var_reset();
+	- is_var_null();
+	- var_set(data); */
+#   define thrd_static(type, var, _initial)		\
+        static type *var(void);					\
+        static void var##_reset(void);			\
+        static bool is_##var##_null(void);		\
+        thrd_local_setup(type, var, _initial, static)	\
+        thrd_local_get(type, var, _initial, static)
+
+#   define thrd_static_simple(type, var, _initial)    thrd_static(type, var, _initial)
+
+#	define thrd_local_proto(type, var, prefix) 		\
+        prefix int events_##var##_tls;        	\
+        prefix tls_emulate_t events_##var##_tss;	\
+        prefix type var(void);                 	\
+        prefix void var##_reset(void);			\
+        prefix void var##_set(type value);		\
+        prefix bool is_##var##_null(void);
+
+	/* Creates a emulated `extern` thread-local storage `variable`,
+	a pointer of `type`, and functions. */
+#	define thrd_local_extern(type, variable) thrd_local_proto(type *, variable, C_API)
+	/* Creates a emulated `extern` thread-local storage `variable`,
+	a non-pointer of `type`, and functions. */
+#	define thrd_local_external(type, variable) thrd_local_proto(type, variable, C_API)
+#else
+#   define thrd_local_return(type, var)    return (type)events_##var##_tls;
+#   define thrd_local_get(type, var, _initial, prefix)		\
+        prefix EVENTS_INLINE type var(void) {			\
+            if (events_##var##_tls == _initial) {		\
+                events_##var##_tls = &events_##var##_buffer;	\
+            }                                   		\
+            thrd_local_return(type, var)        			\
+        }
+
+#   define thrd_local_setup(type, var, _initial, prefix)		\
+        prefix thread_local type events_##var##_tls = _initial;	\
+        prefix EVENTS_INLINE void var##_reset(void) {	\
+            events_##var##_tls = NULL;					\
+        }												\
+        prefix EVENTS_INLINE void var##_set(type value) {	\
+            events_##var##_tls = value;					\
+        }												\
+        prefix EVENTS_INLINE bool is_##var##_null(void) {	\
+            return events_##var##_tls == _initial;		\
+        }
+
+	/* Initialize and setup thread local storage `var` as functions.
+	- var();
+	- var_reset();
+	- is_var_null();
+	- var_set(data); */
+#   define thrd_local(type, var, _initial)				\
+        static thread_local type events_##var##_buffer;	\
+        thrd_local_setup(type *, var, _initial, )		\
+        thrd_local_get(type *, var, _initial, )
+
+#   define thrd_local_simple(type, var, _initial)		\
+        static thread_local type events_##var##_buffer;	\
+        thrd_local_setup(type, var, _initial, )			\
+        thrd_local_get(type, var, _initial, )
+
+	/* Initialize and setup thread local storage `var` as functions.
+	- var();
+	- var_reset();
+	- is_var_null();
+	- var_set(data); */
+#   define thrd_static(type, var, _initial)				\
+        static thread_local type events_##var##_buffer;	\
+        thrd_local_setup(type *, var, _initial, static)	\
+        thrd_local_get(type *, var, _initial, static)
+
+#   define thrd_static_simple(type, var, _initial)		\
+        static thread_local type events_##var##_buffer;	\
+        thrd_local_setup(type, var, _initial, static)	\
+        thrd_local_get(type, var, _initial, static)
+
+#   define thrd_local_proto(type, var, prefix)          	\
+        prefix thread_local type events_##var##_tls;	\
+        prefix void var##_reset(void);					\
+        prefix void var##_set(type value);           	\
+        prefix bool is_##var##_null(void);             	\
+        prefix type var(void);
+
+	/* Creates a native `extern` thread-local storage `variable`,
+	a pointer of `type`, and functions. */
+#   define thrd_local_extern(type, variable) thrd_local_proto(type *, variable, C_API)
+	/* Creates a native `extern` thread-local storage `variable`,
+	a non-pointer of `type`, and functions. */
+#   define thrd_local_external(type, variable) thrd_local_proto(type, variable, C_API)
+#endif
+#endif /* thrd_local */
+
+typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
+typedef exec_io_cb spawn_cb;
 #define open			os_open
+#define close 			os_close
 #define connect			os_connect
 #define mkfifo(a, b)	os_mkfifo(a, b)
-
 
 /**
  * Set up the library for use.
@@ -425,252 +677,10 @@ C_API process_t exec(const char *command, const char *args, execinfo_t *info);
  * @param io_err for ~redirecting~ `stderr` or pass `inherit`
  */
 C_API execinfo_t *exec_info(const char *env, bool is_datached, filefd_t io_in, filefd_t io_out, filefd_t io_err);
-C_API int exec_wait(process_t ps, unsigned int timeout_ms, int *exit_code);
-//C_API int exec_io_pair(execinfo_t *info);
+C_API int exec_wait(process_t ps, uint32_t timeout_ms, int *exit_code);
 
 C_API char *mkfifo_name(void);
 C_API filefd_t mkfifo_handle(void);
-
-#ifdef _WIN32
-#define read 	os_read
-#define write 	os_write
-#define close 	os_close
-
-#define R_OK    4
-#define W_OK    2
-#ifndef X_OK
-#	define X_OK    0
-#endif
-#define F_OK    0
-
-C_API int socketpair(int domain, int type, int protocol, fds_t sockets[2]);
-C_API int is_socket(int fd);
-C_API int os_open(const char *path, ...);
-
-/**
- * Set pseudo FD and create the I/O completion port to be used for async I/O.
- */
-C_API bool assign_fd(HANDLE handle, int pseudo);
-C_API bool valid_fd(int fd);
-C_API unsigned int get_fd(int pseudo);
-C_API HANDLE get_handle(int pseudo);
-
-/**
- * Set up for I/O descriptor masquerading.
- * Entry in `fdTable` is reserved to represent the socket/file.
- *
- * @returns
- * - `pseudo fd` an index `id`, which masquerades as a UNIX-style
- * "small non-negative integer" file/socket descriptor.
- *
- * - `-1` indicates failure.
- *
- */
-C_API int new_fd(FILE_TYPE type, int fd, int desiredFd);
-
-/**
- * Free I/O descriptor entry in `fdTable`.
- */
-C_API void free_fd(int fd);
-
-C_API ssize_t pread(int d, void *buf, size_t nbytes, off_t offset);
-C_API ssize_t pwrite(int d, const void *buf, size_t nbytes, off_t offset);
-C_API ssize_t sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
-C_API int pipe2(int fildes[2], int flags);
-C_API int os_pipe(int fildes[2]);
-#else
-C_API int os_open(const char *path, int flags, mode_t mode);
-#endif
-
-#if !defined(thread_local) /* User can override thread_local for obscure compilers */
-	 /* Running in multi-threaded environment */
-#	if defined(__STDC__) /* Compiling as C Language */
-#		if defined(_MSC_VER) /* Don't rely on MSVC's C11 support */
-#			define thread_local __declspec(thread)
-#		elif __STDC_VERSION__ < 201112L /* If we are on C90/99 */
-#			if defined(__clang__) || defined(__GNUC__) /* Clang and GCC */
-#				define thread_local __thread
-#			else /* Otherwise, we ignore the directive (unless user provides their own) */
-#				define thread_local
-#				define emulate_tls 1
-#			endif
-#		elif __APPLE__ && __MACH__
-#			define thread_local __thread
-#		else /* C11 and newer define thread_local in threads.h */
-#			define HAS_C11_THREADS 1
-#			include <threads.h>
-#		endif
-#	elif defined(__cplusplus) /* Compiling as C++ Language */
-#		if __cplusplus < 201103L /* thread_local is a C++11 feature */
-#			if defined(_MSC_VER)
-#				define thread_local __declspec(thread)
-#			elif defined(__clang__) || defined(__GNUC__)
-#				define thread_local __thread
-#			else /* Otherwise, we ignore the directive (unless user provides their own) */
-#				define thread_local
-#				define emulate_tls 1
-#			endif
-#		else /* In C++ >= 11, thread_local in a builtin keyword */
-  			/* Don't do anything */
-#		endif
-#		define HAS_C11_THREADS 1
-#	endif
-#endif
-
-#if !defined(tls_local)
-#if defined(__TINYC__) || defined(emulate_tls)
-#	define tls_local_return(type, var)    return (type *)os_tls_get(emulate_##var##_tss);
-#	define tls_local_get(type, var, _initial, prefix)	\
-        prefix type* var(void) {						\
-            if (events_##var##_tls == 0) {				\
-                events_##var##_tls = sizeof(type);		\
-                if (os_tls_alloc(&events_##var##_tss, (emulate_dtor)events_free) == 0)	\
-                    atexit(var##_reset);				\
-                else									\
-                    goto err;							\
-            }                                           \
-            void *ptr = os_tls_get(events_##var##_tss); \
-            if (ptr == NULL) {                          \
-                ptr = events_calloc(1, events_##var##_tls);		\
-                if (ptr == NULL)                        \
-                    goto err;                           \
-                if ((os_tls_set(events_##var##_tss, ptr)) != 0)	\
-                    goto err;                           \
-            }                                           \
-            return (type *)ptr;                         \
-        err:                                            \
-            return NULL;                                \
-        }
-
-#	define tls_local_delete(type, var, _initial, prefix)	\
-        prefix void var##_reset(void) {					\
-            if(events_##var##_tls != 0) { 				\
-                events_##var##_tls = 0;   				\
-                os_tls_free(events_##var##_tss);		\
-                events_##var##_tss = -1;   				\
-            }                               			\
-        }
-
-#   define tls_local_setup(type, var, _initial, prefix)	\
-        static type events_##var##_buffer;				\
-        prefix int events_##var##_tls = 0;				\
-        prefix tls_emulate_t events_##var##_tss = 0;	\
-        tls_local_delete(type, var, _initial, prefix)	\
-        prefix EVENTS_INLINE void var##_set(type *value) {	\
-            *var() = *value;							\
-        }												\
-        prefix EVENTS_INLINE bool is_##var##_null(void) {	\
-            return (type *)os_tls_get(events_##var##_tss) == (type *)_initial;	\
-        }
-
-	/* Initialize and setup thread local storage `var` as functions.
-	- var();
-	- var_reset();
-	- is_var_null();
-	- var_set(data); */
-#	define tls_local(type, var, _initial)					\
-        tls_local_setup(type, var, _initial, )	\
-        tls_local_get(type, var, _initial, )
-
-#   define tls_local_simple(type, var, _initial)	\
-        tls_local_setup(type, var, _initial, )  	\
-        tls_local_get(type, var, _initial, )
-
-	/* Initialize and setup thread local storage `var` as functions.
-	- var();
-	- var_reset();
-	- is_var_null();
-	- var_set(data); */
-#   define tls_static(type, var, _initial)		\
-        static type *var(void);					\
-        static void var##_reset(void);			\
-        static bool is_##var##_null(void);		\
-        tls_local_setup(type, var, _initial, static)	\
-        tls_local_get(type, var, _initial, static)
-
-#   define tls_static_simple(type, var, _initial)    tls_static(type, var, _initial)
-
-#	define tls_local_proto(type, var, prefix) 		\
-        prefix int events_##var##_tls;        	\
-        prefix tls_emulate_t events_##var##_tss;	\
-        prefix type var(void);                 	\
-        prefix void var##_reset(void);			\
-        prefix void var##_set(type value);		\
-        prefix bool is_##var##_null(void);
-
-	/* Creates a emulated `extern` thread-local storage `variable`,
-	a pointer of `type`, and functions. */
-#	define tls_local_extern(type, variable) tls_local_proto(type *, variable, C_API)
-	/* Creates a emulated `extern` thread-local storage `variable`,
-	a non-pointer of `type`, and functions. */
-#	define tls_local_external(type, variable) tls_local_proto(type, variable, C_API)
-#else
-#   define tls_local_return(type, var)    return (type)events_##var##_tls;
-#   define tls_local_get(type, var, _initial, prefix)		\
-        prefix EVENTS_INLINE type var(void) {			\
-            if (events_##var##_tls == _initial) {		\
-                events_##var##_tls = &events_##var##_buffer;	\
-            }                                   		\
-            tls_local_return(type, var)        			\
-        }
-
-#   define tls_local_setup(type, var, _initial, prefix)		\
-        prefix thread_local type events_##var##_tls = _initial;	\
-        prefix EVENTS_INLINE void var##_reset(void) {	\
-            events_##var##_tls = NULL;					\
-        }												\
-        prefix EVENTS_INLINE void var##_set(type value) {	\
-            events_##var##_tls = value;					\
-        }												\
-        prefix EVENTS_INLINE bool is_##var##_null(void) {	\
-            return events_##var##_tls == _initial;		\
-        }
-
-	/* Initialize and setup thread local storage `var` as functions.
-	- var();
-	- var_reset();
-	- is_var_null();
-	- var_set(data); */
-#   define tls_local(type, var, _initial)				\
-        static thread_local type events_##var##_buffer;	\
-        tls_local_setup(type *, var, _initial, )		\
-        tls_local_get(type *, var, _initial, )
-
-#   define tls_local_simple(type, var, _initial)		\
-        static thread_local type events_##var##_buffer;	\
-        tls_local_setup(type, var, _initial, )			\
-        tls_local_get(type, var, _initial, )
-
-	/* Initialize and setup thread local storage `var` as functions.
-	- var();
-	- var_reset();
-	- is_var_null();
-	- var_set(data); */
-#   define tls_static(type, var, _initial)				\
-        static thread_local type events_##var##_buffer;	\
-        tls_local_setup(type *, var, _initial, static)	\
-        tls_local_get(type *, var, _initial, static)
-
-#   define tls_static_simple(type, var, _initial)		\
-        static thread_local type events_##var##_buffer;	\
-        tls_local_setup(type, var, _initial, static)	\
-        tls_local_get(type, var, _initial, static)
-
-#   define tls_local_proto(type, var, prefix)          	\
-        prefix thread_local type events_##var##_tls;	\
-        prefix void var##_reset(void);					\
-        prefix void var##_set(type value);           	\
-        prefix bool is_##var##_null(void);             	\
-        prefix type var(void);
-
-	/* Creates a native `extern` thread-local storage `variable`,
-	a pointer of `type`, and functions. */
-#   define tls_local_extern(type, variable) tls_local_proto(type *, variable, C_API)
-	/* Creates a native `extern` thread-local storage `variable`,
-	a non-pointer of `type`, and functions. */
-#   define tls_local_external(type, variable) tls_local_proto(type, variable, C_API)
-#endif
-#endif /* tls_local */
 
 C_API int os_tls_alloc(tls_emulate_t *key, emulate_dtor dtor);
 C_API void os_tls_free(tls_emulate_t key);
@@ -682,13 +692,13 @@ C_API os_thread_t os_create(os_thread_proc proc, void *param);
 
 /** Join with the thread, set timeout, optional get exit_code,
 returns `0` if thread exited, `errno` is set to `ETIMEDOUT` if time has expired. */
-C_API int os_join(os_thread_t t, unsigned int timeout_ms, int *exit_code);
+C_API int os_join(os_thread_t t, uint32_t timeout_ms, int *exit_code);
 
 /** Detach thread. */
 C_API int os_detach(os_thread_t t);
 
 /** Add CPU number to mask. */
-C_API void os_cpumask_set(os_cpumask *mask, unsigned int i);
+C_API void os_cpumask_set(os_cpumask *mask, uint32_t i);
 
 /** Set CPU affinity. */
 C_API int os_affinity(os_thread_t t, const os_cpumask *mask);
@@ -697,10 +707,10 @@ C_API int os_affinity(os_thread_t t, const os_cpumask *mask);
 C_API uintptr_t os_self();
 
 /** Suspend the thread for the specified time. */
-C_API int os_sleep(unsigned int msec);
+C_API int os_sleep(uint32_t msec);
 
 /** Exit current thread with `result` code. */
-C_API void os_exit(unsigned int exit_code);
+C_API void os_exit(uint32_t exit_code);
 C_API int os_geterror(void);
 
 /** Like regular `read()`, but puts task to ~sleep~ while waiting for
@@ -759,11 +769,11 @@ C_API int async_getaddrinfo(const char *name,
 C_API int async_fs_open(os_worker_t *thrd, const char *path, int flag, int mode);
 C_API int fs_open(const char *path, int flag, int mode);
 
-C_API int async_fs_read(os_worker_t *thrd, int fd, void *buf, unsigned int count);
-C_API int fs_read(int fd, void *buf, unsigned int count);
+C_API int async_fs_read(os_worker_t *thrd, int fd, void *buf, uint32_t count);
+C_API int fs_read(int fd, void *buf, uint32_t count);
 
-C_API int async_fs_write(os_worker_t *thrd, int fd, const void *buf, unsigned int count);
-C_API int fs_write(int fd, const void *buf, unsigned int count);
+C_API int async_fs_write(os_worker_t *thrd, int fd, const void *buf, uint32_t count);
+C_API int fs_write(int fd, const void *buf, uint32_t count);
 
 C_API ssize_t async_fs_sendfile(os_worker_t *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
 C_API ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length);

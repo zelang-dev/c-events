@@ -16,7 +16,7 @@ set(TARGET_LIST
 	tcp_proxy
 	helloworld
 	spawn
-	child
+	child_command
 )
 
 foreach (TARGET ${TARGET_LIST})

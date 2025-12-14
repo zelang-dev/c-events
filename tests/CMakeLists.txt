@@ -7,8 +7,10 @@ set(TARGET_LIST
  test-task_group
  test-thread
  test-time
- test-tls_static
+ test-thrd_static
  test-queue_work
+ test-spawn
+ test-fs
 )
 
 foreach (TARGET ${TARGET_LIST})
@@ -21,3 +23,7 @@ add_executable(test-getopts test-getopts.c)
 target_link_libraries(test-getopts  ${PROJECT_NAME})
 add_test(NAME test-getopts COMMAND test-getopts garbage -n nothing -bool
 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+
+add_executable(child child.c)
+target_link_libraries(child ${PROJECT_NAME})

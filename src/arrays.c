@@ -238,10 +238,13 @@ EVENTS_INLINE data_types data_type(void *self) {
 }
 
 EVENTS_INLINE bool is_data(void *params) {
-	if (params == NULL || !is_ptr_usable(params) || data_type(params) == DATA_NULL)
-		return false;
+	return (params == NULL || !is_ptr_usable(params))
+		? false
+		: array_type((array_t)params) == DATA_ARRAY;
+}
 
-	return array_type((array_t)params) == DATA_ARRAY;
+EVENTS_INLINE bool is_group(void *params) {
+	return data_type(params) == DATA_TASK;
 }
 
 EVENTS_INLINE bool is_ptr_usable(void *self) {
@@ -250,6 +253,26 @@ EVENTS_INLINE bool is_ptr_usable(void *self) {
 
 EVENTS_INLINE char *str_cpy(char *dest, const char *src, size_t len) {
 	return (char *)memcpy(dest, src, (len ? len : strlen(src)));
+}
+
+static EVENTS_INLINE char *str_memdup_ex(const void *src, size_t len) {
+	char *ptr = (char *)events_calloc(1, len + 1);
+	if (defer_free(ptr))
+		return memcpy(ptr, src, len);
+
+	return NULL;
+}
+
+EVENTS_INLINE char *str_trim(const char *str, size_t length) {
+	return str_memdup_ex(str, length);
+}
+
+EVENTS_INLINE char *str_trim_at(const char *str, int pos, size_t length) {
+	return str_memdup_ex((const void *)((uintptr_t)str + pos), length);
+}
+
+EVENTS_INLINE char *str_dup(const char *str) {
+	return str_trim(str, strlen(str));
 }
 
 char *str_cat(int num_args, ...) {

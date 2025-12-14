@@ -23,19 +23,19 @@ char *std_in(size_t count) {
 }
 
 int main(int argc, char *argv[]) {
-    fprintf(stderr, "\nThis is stderr\n");
+    fprintf(stderr, "\nThis is stderr"CLR_LN);
 	os_sleep(25);
 
-    std_out("This is stdout");
+	std_out("This is stdout"CLR_LN);
     os_sleep(25);
 
-    std_out("\tSleeping...");
+	std_out("\tSleeping..."CLR_LN);
 	os_sleep(500);
 
-    std_out("`%s` argument received", argv[1]);
+	std_out("`%s` argument received"CLR_LN, argv[1]);
 	os_sleep(25);
 
-    fprintf(stderr, "Exiting\n");
+	fprintf(stderr, "Exiting"CLR_LN);
 
     return 0;
 }

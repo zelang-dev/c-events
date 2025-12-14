@@ -11,7 +11,7 @@ void *main_main(param_t args) {
 	struct hostent *dns = async_gethostbyname("irc.libera.chat");
 
 	fprintf(stderr, "%s"CLR_LN, gethostbyname_ip(dns));
-	fds_t server = async_connect("irc.libera.chat", 6667, true);
+	fds_t server = async_connect(gethostbyname_ip(dns), 6667, true);
 	while ((len = async_read(server, text, sizeof(text)) > 0)) {
 		fprintf(stderr, CLR"%s", text);
 		memset(text, 0, sizeof(text));

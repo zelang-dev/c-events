@@ -2,7 +2,7 @@
 #include "assertions.h"
 #define NUM_THREADS 8
 
-tls_static(int, gLocalVar, 0)
+thrd_static(int, gLocalVar, 0)
 
 /* Thread function: Compile time thread-local storage */
 static int thread_test_local_storage(void *aArg) {

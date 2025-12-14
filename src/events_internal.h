@@ -259,11 +259,11 @@ struct events_task_s {
 	bool referenced;
 	int err_code;
 	/* unique task id */
-	unsigned int cid;
+	uint32_t cid;
 	/* thread id */
-	unsigned int tid;
+	uint32_t tid;
 	/* unique result id */
-	unsigned int rid;
+	uint32_t rid;
 	tasks_t *next;
 	tasks_t *prev;
 	tasks_t *context;
@@ -274,7 +274,7 @@ struct events_task_s {
 	void *args;
 	void *user_data;
 	values_t *results;
-	char name[256];
+	char name[MAX_PATH];
 };
 
 struct execinfo_s {
@@ -291,13 +291,15 @@ struct execinfo_s {
 	const char **env;
 	/* Create detached background process */
 	bool detached;
+	/* Created `spawn` ~io~ controlled process */
+	bool is_spawn;
 	/* Standard ~pair~ `process` file descriptors */
 	filefd_t write_input[2], read_output[2], error;
 	/* child process id */
 	process_t ps;
 	/* child pseudo fd */
 	fds_t fd;
-	unsigned int rid;
+	uint32_t rid;
 	tasks_t *context;
 	exit_cb exit_func;
 	exec_io_cb io_func;
@@ -329,11 +331,11 @@ void *events_malloc(size_t size);
 void *events_realloc(void *ptr, size_t size);
 void events_free(void *ptr);
 
-unsigned int async_task_ex(size_t heapsize, param_func_t fn, unsigned int num_of_args, ...);
-unsigned int async_task_loop(events_t *loop, size_t heapsize, param_func_t fn, unsigned int num_of_args, ...);
+uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
+uint32_t async_task_loop(events_t *loop, size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
 void thread_result_set(os_request_t *p, void *res);
 void enqueue_pool_request(os_worker_t *j, os_request_t *r);
-unsigned int task_push(tasks_t *t, bool is_thread);
+uint32_t task_push(tasks_t *t, bool is_thread);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args);
 
 void deque_init(events_deque_t *q, int size_hint);

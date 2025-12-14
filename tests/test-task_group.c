@@ -14,34 +14,24 @@ void *worker(param_t args) {
     return 0;
 }
 
-void *main_main(param_t args) {
-    int cid[10], i;
+TEST(task_group) {
+	int cid[10], i;
 
 	task_group_t *wg = task_group();
-	ASSERT_TASK(is_data(wg->group));
-    for (i = 0; i < 10; i++) {
+	ASSERT_TASK((is_group(wg) == true));
+	for (i = 0; i < 10; i++) {
 		cid[i] = async_task(worker, 1, i);
 		ASSERT_EQU(cid[i], i + 2);
-    }
-	ASSERT_EQU($size(wg->group), 10);
-    array_t wgr = tasks_wait(wg);
+	}
+	ASSERT_EQU(tasks_count(wg), 10);
+	array_t wgr = tasks_wait(wg);
 	ASSERT_TASK(is_data(wgr));
-	ASSERT_TASK((is_data(wg->group) == false));
+	ASSERT_TASK((is_group(wg) == false));
 	ASSERT_EQU($size(wgr), 2);
 	ASSERT_EQU(32, results_for(cid[2]).integer);
 	ASSERT_TASK(str_is("hello world", results_for(cid[1]).char_ptr));
 
 	return 0;
-}
-
-TEST(task_group) {
-	events_init(1024);
-	async_task(main_main, 0);
-	events_t *loop = events_create(6);
-	async_run(loop);
-	events_destroy(loop);
-
-    return 0;
 }
 
 TEST(list) {
@@ -52,6 +42,16 @@ TEST(list) {
     return result;
 }
 
+void *main_main(param_t args) {
+	TEST_TASK(list());
+}
+
 int main(int argc, char **argv) {
-    TEST_FUNC(list());
+	events_init(1024);
+	async_task(main_main, 0);
+	events_t *loop = events_create(6);
+	async_run(loop);
+	events_destroy(loop);
+
+	return 0;
 }

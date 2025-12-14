@@ -148,8 +148,24 @@ typedef enum {
 	FD_FIFO,    /* Pipe */
 	FD_LNK,     /* Symbolic link */
 	FD_SOCK,	/* Socket */
-	FD_CHILD	/* process */
+	FD_CHILD,	/* process */
+	FD_REG_ASYNC,	/* file non-blocking */
+	FD_SOCK_ASYNC,	/* Socket non-blocking */
+	FD_FIFO_ASYNC,	/* pipe non-blocking */
+	FD_WATCH_ASYNC,	/* Directory watch non-blocking */
 } fd_types;
+
+typedef enum {
+	FD_UNUSED = FD_UNKNOWN,
+	FD_FILE_SYNC = FD_REG,
+	FD_FILE_ASYNC = FD_REG_ASYNC,
+	FD_SOCKET_SYNC = FD_SOCK,
+	FD_SOCKET_ASYNC = FD_SOCK_ASYNC,
+	FD_PIPE_SYNC = FD_FIFO,
+	FD_PIPE_ASYNC = FD_FIFO_ASYNC,
+	FD_PROCESS_ASYNC = FD_CHILD,
+	FD_MONITOR_ASYNC = FD_WATCH_ASYNC
+} FILE_TYPE;
 
 typedef unsigned short events_id_t;
 typedef struct events_loop_s events_t;
@@ -160,6 +176,7 @@ typedef struct sys_events_s sys_events_t;
 typedef struct sys_signal_s sys_signal_t;
 typedef struct _thread_worker os_worker_t;
 typedef struct _request_worker os_request_t;
+typedef struct task_group_s task_group_t;
 typedef void *(*malloc_func)(size_t);
 typedef void *(*realloc_func)(void *, size_t);
 typedef void *(*calloc_func)(size_t, size_t);
@@ -240,6 +257,33 @@ C_API int events_timeofday(struct timeval *, struct timezone *);
 C_API fd_types events_fd_type(int fd);
 C_API sys_signal_t *events_signals(void);
 
+/**
+ * Set up for I/O descriptor masquerading.
+ * Entry in `fdTable` is reserved to represent the socket/file.
+ *
+ * @returns
+ * - `pseudo fd` an index `id`, which masquerades as a UNIX-style
+ * "small non-negative integer" file/socket descriptor.
+ *
+ * - `-1` indicates failure.
+ *
+ */
+C_API int events_new_fd(FILE_TYPE type, int fd, int desiredFd);
+
+/**
+ * Set pseudo FD to create the `I/O completion port on Windows`
+ * or `on Unix` to set `eventfd` to be used for async I/O.
+ *
+ */
+C_API bool events_assign_fd(filefd_t handle, int pseudo);
+
+/**
+ * Free I/O descriptor entry in `fdTable`.
+ */
+C_API void events_free_fd(int fd);
+C_API uint32_t events_get_fd(int pseudo);
+C_API bool events_valid_fd(int fd);
+
 /* Return ~handle~ to current `task`. */
 C_API tasks_t *active_task(void);
 
@@ -258,11 +302,11 @@ Other tasks continue to run during this time.
 
 NOTE: Current `task` added to ~thread~ `sleep` queue,
 will be added back to `thread` ~schedular~ `run queue` once `ms` expire. */
-C_API unsigned int sleep_task(unsigned int ms);
+C_API uint32_t sleep_task(uint32_t ms);
 
 /* Returns result of an completed `task`, by `result id`.
 Must call `task_is_ready()` or `task_is_terminated()` for ~completion~ status. */
-C_API values_t results_for(unsigned int id);
+C_API values_t results_for(uint32_t id);
 
 /* Creates/initialize the next series/collection of `task's` created to be part of `task group`,
 same behavior of Go's `waitGroups`.
@@ -279,12 +323,13 @@ will wait for all to finish.
 
 Returns `array` of `results id`, accessible using `results_for()` function. */
 C_API array_t tasks_wait(task_group_t *);
+C_API size_t tasks_count(task_group_t *wg);
 
 /* Return the unique `result id` for the current `task`. */
-C_API unsigned int task_id(void);
+C_API uint32_t task_id(void);
 
 /* Check for `task` termination that has an result available. */
-C_API bool task_is_ready(unsigned int id);
+C_API bool task_is_ready(uint32_t id);
 
 /* Check for `task` termination/return. */
 C_API bool task_is_terminated(tasks_t *);
@@ -321,7 +366,7 @@ C_API os_tasks_t *events_addtasks_pool(events_t *loop);
 /* Return `current` thread pool handle. */
 C_API os_worker_t *events_pool(void);
 
-/* This runs the function `fn` in thread `thrd` pool worker,
+/* This runs the function `fn` in thread `thrd` pool,
 asynchronously in a separate `task`. Returns a `result id`
 that will eventually hold the result of ~thread pool work~.
 
@@ -331,21 +376,21 @@ https://en.cppreference.com/w/cpp/thread/packaged_task.html
 MUST call `await_for()` to get any result.
 
 NOTE: This is setup to be just an `pass thru` for any function in an separate thread. */
-C_API unsigned int queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...);
+C_API uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...);
 
 /* This waits aka `yield` until the `result id` termination, then retrieves
 the value stored. This is mainly for `queue_work()`, but also useful elsewhere.
 
 Similar to: https://en.cppreference.com/w/cpp/thread/future/get.html
 and https://en.cppreference.com/w/cpp/thread/future/valid.html */
-C_API values_t await_for(unsigned int id);
+C_API values_t await_for(uint32_t id);
 
 /* Creates and returns an `result id`, for an ~coroutine~ aka `task`
 of given `function` with `number` of args, then `arguments`.
 
 NOTE: The `task` will be added to `current` thread ~schedular~ `run queue`,
 same behavior as GoLang's `Go` statement. */
-C_API unsigned int async_task(param_func_t fn, unsigned int num_of_args, ...);
+C_API uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...);
 
 /*  Low-level call sitting underneath `async_read` and `async_write`.
  Puts task to ~sleep~ while waiting for I/O to be possible on `fd`.

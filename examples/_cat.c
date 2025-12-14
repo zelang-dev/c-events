@@ -29,5 +29,6 @@ int main(int argc, char **argv) {
 	async_run(loop);
 	events_destroy(loop);
 
+	printf(LN_CLR CLR_LN);
 	return 0;
 }
