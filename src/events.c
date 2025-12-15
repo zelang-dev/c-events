@@ -1035,9 +1035,15 @@ static void *task_wait_system(void *v) {
 		task_name("task_wait_system #%d", (int)__thrd()->thrd_id);
 
 	while (!__thrd()->exiting) {
+#ifdef _WIN32
+		__thrd()->active_timer++;
+#endif
 		/* let everyone else run */
 		while (task_yielding_active() > 0)
 			;
+#ifdef _WIN32
+		__thrd()->active_timer--;
+#endif
 
 		now = events_nsec();
 		task_info(active_task(), 1);
@@ -1532,9 +1538,13 @@ EVENTS_INLINE void yield_task(void) {
 	enqueue(l, t);
 	suspend_task();
 	if (task_id() == 1 && __thrd()->sleep_count == 1) {
+#ifndef _WIN32
 		__thrd()->active_timer++;
+#endif
 		task_sleep_switch();
+#ifndef _WIN32
 		__thrd()->active_timer--;
+#endif
 	}
 }
 

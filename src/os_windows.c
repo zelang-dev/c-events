@@ -614,6 +614,7 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 
 	si.cb = sizeof(STARTUPINFO);
 	if (!i->detached) {
+		si.wShowWindow = SW_HIDE;
 		if (i->write_input[1] != INVALID_HANDLE_VALUE || i->read_output[1] != INVALID_HANDLE_VALUE || i->error != INVALID_HANDLE_VALUE) {
 			si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 			si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -1406,7 +1407,7 @@ filefd_t inotify_add_watch(int fd, const char *name, uint32_t mask) {
 			} else if (GetLastError() != ERROR_IO_PENDING) {
 				CloseHandle(hDir);
 				events_free_fd(fd);
-				return TASK_ERRED;
+				return (filefd_t)TASK_ERRED;
 			}
 
 			//fdTable[fd].fid.fileHandle = hDir;
@@ -1415,7 +1416,7 @@ filefd_t inotify_add_watch(int fd, const char *name, uint32_t mask) {
 		}
 	}
 
-	return TASK_ERRED;
+	return(filefd_t)TASK_ERRED;
 }
 
 EVENTS_INLINE int inotify_rm_watch(int fd, filefd_t wd) {
@@ -1423,7 +1424,9 @@ EVENTS_INLINE int inotify_rm_watch(int fd, filefd_t wd) {
 		if ((filefd_t)watch.ulong_long == wd) {
 			$remove(fdTable[fd].inotify, iwatch);
 			//CloseHandle((filefd_t)wd);
-			break;
+			return 0;
 		}
 	}
+
+	return -1;
 }

@@ -481,10 +481,10 @@ static void *spawning(param_t args) {
 		info->context = NULL;
 		if (info->io_func) {
 			events_del((fds_t)info->read_output[1]);
-			close(info->read_output[0]);
-			close(info->read_output[1]);
-			close(info->write_input[0]);
-			close(info->write_input[1]);
+			close((uintptr_t)info->read_output[0]);
+			close((uintptr_t)info->read_output[1]);
+			close((uintptr_t)info->write_input[0]);
+			close((uintptr_t)info->write_input[1]);
 		}
 
 		if (info->exit_func)

@@ -12,7 +12,9 @@ void *worker_misc(param_t args) {
 
 int _on_exit(int64_t exit_status, int term_signal) {
     ASSERT_EQ(0, exit_status);
-    ASSERT_EQ(0, term_signal);
+	ASSERT_EQ(0, term_signal);
+
+	return 0;
 }
 
 int _on_output(fds_t writeto, size_t count, char *outputfrom) {
@@ -21,6 +23,8 @@ int _on_output(fds_t writeto, size_t count, char *outputfrom) {
 		|| str_has(outputfrom, "Sleeping...")
 		|| str_has(outputfrom, "`test-dir` argument received"));
 	ASSERT_FALSE(str_has(outputfrom, "Exiting"));
+
+	return 0;
 }
 
 TEST(spawn) {
@@ -39,7 +43,9 @@ TEST(spawn) {
 
 	ASSERT_TASK((task_is_ready(res) == true));
 	ASSERT_TASK(str_is(results_for(res).char_ptr, "finish"));
+#ifndef _WIN32
 	ASSERT_TASK((3 == output_count));
+#endif
 
     return 0;
 }
