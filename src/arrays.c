@@ -255,24 +255,31 @@ EVENTS_INLINE char *str_cpy(char *dest, const char *src, size_t len) {
 	return (char *)memcpy(dest, src, (len ? len : strlen(src)));
 }
 
-static EVENTS_INLINE char *str_memdup_ex(const void *src, size_t len) {
-	char *ptr = (char *)events_calloc(1, len + 1);
-	if (defer_free(ptr))
-		return memcpy(ptr, src, len);
+static EVENTS_INLINE char *str_memdup_ex(const void *src, size_t len, bool autofree) {
+	void *ptr = events_calloc(1, len + 1);
+	if (ptr != NULL) {
+		if (autofree)
+			defer_free(ptr);
+		return (char *)memcpy(ptr, src, len);
+	}
 
 	return NULL;
 }
 
 EVENTS_INLINE char *str_trim(const char *str, size_t length) {
-	return str_memdup_ex(str, length);
+	return str_memdup_ex(str, length, true);
 }
 
 EVENTS_INLINE char *str_trim_at(const char *str, int pos, size_t length) {
-	return str_memdup_ex((const void *)((uintptr_t)str + pos), length);
+	return str_memdup_ex((const void *)((uintptr_t)str + pos), length, true);
 }
 
 EVENTS_INLINE char *str_dup(const char *str) {
 	return str_trim(str, strlen(str));
+}
+
+EVENTS_INLINE char *str_dup_ex(const char *str) {
+	return str_memdup_ex(str, strlen(str), false);
 }
 
 char *str_cat(int num_args, ...) {

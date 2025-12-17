@@ -43,9 +43,7 @@ TEST(spawn) {
 
 	ASSERT_TASK((task_is_ready(res) == true));
 	ASSERT_TASK(str_is(results_for(res).char_ptr, "finish"));
-#ifndef _WIN32
 	ASSERT_TASK((3 == output_count));
-#endif
 
     return 0;
 }

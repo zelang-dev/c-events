@@ -280,9 +280,10 @@ C_API bool events_assign_fd(filefd_t handle, int pseudo);
 /**
  * Free I/O descriptor entry in `fdTable`.
  */
-C_API void events_free_fd(int fd);
+C_API void events_free_fd(int pseudo);
 C_API uint32_t events_get_fd(int pseudo);
-C_API bool events_valid_fd(int fd);
+C_API bool events_valid_fd(int pseudo);
+C_API int events_pseudo_fd(const char *name);
 
 /* Return ~handle~ to current `task`. */
 C_API tasks_t *active_task(void);

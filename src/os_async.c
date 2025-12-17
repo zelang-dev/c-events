@@ -445,12 +445,16 @@ EVENTS_INLINE size_t fs_filesize(const char *path) {
 }
 
 static void spawn_io(fds_t fd, int events, void *arg) {
-	char data[Kb(32)] = {0};
-	int count;
 	execinfo_t *info = (execinfo_t *)arg;
 	spawn_cb func = info->io_func;
+#ifndef _WIN32
+	char data[Kb(32)] = {0};
+	int count;
 	if ((count = read((fds_t)info->read_output[0], data, sizeof(data))) > 0)
 		func((fds_t)info->write_input[1], count, data);
+#else
+	func((fds_t)info->write_input[1], (size_t)events, info->buffer);
+#endif
 }
 
 static void *spawning(param_t args) {
@@ -460,6 +464,7 @@ static void *spawning(param_t args) {
 	char *command = args[0].char_ptr;
 	int status = 0;
 #ifdef _WIN32
+	HANDLE ioThread = NULL;
 	if (!str_has(command, ".bat") && !str_has(command, ".exe")) {
 		command = str_cat(2, command, ".exe");
 		defer_free(command);
@@ -467,8 +472,17 @@ static void *spawning(param_t args) {
 #endif
 	task_name("spawn #%d", task_id());
 	pid = exec((const char *)command, args[1].const_char_ptr, info);
-	if (info->io_func)
+	if (info->io_func) {
+#ifndef _WIN32
 		status = events_add(events_pool()->loop, (fds_t)info->read_output[1], EVENTS_WRITE, 0, spawn_io, info);
+#else
+		status = -1;
+		if (events_assign_fd(info->read_output[0], (intptr_t)pid)) {
+			status = events_add(events_pool()->loop, (fds_t)pid, EVENTS_READ, 0, spawn_io, info);
+			ioThread = CreateThread(0, Kb(16), spawn_io_thread, info, 0, NULL);
+		}
+#endif
+	}
 
 	if (!status && pid > 0) {
 		info->context = t;
@@ -480,11 +494,18 @@ static void *spawning(param_t args) {
 
 		info->context = NULL;
 		if (info->io_func) {
+#ifndef _WIN32
 			events_del((fds_t)info->read_output[1]);
 			close((uintptr_t)info->read_output[0]);
 			close((uintptr_t)info->read_output[1]);
 			close((uintptr_t)info->write_input[0]);
 			close((uintptr_t)info->write_input[1]);
+#else
+			CloseHandle(ioThread);
+			CloseHandle(info->write_input[1]);
+			events_del((fds_t)pid);
+			close((intptr_t)pid);
+#endif
 		}
 
 		if (info->exit_func)
@@ -500,9 +521,9 @@ execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_
 	execinfo_t *info = exec_info(NULL, false, inherit, inherit, inherit);
 	if (io_func) {
 #ifdef _WIN32
-		if (pipe(_2fd(info->write_input))
-			|| pipe(_2fd(info->read_output))) {
-			perror("pipe");
+		if (os_create_pipe("spawn_in", &info->write_input[0], &info->write_input[1])
+			|| os_create_pipe("spawn_out", &info->read_output[0], &info->read_output[1])) {
+			perror("os_create_pipe");
 			return NULL;
 		}
 #else

@@ -9,6 +9,7 @@
 #undef connect
 #undef mkfifo
 
+static void clear_pseudo_events(void);
 static sigset_t events_siglock, events_siglock_all;
 static struct sigaction events_sig_sa = {0}, events_sig_osa = {0};
 static volatile sig_atomic_t signal_running = false;
@@ -26,8 +27,9 @@ typedef struct {
 	fd_types type;
 	os_cb proc;	    /* callout completion procedure */
 	void *data;	    /* caller private data */
+	char *path;		/* mkfifo path or cached filename */
 	int fd;
-	int event_fd;
+	int event_fd; 	/* `eventfd` fd descriptor */
 	int len;
 	int offset;
 	void *buf;
@@ -36,31 +38,11 @@ typedef struct {
 	execinfo_t process[1];
 } FD_TABLE;
 
-/*
- * Entries in the async I/O table are allocated 2 per file descriptor.
- *
- * Read Entry Index  = fd * 2
- * Write Entry Index = (fd * 2) + 1
- */
-#define AIO_RD_IX(fd) (fd * 2)
-#define AIO_WR_IX(fd) ((fd * 2) + 1)
-
-static int ioTableSize = 16;
-static int asyncIoInUse = false;
+static int ioTableSize = 256;
 static FD_TABLE *fdTable = NULL;
+static int hIoCompPort = -1;
 
 static int os_initialized = false;
-
-static fd_set readFdSet;
-static fd_set writeFdSet;
-
-static fd_set readFdSetPost;
-static int numRdPosted = 0;
-static fd_set writeFdSetPost;
-static int numWrPosted = 0;
-static int volatile maxFd = -1;
-
-static int acceptMutex = 0;
 
 static void grow_ioTable(void) {
 	int oldTableSize = ioTableSize;
@@ -75,10 +57,6 @@ static void grow_ioTable(void) {
 		oldTableSize * sizeof(FD_TABLE));
 }
 
-static void os_sigusr1handler(int signo) {
-	os_shutdown();
-}
-
 static void os_sigpipehandler(int signo) {
 	;
 }
@@ -87,7 +65,6 @@ static void install_signal_handler(int signo, const struct sigaction *act, int f
 	struct sigaction sa;
 
 	sigaction(signo, NULL, &sa);
-
 	if (force || sa.sa_handler == SIG_DFL) {
 		sigaction(signo, act, NULL);
 	}
@@ -101,31 +78,30 @@ static void os_signal_handlers(int force) {
 
 	sa.sa_handler = os_sigpipehandler;
 	install_signal_handler(SIGPIPE, &sa, force);
-
-	sa.sa_handler = os_sigusr1handler;
-	install_signal_handler(SIGUSR1, &sa, force);
 }
 
 int os_init(void) {
 	if (os_initialized)
 		return 0;
 
+	os_initialized = true;
 	fdTable = (FD_TABLE *)events_malloc(ioTableSize * sizeof(FD_TABLE));
 	if (fdTable == NULL) {
 		errno = ENOMEM;
 		return -1;
 	}
 
+	if (hIoCompPort == -1) {
+		hIoCompPort = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+		if (hIoCompPort == -1) {
+			perror("os_init! eventfd");
+			os_shutdown();
+			return -1;
+		}
+	}
+
 	memset((char *)fdTable, 0, ioTableSize * sizeof(FD_TABLE));
-
-	FD_ZERO(&readFdSet);
-	FD_ZERO(&writeFdSet);
-	FD_ZERO(&readFdSetPost);
-	FD_ZERO(&writeFdSetPost);
-
 	os_signal_handlers(false);
-
-	os_initialized = true;
 
 	return 0;
 }
@@ -134,21 +110,17 @@ void os_shutdown(void) {
 	if (!os_initialized)
 		return;
 
+	os_initialized = false;
+	clear_pseudo_events();
+	if (hIoCompPort != -1) {
+		close(hIoCompPort);
+		hIoCompPort = -1;
+	}
+
 	events_free(fdTable);
 	fdTable = NULL;
-	os_initialized = false;
-	return;
 }
 
-/**
- * On platforms that implement concurrent calls to accept on
- * a shared listening ipc `Fd`, returns 0.
- *
- * On other platforms, acquires an exclusive lock across all processes sharing a
- * listening ipcFd, blocking until the lock has been acquired.
- *
- * return `0` for successful call, `-1` in case of system error (fatal).
- */
 static int acquire_lock(int sock) {
 	do {
 		struct flock lock;
@@ -159,20 +131,11 @@ static int acquire_lock(int sock) {
 
 		if (fcntl(sock, F_SETLKW, &lock) != -1)
 			return 0;
-	} while (errno == EINTR
-		&& !acceptMutex
-		&& !events_is_shutdown());
+	} while (errno == EINTR	&& !events_is_shutdown());
 
 	return -1;
 }
 
-/**
- * On platforms that implement concurrent calls to accept
- * on a shared listening ipcFd, does nothing. On other platforms,
- * releases an exclusive lock acquired by AcquireLock.
- *
- * return `0` for successful call, `-1` in case of system error (fatal).
- */
 static int release_lock(int sock) {
 	do {
 		struct flock lock;
@@ -194,14 +157,22 @@ EVENTS_INLINE int os_iodispatch(int ms) {
 
 EVENTS_INLINE int os_mkfifo(const char *name, mode_t mode) {
 	events_init(256);
+	int fake;
 	snprintf(sys_event.pNamed, sizeof(sys_event.pNamed), "%s%s", SYS_PIPE, name);
+	if ((fake = events_new_fd(FD_PIPE_ASYNC, hIoCompPort, - 1)) != -1)
+		fdTable[fake].path = str_dup_ex(sys_event.pNamed);
+
 	return mkfifo(sys_event.pNamed, mode);
 }
 
 EVENTS_INLINE int os_open(const char *path, int flags, mode_t mode) {
-	if (str_has((const char *)sys_event.pNamed, (char *)path)) {
-		sys_event.pHandle = open((const char *)sys_event.pNamed, flags, mode);
-		return sys_event.pHandle;
+	int fake = events_pseudo_fd(path);
+	if (fake != -1) {
+		if (fdTable[fake].type == FD_PIPE_ASYNC) {
+			sys_event.pHandle = open(fdTable[fake].path, flags, mode);
+			fdTable[fake].fd = sys_event.pHandle;
+			return sys_event.pHandle;
+		}
 	}
 
 	return open(path, flags, mode);
@@ -224,6 +195,32 @@ EVENTS_INLINE int os_close(int fd) {
 
 EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) {
 	return connect(s, name, namelen);
+}
+
+static void clear_pseudo_events(void) {
+	int i;
+	acquire_lock(hIoCompPort);
+	for (i = 0; i < ioTableSize; ++i) {
+		if (fdTable[i].type != FD_UNUSED) {
+			events_free_fd(i);
+			fdTable[i].type = FD_UNUSED;
+		}
+	}
+	release_lock(hIoCompPort);
+}
+
+int events_pseudo_fd(const char *name) {
+	char buffer[260] = {0};
+	int i;
+
+	snprintf(buffer, sizeof(buffer), "%s%s", SYS_PIPE, name);
+	for (i = 0; i < ioTableSize; ++i) {
+		if (fdTable[i].type != FD_UNUSED && fdTable[i].path != NULL
+			&& (str_is(buffer, fdTable[i].path) || str_is(name, fdTable[i].path)))
+			return i;
+	}
+
+	return -1;
 }
 
 int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
@@ -252,6 +249,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].len = DATA_INVALID;
 		fdTable[index].offset = DATA_INVALID;
 		fdTable[index].buf = NULL;
+		fdTable[index].path = NULL;
 		fdTable[index].inotify = NULL;
 		fdTable[index].inUse = 0;
 		fdTable[index].type = type;
@@ -270,13 +268,16 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 	}
 
 	release_lock(fd);
+	if (index == -1)
+		errno = EINVAL;
+
 	return index;
 }
 
-EVENTS_INLINE bool events_valid_fd(int fd) {
-	return (fd >= 0) && (fd < ioTableSize)
-		&& fdTable[fd].type != FD_UNUSED
-		&& fdTable[fd].fd != TASK_ERRED;
+EVENTS_INLINE bool events_valid_fd(int pseudo) {
+	return (pseudo >= 0) && (pseudo < ioTableSize)
+		&& fdTable[pseudo].type != FD_UNUSED
+		&& fdTable[pseudo].fd != TASK_ERRED;
 }
 
 EVENTS_INLINE bool events_assign_fd(filefd_t handle, int pseudo) {
@@ -286,26 +287,27 @@ EVENTS_INLINE bool events_assign_fd(filefd_t handle, int pseudo) {
 		return true;
 	}
 
-	errno = EINVAL;
+	perror("events_assign_fd");
 	return false;
 }
 
 EVENTS_INLINE uint32_t events_get_fd(int pseudo) {
-	if (events_valid_fd(pseudo))
-		return fdTable[pseudo].fd;
-
-	return pseudo;
+	return events_valid_fd(pseudo) ? fdTable[pseudo].fd : pseudo;
 }
 
-void events_free_fd(int fd) {
-	if ((fd >= 0) && (fd < ioTableSize)) {
-		acquire_lock(fd);
-		if (fdTable[fd].type != FD_UNUSED) {
-			close(fdTable[fd].event_fd);
-			fdTable[fd].event_fd = TASK_ERRED;
-		}
+void events_free_fd(int pseudo) {
+	if ((pseudo >= 0) && (pseudo < ioTableSize)
+		&& fdTable[pseudo].type != FD_UNUSED) {
+		acquire_lock(pseudo);
+		if (fdTable[pseudo].type != FD_PIPE_ASYNC)
+			close(fdTable[pseudo].event_fd);
 
-		release_lock(fd);
+		fdTable[pseudo].event_fd = TASK_ERRED;
+		if (fdTable[pseudo].path != NULL) {
+			events_free(fdTable[pseudo].path);
+			fdTable[pseudo].path = NULL;
+		}
+		release_lock(pseudo);
 	}
 }
 

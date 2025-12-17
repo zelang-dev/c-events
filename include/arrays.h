@@ -159,6 +159,7 @@ C_API char *str_cpy(char *dest, const char *src, size_t len);
 C_API char *str_trim(const char *str, size_t length);
 C_API char *str_trim_at(const char *str, int pos, size_t length);
 C_API char *str_dup(const char *str);
+C_API char *str_dup_ex(const char *str);
 C_API char *str_cat(int num_args, ...);
 C_API char **str_slice(const char *s, const char *delim, int *count);
 C_API char *str_swap(const char *haystack, const char *needle, const char *swap);

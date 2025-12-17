@@ -367,6 +367,7 @@ EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_i
 		target->is_iodispatch = true;
 	}
 #endif
+	//assert(target->loop_id == 0);
 	target->callback = callback;
 	target->cb_arg = cb_arg;
 	target->loop = loop;
@@ -412,7 +413,7 @@ EVENTS_INLINE int events_del(fds_t sfd) {
 		loop->active_io--;
 	}
 
-	if (!target->is_iodispatch && events_update_internal(loop, fd, EVENTS_DEL) != 0)
+	if (loop == NULL || !target->is_iodispatch && events_update_internal(loop, fd, EVENTS_DEL) != 0)
 		return -1;
 
 	events_set_timeout(fd, 0);
@@ -759,7 +760,7 @@ EVENTS_INLINE char *mkfifo_name(void) {
 	return sys_event.pNamed;
 }
 
-EVENTS_INLINE filefd_t mkfifo_handle(void) {
+EVENTS_INLINE filefd_t mkfifo_fd(void) {
 	return sys_event.pHandle;
 }
 

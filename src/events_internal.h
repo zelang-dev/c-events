@@ -229,6 +229,7 @@ struct coro_events_s {
 };
 
 #if defined(_WIN32)
+typedef struct OVERLAPPED_REQUEST *POVERLAPPED_REQUEST;
 struct ucontext_s {
 	unsigned long int uc_flags;
 	ucontext_t *uc_link;
@@ -295,6 +296,10 @@ struct execinfo_s {
 	bool is_spawn;
 	/* Standard ~pair~ `process` file descriptors */
 	filefd_t write_input[2], read_output[2], error;
+#ifdef _WIN32
+	POVERLAPPED_REQUEST req;
+	char *buffer;
+#endif
 	/* child process id */
 	process_t ps;
 	/* child pseudo fd */
@@ -346,6 +351,10 @@ tasks_t *deque_peek(events_deque_t *q, int index);
 void deque_push(events_deque_t *q, tasks_t *w);
 void deque_free(events_deque_t *q);
 void deque_destroy(void);
+
+#ifdef _WIN32
+DWORD __stdcall spawn_io_thread(void *arg);
+#endif
 
 #ifdef __cplusplus
 }

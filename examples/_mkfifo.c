@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
 
 	fprintf(stderr, "Connect to: %s\n", mkfifo_name());
 	int other = open(piped, O_RDONLY, 0);
-	process_t ps = exec(argv[2], str, exec_info(NULL, false, mkfifo_handle(), mkfifo_handle(), inherit));
+	process_t ps = exec(argv[2], str, exec_info(NULL, false, mkfifo_fd(), mkfifo_fd(), inherit));
 	if (ps > 0) {
 		exec_wait(ps, INFINITE, NULL);
 	} else {

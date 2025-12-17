@@ -376,6 +376,7 @@ typedef struct addrinfo **__restrict__ addrinfo_t;
 #endif
 #define F_OK    0
 
+C_API int os_create_pipe(LPCSTR lpName, HANDLE *outRead, HANDLE *outWrite);
 C_API int os_open(const char *path, ...);
 C_API int os_pipe(int fildes[2]);
 C_API int is_socket(int fd);
@@ -680,7 +681,7 @@ C_API execinfo_t *exec_info(const char *env, bool is_datached, filefd_t io_in, f
 C_API int exec_wait(process_t ps, uint32_t timeout_ms, int *exit_code);
 
 C_API char *mkfifo_name(void);
-C_API filefd_t mkfifo_handle(void);
+C_API filefd_t mkfifo_fd(void);
 
 C_API int os_tls_alloc(tls_emulate_t *key, emulate_dtor dtor);
 C_API void os_tls_free(tls_emulate_t key);
