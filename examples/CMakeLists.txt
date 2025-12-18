@@ -9,6 +9,7 @@ set(TARGET_LIST
 	signal-test
 	time-test
 	task_group
+	generator
 	task_multi-args
 	task_sleep
 	dns_ip

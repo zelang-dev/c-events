@@ -258,6 +258,7 @@ struct events_task_s {
 	bool group_active;
 	bool group_finish;
 	bool referenced;
+	bool is_generator;
 	int err_code;
 	/* unique task id */
 	uint32_t cid;
@@ -265,10 +266,13 @@ struct events_task_s {
 	uint32_t tid;
 	/* unique result id */
 	uint32_t rid;
+	/* current generator id */
+	uint32_t gen_id;
 	tasks_t *next;
 	tasks_t *prev;
 	tasks_t *context;
 	tasks_t *sleeping;
+	generator_t generator;
 	task_group_t *task_group;
 	array_t garbage;
 	data_func_t func;
@@ -276,6 +280,14 @@ struct events_task_s {
 	void *user_data;
 	values_t *results;
 	char name[MAX_PATH];
+};
+
+struct generator_s {
+	data_types type;
+	uint32_t rid;
+	bool is_ready;
+	values_t values[1];
+	tasks_t *context;
 };
 
 struct execinfo_s {

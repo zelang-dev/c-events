@@ -882,7 +882,7 @@ static void task_delete(tasks_t *co) {
 
 static EVENTS_INLINE void defer_cleanup(tasks_t *t) {
 	if (t->garbage != NULL) {
-		foreach(arr in t->garbage) {
+		foreach_back(arr in t->garbage) {
 			if (is_ptr_usable(arr.object)) {
 				if (is_data(arr.object))
 					$delete(arr.object);
@@ -1257,6 +1257,92 @@ static EVENTS_INLINE void task_switch(tasks_t *co) {
 }
 
 #endif
+
+void events_abort(const char *message, const char *file, int line, const char *function) {
+	fflush(stdout);
+#ifndef USE_DEBUG
+	fprintf(stderr, "\nFatal Error: %s in function(%s)\n\n", message, function);
+#else
+	fprintf(stderr, "\n%s: %s\n", "Runtime Error", message);
+	if (file != NULL) {
+		if (function != NULL) {
+			fprintf(stderr, "    thrown in %s at (%s:%d)\n\n", function, file, line);
+		} else {
+			fprintf(stderr, "    thrown at %s:%d\n\n", file, line);
+		}
+	}
+#endif
+	fflush(stderr);
+	abort();
+}
+
+EVENTS_INLINE uint32_t gen_id(void) {
+	return active_task()->gen_id;
+}
+
+generator_t generator(param_func_t fn, size_t num_of, ...) {
+	generator_t gen = NULL;
+	va_list ap;
+
+	va_start(ap, num_of);
+	param_t params = data_ex(num_of, ap);
+	va_end(ap);
+
+	tasks_t *t = create_task(Kb(32), (data_func_t)fn, params);
+	uint32_t rid = task_push(t, false);
+	if (rid != TASK_ERRED && snprintf(t->name, sizeof(t->name), "Generator #%d", (int)rid)) {
+		gen = events_calloc(1, sizeof(struct generator_s));
+		if (gen != NULL) {
+			gen->rid = rid;
+			gen->is_ready = false;
+			gen->context = t;
+			gen->type = DATA_GENERATOR;
+			t->generator = gen;
+			t->is_generator = true;
+			t->garbage = array();
+			$append(t->garbage, gen);
+		}
+	}
+
+	return gen;
+}
+
+void yielding(void *data) {
+	tasks_t *co = active_task();
+	if (!co->is_generator)
+		panic("logic_error, current `task` not a generator!\n");
+
+	while (co->generator->is_ready) {
+		yield_task();
+	}
+
+	co->generator->values->object = data;
+	co->generator->is_ready = true;
+	yield_task();
+}
+
+values_t yielded(generator_t gen) {
+	if (data_type(gen) != DATA_GENERATOR)
+		return data_values_empty->value;
+
+	while (!gen->is_ready && !gen->context->halt) {
+		if (gen->context->status == TASK_SUSPENDED) {
+			tasklist_t *l = __thrd()->run_queue;
+			enqueue(l, gen->context);
+		}
+
+		task_info(active_task(), 1);
+		yield_task();
+	}
+
+	if (data_type(gen) != DATA_GENERATOR)
+		return data_values_empty->value;
+
+	active_task()->gen_id = gen->rid;
+	gen->is_ready = false;
+	return *gen->values;
+}
+
 static EVENTS_INLINE void task_yielding(tasks_t *co) {
 	if (!__thrd()->in_callback && !__thrd()->active_timer)
 		tasks_stack_check(0);
@@ -1317,6 +1403,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	co->halt = false;
 	co->ready = false;
 	co->waiting = false;
+	co->is_generator = false;
 	co->group_active = false;
 	co->group_finish = true;
 	co->system = false;
@@ -1324,11 +1411,13 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	co->err_code = 0;
 	co->cycles = 0;
 	co->cid = DATA_INVALID;
+	co->gen_id = TASK_ERRED;
 	co->user_data = NULL;
 	co->context = NULL;
 	co->sleeping = NULL;
 	co->task_group = NULL;
 	co->garbage = NULL;
+	co->generator = NULL;
 	co->stack_size = heapsize + sizeof(_results_data_t);
 	co->stack_base = (unsigned char *)(co + 1);
 	co->magic_number = TASK_MAGIC_NUMBER;

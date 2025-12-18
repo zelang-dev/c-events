@@ -177,6 +177,7 @@ typedef struct sys_signal_s sys_signal_t;
 typedef struct _thread_worker os_worker_t;
 typedef struct _request_worker os_request_t;
 typedef struct task_group_s task_group_t;
+typedef struct generator_s *generator_t;
 typedef void *(*malloc_func)(size_t);
 typedef void *(*realloc_func)(void *, size_t);
 typedef void *(*calloc_func)(size_t, size_t);
@@ -190,6 +191,8 @@ typedef events_cb sig_cb;
 
 C_API sys_events_t sys_event;
 C_API volatile sig_atomic_t events_got_signal;
+
+#define panic(message)	events_abort(message, __FILE__, __LINE__, __FUNCTION__)
 
 C_API bool events_is_destroy(void);
 C_API bool events_is_shutdown(void);
@@ -284,6 +287,22 @@ C_API void events_free_fd(int pseudo);
 C_API uint32_t events_get_fd(int pseudo);
 C_API bool events_valid_fd(int pseudo);
 C_API int events_pseudo_fd(const char *name);
+C_API void events_abort(const char *message, const char *file, int line, const char *function);
+
+/* Suspends the execution of current `Generator/Coroutine`, and passing ~data~.
+WILL PANIC if not an ~Generator~ function called in.
+WILL `yield` current `task` until ~data~ is retrived using `yielded()`. */
+C_API void yielding(void *);
+
+/* Creates an `Generator task` of given function with arguments,
+MUST use `yielding()` to pass data, and `yielded()` to get data. */
+C_API generator_t generator(param_func_t, size_t, ...);
+
+/* Resume specified ~generator task~, returning data from `yielding`. */
+C_API values_t yielded(generator_t);
+
+/* Return `generator id` in scope for last `yielded()` execution. */
+C_API uint32_t gen_id(void);
 
 /* Return ~handle~ to current `task`. */
 C_API tasks_t *active_task(void);

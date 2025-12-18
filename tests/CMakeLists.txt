@@ -5,6 +5,7 @@ set(TARGET_LIST
  test-closed
  test-eof
  test-task_group
+ test-yielding
  test-thread
  test-time
  test-thrd_static
