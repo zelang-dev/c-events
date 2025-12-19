@@ -43,13 +43,15 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 
 ## Design
 
-The design layout is derived from the current *work in progress* in developing [c-asio](https://github.com/zelang-dev/c-asio). This was initially setup to supplement usage of using **libuv**, since they document there **Event Loop API** `handle` isn't really *thread safe*. Few things needed reimplementing, in doing so, it revealed, *libuv* has much overhead not needed. Some of there [tests] and [examples] as represented [here], bear witness.
+This implementation is similar to what I call an outline, *how a coroutine should behave with an Event Loop interface*, as described in **libev** [THREADS, COROUTINES, CONTINUATIONS, QUEUES... INSTEAD OF CALLBACKS](http://pod.tst.eu/http://cvs.schmorp.de/libev/ev.pod#THREADS_COROUTINES_CONTINUATIONS_QUE) section.
+
+The design layout is derived from the current *work in progress* in developing [c-asio](https://github.com/zelang-dev/c-asio). This was initially setup to supplement usage of using **libuv**, since they document there **Event Loop API** `handle` isn't really *thread safe*. Few things needed reimplementing, in doing so, it revealed, *libuv* has much overhead not needed, see [Comparisons](#comparisons).
 
 The basics of this project is base around the state of the **file descriptor**. In order to formulate execution of asynchrony aka concurrency, a *coroutine* like behavior is needed. It makes using **epoll**, **kqueue** or any **multiplex** interface system more *effective*. As just, all the additional memory allocations for structures not necessary. This includes another project [c-raii](https://github.com/zelang-dev/c-raii), the **coroutine** aspect merged in, with a few things handled and named differently now, seems some bugs was addressed with unnecessary workarounds, but now fixed correctly with less work.
 
 Most function signatures are the same, just **passthru** to the **Operating System**. In order to get cross-platform like behavior, many calls are macros pointing to internal functions to cache parameters, and redirect to correct **OS** routine, mostly for Windows.
 
-The Operating System **file descriptor** is represented by `fds_t` and `filefd_t`. For Windows, this system will create a `pseudo fd` that actually has all [Windows event system](https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-concepts) **mechanisms** *attached*. This action allows the creation of simpler a alternative *Linux* functions for *Windows* like `mkfifo()` **IPC**, and still in development `inotify_add_watch()` **file/directory monitor**, with same signatures. It's also the basics for `spawn()` **child process** *input/output* control. The functions `events_new_fd()` `events_assign_fd()`
+The Operating System **file descriptor** is represented by `fds_t` and `filefd_t`. For Windows, this system will create a `pseudo fd` that actually has all [Windows event system](https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-concepts) **mechanisms** *attached*. This action allows the creation of simpler a alternative *Linux* functions for *Windows* like `mkfifo()` **IPC**, and still in development `inotify_add_watch()` **file/directory monitor**, with same signatures. It's also the basics for `spawn()` **child process** *input/output* control. The functions `events_new_fd()` and `events_assign_fd()` was mainly for **Windows**, but are also available for **Linux** using [eventfd](https://man7.org/linux/man-pages/man2/eventfd.2.html) interface.
 
 This would also allow nonblocking file system handling. But for cross-platform simplicity, everything is a *pass-thru* to a thread pool instead. A default of `1`, which is automatically created with first `events_create()` **loop** `events_t` handle. An thread pool `os_worker_t` is created by calling `events_add_pool()` with a **loop** handle. The `os_worker_t` must be pass as first parameter to standard file system functions, a few currently implemented, all prefixed as **~async_fs_~**. These functions constructed as a wrapper call to `queue_work()` in coroutine to call thread handler.
 
@@ -61,7 +63,7 @@ The following "simple TCP proxy" example demonstrate the simplicity of using `ev
 tcpproxy 1234 www.google.com 80
 ```
 
-Then visit <http://localhost:1234/> and see Google.
+**Then visit <http://localhost:1234/> and see Google.**
 
 ```c
 #include <events.h>
@@ -472,6 +474,186 @@ C_API bool spawn_is_finish(execinfo_t *child);
 ```
 
 ## Comparisons
+
+Same functions and behavior as Linux `mkfifo` for Windows, of **libevent** [event-read-fifo](https://github.com/libevent/libevent/blob/release-2.2.1-alpha/sample/event-read-fifo.c) sample, it states **Windows** sections don't work.
+
+```c
+#include <events.h>
+
+static void fifo_read(fds_t fd, int event, void *arg) {
+ char buf[255];
+ int len;
+
+ fprintf(stderr, "fifo_read called with fd: %d, event: %d, arg: %p\n", socket2fd(fd), event, arg);
+ len = read(fd, buf, sizeof(buf) - 1);
+ if (len <= 0) {
+  if (len == -1)
+   perror("read");
+  else if (len == 0)
+   fprintf(stderr, "Connection closed\n");
+  events_del(fd);
+  return;
+ }
+
+ buf[len] = '\0';
+ fprintf(stdout, "Read: %s\n", buf);
+}
+
+static void signal_cb(fds_t sig, int event, void *arg) {
+ events_t *loop = events_loop(sig);
+ unlink(mkfifo_name());
+ events_destroy(loop);
+}
+
+int main(int argc, char **argv) {
+ events_t *base;
+ struct stat st;
+ const char *fifo = "event.fifo";
+ int socket;
+
+ if (lstat(fifo, &st) == 0) {
+  if ((st.st_mode & S_IFMT) == S_IFREG) {
+   errno = EEXIST;
+   perror("lstat");
+   exit(1);
+  }
+ }
+
+ unlink(fifo);
+ if (mkfifo(fifo, 0600) == -1) {
+  perror("mkfifo");
+  exit(1);
+ }
+
+ /* Initialize the event library */
+ base = events_create(6);
+
+ socket = open(fifo, O_RDWR | O_NONBLOCK, 0);
+ if (socket == -1) {
+  perror("open");
+  unlink(mkfifo_name());
+  events_destroy(base);
+  exit(1);
+ }
+
+ fprintf(stderr, "Write data to %s\n", mkfifo_name());
+
+ /* catch SIGINT so that event.fifo can be cleaned up*/
+ events_add(base, SIGINT, EVENTS_SIGNAL, 0, signal_cb, NULL);
+
+ /* Initialize one event */
+ events_add(base, socket, EVENTS_READ, 0, fifo_read, NULL);
+
+ while (events_is_running(base)) {
+  events_once(base, 1);
+ }
+
+ close(socket);
+ unlink(fifo);
+ events_destroy(base);
+
+ return (0);
+}
+```
+
+A much simpler version of **libuv** [dns](https://github.com/libuv/libuv/blob/master/docs/code/dns/main.c) example. This is same as **c-asio** <https://github.com/zelang-dev/c-asio/tree/main/examples/dns.c> intergrating **libuv**.
+
+```c
+#include <events.h>
+
+void *main_main(param_t args) {
+ char text[1024] = {0};
+ int len;
+ fprintf(stderr, "irc.libera.chat is..."CLR_LN);
+ struct hostent *dns = async_gethostbyname("irc.libera.chat");
+
+ fprintf(stderr, "%s"CLR_LN, gethostbyname_ip(dns));
+ fds_t server = async_connect(gethostbyname_ip(dns), 6667, true);
+ while ((len = async_read(server, text, sizeof(text)) > 0)) {
+  fprintf(stderr, CLR"%s", text);
+  memset(text, 0, sizeof(text));
+ }
+
+ return 0;
+}
+
+int main(int argc, char **argv) {
+ events_init(1024);
+ events_t *loop = events_create(6);
+ async_task(main_main, 0);
+ async_run(loop);
+ events_destroy(loop);
+
+ return 0;
+}
+```
+
+A much simpler version of **libuv** [uvcat](https://github.com/libuv/libuv/blob/master/docs/code/uvcat/main.c) example. This is same as **c-asio** <https://github.com/zelang-dev/c-asio/tree/main/examples/uvcat.c> intergrating **libuv**.
+
+```c
+#include <events.h>
+
+void *main_main(param_t args) {
+ char text[1024];
+ int len, fd = fs_open(args[0].const_char_ptr, O_RDONLY, 0);
+ if (fd > 0) {
+  if ((len = fs_read(fd, text, sizeof(text))) > 0)
+   fs_write(STDOUT_FILENO, text, len);
+
+  return casting(fs_close(fd));
+ }
+
+ return casting(fd);
+}
+
+int main(int argc, char **argv) {
+ if (argc < 2) {
+  fprintf(stderr, "usage: _cat filepath\n");
+  exit(1);
+ }
+
+ events_init(1024);
+ events_t *loop = events_create(6);
+ async_task(main_main, 1, argv[1]);
+ async_run(loop);
+ events_destroy(loop);
+
+ printf(LN_CLR CLR_LN);
+ return 0;
+}
+```
+
+A much simpler version of **libuv** [spawn](https://github.com/libuv/libuv/blob/master/docs/code/spawn/main.c) example. This is same as **c-asio** <https://github.com/zelang-dev/c-asio/tree/main/examples/spawn.c> intergrating **libuv**.
+
+```c
+#include "events.h"
+
+void _on_exit(int exit_status, int term_signal) {
+ fprintf(stderr, "\nProcess exited with status %d, signal %d\n",
+  exit_status, term_signal);
+}
+
+void *main_main(param_t args) {
+ execinfo_t *child = spawn("child_command", "test-dir", NULL, _on_exit);
+ if (child != NULL) {
+  fprintf(stderr, "\nLaunched process with ID %zu\n", spawn_pid(child));
+  while (!spawn_is_finish(child))
+   yield_task();
+ }
+
+ return 0;
+}
+
+int main(int argc, char **argv) {
+ events_init(1024);
+ events_t *loop = events_create(1);
+ async_task(main_main, 0);
+ async_run(loop);
+ events_destroy(loop);
+
+ return 0;
+}
+```
 
 ## Installation
 
