@@ -311,7 +311,7 @@ C_API bool task_is_ready(uint32_t id);
 C_API bool task_is_terminated(tasks_t *);
 
 /* Print an `task` internal data state, only active in `debug` builds. */
-C_API void task_info(tasks_t *t, int pos);
+C_API void tasks_info(tasks_t *t, int pos);
 
 /* Return `current` task ~user_data~. */
 C_API void *task_data(void);

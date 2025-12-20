@@ -45,6 +45,14 @@ If `assembly`, reduced to:
 #	define _XOPEN_SOURCE 600
 #endif
 
+#if defined(__APPLE__) || defined(__MACH__)
+#	define _DARWIN_C_SOURCE
+#undef _POSIX_C_SOURCE
+#undef _XOPEN_SOURCE
+#	include <mach/clock.h>
+#	include <mach/mach.h>
+#endif
+
 #include <limits.h>
 #include <errno.h>
 #include <stdio.h>
@@ -101,10 +109,6 @@ If `assembly`, reduced to:
 #	include <io.h>
 #	include <direct.h>
 #else
-#	if defined(__APPLE__) || defined(__MACH__)
-#		include <mach/clock.h>
-#		include <mach/mach.h>
-#	endif
 #	include <poll.h>
 #	include <unistd.h>
 #	include <arpa/inet.h>
@@ -115,7 +119,11 @@ If `assembly`, reduced to:
 #	include <sys/socket.h>
 #	include <sys/uio.h>
 #	include <sys/un.h>
-#   include <sys/eventfd.h>
+#	if __APPLE__ && __MACH__
+#		include <notify.h>
+#	else
+#   	include <sys/eventfd.h>
+#	endif
 #	if defined(_SYS_EPOLL_H)
 #		define epoll_close close
 #	endif
@@ -174,7 +182,6 @@ typedef struct actors_s actor_t;
 typedef struct timerlist_s timerlist_t;
 typedef struct sys_events_s sys_events_t;
 typedef struct sys_signal_s sys_signal_t;
-typedef struct _thread_worker os_worker_t;
 typedef struct _request_worker os_request_t;
 typedef struct task_group_s task_group_t;
 typedef struct generator_s *generator_t;
@@ -186,7 +193,6 @@ typedef void (*events_cb)(fds_t fd, int event, void *args);
 typedef void (*actor_cb)(actor_t *, void *);
 typedef void (*os_cb)(intptr_t file, int bytes, void *data);
 typedef void *(*param_func_t)(param_t);
-typedef intptr_t(*intptr_func_t)(intptr_t);
 typedef events_cb sig_cb;
 
 C_API sys_events_t sys_event;
@@ -256,7 +262,11 @@ C_API actor_t *events_actor(events_t *loop, int ms, actor_cb timer, void *args);
 C_API void events_clear_actor(actor_t *actor);
 C_API events_t *events_actor_loop(actor_t *actor);
 C_API events_t *events_loop(fds_t sfd);
+#if defined(__APPLE__) || defined(__MACH__)
+C_API int events_timeofday(struct timeval *, void *);
+#else
 C_API int events_timeofday(struct timeval *, struct timezone *);
+#endif
 C_API fd_types events_fd_type(int fd);
 C_API sys_signal_t *events_signals(void);
 
@@ -355,7 +365,7 @@ C_API bool task_is_ready(uint32_t id);
 C_API bool task_is_terminated(tasks_t *);
 
 /* Print an `task` internal data state, only active in `debug` builds. */
-C_API void task_info(tasks_t *t, int pos);
+C_API void tasks_info(tasks_t *t, int pos);
 
 /* Return `current` task ~user_data~. */
 C_API void *task_data(void);

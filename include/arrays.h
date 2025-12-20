@@ -126,6 +126,7 @@ C_API void data_append_item(array_t arr, ...);
 C_API void data_delete(array_t);
 C_API void data_remove(array_t, size_t);
 C_API array_t data_reset(array_t);
+C_API size_t data_size(array_t);
 C_API size_t data_queue_size(void);
 C_API bool is_data(void *);
 C_API bool is_group(void *);

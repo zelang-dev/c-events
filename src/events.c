@@ -606,7 +606,12 @@ static EVENTS_INLINE uint64_t events_nsec(void) {
 	return (uint64_t)tv.tv_sec * 1000 * 1000 * 1000 + tv.tv_usec * 1000;
 }
 
-EVENTS_INLINE int events_timeofday(struct timeval *tp, struct timezone *tz) {
+#	if defined(__APPLE__) || defined(__MACH__)
+EVENTS_INLINE int events_timeofday(struct timeval *tp, void *tz)
+#else
+EVENTS_INLINE int events_timeofday(struct timeval *tp, struct timezone *tz)
+#endif
+{
 #ifdef _WIN32
 	/*
 	 * Note: some broken versions only have 8 trailing zero's, the correct
@@ -981,7 +986,7 @@ EVENTS_INLINE void *task_data_get(tasks_t *t) {
 	return t->user_data;
 }
 
-EVENTS_INLINE void task_info(tasks_t *t, int pos) {
+EVENTS_INLINE void tasks_info(tasks_t *t, int pos) {
 #ifdef USE_DEBUG
 	bool line_end = false;
 	if (t == NULL) {
@@ -1047,7 +1052,7 @@ static void *task_wait_system(void *v) {
 #endif
 
 		now = events_nsec();
-		task_info(active_task(), 1);
+		tasks_info(active_task(), 1);
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
 			l = __thrd()->sleep_queue;
 			dequeue(l, t);
@@ -1331,7 +1336,7 @@ values_t yielded(generator_t gen) {
 			enqueue(l, gen->context);
 		}
 
-		task_info(active_task(), 1);
+		tasks_info(active_task(), 1);
 		yield_task();
 	}
 
@@ -1584,7 +1589,7 @@ array_t tasks_wait(task_group_t *wg) {
 						suspend_task();
 					}
 
-					task_info(t, 1);
+					tasks_info(t, 1);
 					yield_task();
 				}
 			}
@@ -1663,7 +1668,7 @@ EVENTS_INLINE size_t tasks_cpu_count(void) {
 }
 #else
 EVENTS_INLINE size_t tasks_cpu_count(void) {
-	return sysconf(_SC_NPROCESSORS_ONLN);
+	return sysconf(_SC_NPROCESSORS_CONF);
 }
 #endif
 
@@ -1776,7 +1781,7 @@ static void *__worker_tasks_main(param_t args) {
 	__thrd()->started = true;
 
 	task_name("worker_tasks_main #%d", (int)__thrd()->thrd_id);
-	task_info(active_task(), -1);
+	tasks_info(active_task(), -1);
 	task_take(queue);
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
@@ -1786,7 +1791,7 @@ static void *__worker_tasks_main(param_t args) {
 			break;
 		}
 
-		task_info(active_task(), 1);
+		tasks_info(active_task(), 1);
 		task_take(queue);
 	}
 

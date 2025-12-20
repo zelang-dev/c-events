@@ -106,12 +106,8 @@ typedef enum {
 	ASYNC_FILE,
 } async_types;
 
-typedef void (*os_cb)(intptr_t file, int bytes, void *data);
 typedef void (*exit_cb)(int exit_status, int term_signal);
 typedef void (*sigcall_t)(void);
-typedef void *(*data_func_t)(void *);
-typedef void *(*param_func_t)(param_t);
-typedef intptr_t(*intptr_func_t)(intptr_t);
 typedef struct coro_events_s coroutine_t;
 typedef struct events_task_s tasks_t;
 typedef struct execinfo_s execinfo_t;
@@ -271,8 +267,17 @@ typedef uint16_t in_port_t;
 		| FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE \
 		| FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_SECURITY)
 #else /* !_WIN32 */
-#include <sys/sendfile.h>
-#include <sys/inotify.h>
+#if __APPLE__ && __MACH__
+#	define _DARWIN_C_LEVEL >= __DARWIN_C_FULL
+#undef in
+#	include <CoreServices/CoreServices.h>
+#define in ,
+#	include <mach/mach_time.h>
+#else
+#	include <sys/sendfile.h>
+#	include <sys/inotify.h>
+#endif
+
 #include <sys/wait.h>
 typedef int fds_t;
 typedef fds_t filefd_t;
@@ -312,9 +317,7 @@ typedef void (*emulate_dtor)(void *);
 extern "C" {
 #endif
 
-#if __APPLE__ && __MACH__
-#   include <sys/ucontext.h>
-#elif defined(_WIN32) || defined(_WIN64) || defined(_MSC_VER)
+#if defined(_WIN32) || defined(_WIN64) || defined(_MSC_VER)
 #   if defined(_X86_)
 #       define DUMMYARGS
 #   else
@@ -347,7 +350,12 @@ struct os_cpumask {
 typedef PADDRINFOA *addrinfo_t;
 typedef int id_t;
 #else
-#include <ucontext.h>
+#if __APPLE__ && __MACH__
+#   include <sys/ucontext.h>
+#else
+#	include <ucontext.h>
+#endif
+
 #include <pthread.h>
 #include <sys/syscall.h>
 
@@ -357,6 +365,12 @@ typedef cpu_set_t os_cpumask;
 #include <sys/param.h>
 #include <pthread_np.h>
 typedef cpuset_t os_cpumask;
+#elif __APPLE__ && __MACH__
+#define SYSCTL_CORE_COUNT   "machdep.cpu.core_count"
+typedef struct cpu_set {
+	uint32_t count;
+} cpu_set_t;
+typedef cpu_set_t os_cpumask;
 #endif
 
 typedef pthread_t os_thread_t;

@@ -41,6 +41,9 @@ typedef struct {
 static int ioTableSize = 256;
 static FD_TABLE *fdTable = NULL;
 static int hIoCompPort = -1;
+#if __APPLE__ && __MACH__
+static int hIoCompPort_token = -1;
+#endif
 
 static int os_initialized = false;
 
@@ -92,7 +95,16 @@ int os_init(void) {
 	}
 
 	if (hIoCompPort == -1) {
+#if __APPLE__ && __MACH__
+		int status, rtoken;
+		status = notify_register_file_descriptor("com.events.io.port", &hIoCompPort, 0, &hIoCompPort_token);
+		if (status != NOTIFY_STATUS_OK) {
+			errno = status;
+			hIoCompPort = -1;
+		}
+#else
 		hIoCompPort = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+#endif
 		if (hIoCompPort == -1) {
 			perror("os_init! eventfd");
 			os_shutdown();
@@ -283,7 +295,15 @@ EVENTS_INLINE bool events_valid_fd(int pseudo) {
 EVENTS_INLINE bool events_assign_fd(filefd_t handle, int pseudo) {
 	if ((pseudo >= 0) && (pseudo < ioTableSize)) {
 		fdTable[pseudo].fd = handle;
+#if __APPLE__ && __MACH__
+		int status = notify_register_file_descriptor("com.events.io.port", &fdTable[pseudo].event_fd, NOTIFY_REUSE, &fdTable[pseudo].inUse);
+		if (status != NOTIFY_STATUS_OK) {
+			errno = status;
+			return false;
+		}
+#else
 		fdTable[pseudo].event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+#endif
 		return true;
 	}
 
@@ -373,7 +393,11 @@ end:
 
 EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 	filefd_t io_in, filefd_t io_out, filefd_t io_err) {
+#if __APPLE__ && __MACH__
+	int pseudofd = events_new_fd(FD_CHILD, hIoCompPort_token, -1);
+#else
 	int pseudofd = events_new_fd(FD_CHILD, eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK), -1);
+#endif
 	execinfo_t *info = fdTable[pseudofd].process;
 	info->detached = is_detached;
 	if (env != NULL && str_has(env, "=") && str_has(env, ";"))
@@ -614,6 +638,47 @@ EVENTS_INLINE int os_detach(os_thread_t t) {
 	return pthread_detach(t);
 }
 
+#if defined(__APPLE__) || defined(__MACH__)
+#include <sys/sysctl.h>
+
+static EVENTS_INLINE void CPU_ZERO(cpu_set_t *cs) { cs->count = 0; }
+static EVENTS_INLINE void CPU_SET(int num, cpu_set_t *cs) { cs->count |= (1 << num); }
+static EVENTS_INLINE int CPU_ISSET(int num, cpu_set_t *cs) { return (cs->count & (1 << num)); }
+
+int sched_getaffinity(pid_t pid, size_t cpu_size, cpu_set_t *cpu_set) {
+	int32_t core_count = 0;
+	size_t  len = sizeof(core_count);
+	int i, ret = sysctlbyname(SYSCTL_CORE_COUNT, &core_count, &len, 0, 0);
+	if (ret) {
+		errno = ret;
+		perror("sched_getaffinity");
+		return -1;
+	}
+
+	cpu_set->count = 0;
+	for (i = 0; i < core_count; i++) {
+		cpu_set->count |= (1 << i);
+	}
+
+	return 0;
+}
+
+int pthread_setaffinity_np(pthread_t thread, size_t cpu_size, cpu_set_t *cpu_set) {
+	thread_port_t mach_thread;
+	int core = 0;
+
+	for (core = 0; core < 8 * cpu_size; core++) {
+		if (CPU_ISSET(core, cpu_set)) break;
+	}
+
+	thread_affinity_policy_data_t policy = {core};
+	mach_thread = pthread_mach_thread_np(thread);
+	thread_policy_set(mach_thread, THREAD_AFFINITY_POLICY,
+		(thread_policy_t)&policy, 1);
+	return 0;
+}
+#endif
+
 EVENTS_INLINE void os_cpumask_set(os_cpumask *mask, uint32_t i) {
 	CPU_SET(i, mask);
 }
@@ -623,7 +688,7 @@ EVENTS_INLINE int os_affinity(os_thread_t t, const os_cpumask *mask) {
 	errno = ENOSYS;
 	return -1;
 #else
-	return pthread_setaffinity_np(t, sizeof(*mask), mask);
+	return pthread_setaffinity_np(t, sizeof(*mask), (cpu_set_t *)mask);
 #endif
 }
 

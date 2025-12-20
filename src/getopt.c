@@ -14,7 +14,7 @@ static void usage(const char *program, char *message) {
 	exit(1);
 }
 
-EVENTS_INLINE void getopt_message_set(const char *message, int minium, bool is_ordered) {
+void getopt_message_set(const char *message, int minium, bool is_ordered) {
 	if (!command_line_set) {
 		command_line_set = true;
 		command_line_message = (char *)message;
@@ -23,7 +23,7 @@ EVENTS_INLINE void getopt_message_set(const char *message, int minium, bool is_o
 	}
 }
 
-EVENTS_INLINE char *getopts(void) {
+char *getopts(void) {
 	return command_line_option;
 }
 
@@ -88,7 +88,7 @@ bool getopt_has(const char *flag, bool is_single) {
 	return false;
 }
 
-EVENTS_INLINE void getopt_arguments_set(int argc, char **argv) {
+void getopt_arguments_set(int argc, char **argv) {
 	command_line_argc = argc;
 	command_line_argv = argv;
 }

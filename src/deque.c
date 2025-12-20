@@ -146,7 +146,7 @@ void deque_destroy(void) {
 	events_deque_t **queue = sys_event.local;
 	if (queue != NULL) {
 		size_t i, count = atomic_load(&sys_event.num_loops);
-		sys_event.local, NULL;
+		sys_event.local = NULL;
 		if (deque_thread_set) {
 			for (i = 0; i < count; i++) {
 				atomic_flag_test_and_set(&queue[i]->started);

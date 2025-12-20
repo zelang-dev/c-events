@@ -246,7 +246,7 @@ static void *queue_work_handler(param_t args) {
 	enqueue_pool_request(thrd, job);
 	yield_task();
 	while (!atomic_flag_load(&job->done)) {
-		task_info(active_task(), 1);
+		tasks_info(active_task(), 1);
 		yield_task();
 	}
 
@@ -343,7 +343,11 @@ static EVENTS_INLINE void *_os_write(param_t args) {
 }
 
 static EVENTS_INLINE void *_os_sendfile(param_t args) {
+#if defined(__APPLE__) || defined(__MACH__)
+	return casting(sendfile(args[0].integer, args[1].integer, (off_t)args[2].long_long, (off_t *)args[3].long_long_ptr, NULL, 0));
+#else
 	return casting(sendfile(args[0].integer, args[1].integer, (off_t *)args[2].long_long_ptr, args[3].max_size));
+#endif
 }
 
 static EVENTS_INLINE void *_os_close(param_t args) {
@@ -488,7 +492,7 @@ static void *spawning(param_t args) {
 		info->context = t;
 		yield_task();
 		while (exec_wait(pid, 0, &status) && os_geterror() == ETIMEDOUT) {
-			task_info(t, 1);
+			tasks_info(t, 1);
 			yield_task();
 		}
 
@@ -526,6 +530,16 @@ execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_
 			perror("os_create_pipe");
 			return NULL;
 		}
+#elif defined(__APPLE__) || defined(__MACH__)
+		if (pipe(_2fd(info->write_input))
+			|| pipe(_2fd(info->read_output))) {
+			perror("pipe");
+			return NULL;
+		}
+		events_set_nonblocking(info->write_input[0]);
+		events_set_nonblocking(info->write_input[1]);
+		events_set_nonblocking(info->read_output[0]);
+		events_set_nonblocking(info->read_output[1]);
 #else
 		if (pipe2(_2fd(info->write_input), O_NONBLOCK)
 			|| pipe2(_2fd(info->read_output), O_NONBLOCK)) {

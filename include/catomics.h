@@ -37,7 +37,7 @@ extern "C" {
 #	include <intrin.h>
 #   define make_atomic(type, var)  typedef volatile type var;
 #else
-#	if defined(__APPLE__)
+#	if defined(__APPLE__) && !__has_feature(c_atomic)
 #		define make_atomic(type, var)  typedef volatile type var;
 #	else
 #   	define make_atomic(type, var)  typedef volatile _Atomic(type)var;

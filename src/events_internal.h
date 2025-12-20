@@ -126,7 +126,11 @@ typedef struct results_data {
 	bool is_terminated;
 	values_t result;
 } _results_data_t, *results_data_t;
+#if __APPLE__ && __MACH__
+make_atomic(results_data_t *, atomic_results_t)
+#else
 make_atomic(results_data_t, atomic_results_t)
+#endif
 
 struct events_fd_s {
   /* use accessors! */
@@ -172,7 +176,11 @@ struct sys_events_s {
 	/* result id generator */
 	atomic_size_t result_id_generate;
 	atomic_size_t num_loops;
+#if __APPLE__ && __MACH__
+	atomic_results_t results;
+#else
 	atomic_results_t *results;
+#endif
 	atomic_events_t fds;
 };
 
