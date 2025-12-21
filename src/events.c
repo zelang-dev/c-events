@@ -1666,9 +1666,13 @@ EVENTS_INLINE size_t tasks_cpu_count(void) {
 	sched_getaffinity(0, sizeof(cpuset), &cpuset);
 	return CPU_COUNT(&cpuset);
 }
-#else
+#elif defined(__APPLE__) || defined(__MACH__)
 EVENTS_INLINE size_t tasks_cpu_count(void) {
 	return sysconf(_SC_NPROCESSORS_CONF);
+}
+#else
+EVENTS_INLINE size_t tasks_cpu_count(void) {
+	return sysconf(_SC_NPROCESSORS_ONLN);
 }
 #endif
 

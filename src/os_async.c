@@ -454,7 +454,7 @@ static void spawn_io(fds_t fd, int events, void *arg) {
 #ifndef _WIN32
 	char data[Kb(32)] = {0};
 	int count;
-	if ((count = read((fds_t)info->read_output[0], data, sizeof(data))) > 0)
+	if ((count = read((fds_t)info->read_output[0], data, sizeof(data) - 1)) > 0)
 		func((fds_t)info->write_input[1], count, data);
 #else
 	func((fds_t)info->write_input[1], (size_t)events, info->buffer);

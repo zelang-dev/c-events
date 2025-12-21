@@ -787,7 +787,7 @@ DWORD __stdcall spawn_io_thread(void *arg) {
 	BOOL bSuccess = FALSE;
 
 	for (;;) {
-		bSuccess = ReadFile(info->read_output[0], pOv->buf, pOv->length, &dwRead, NULL);
+		bSuccess = ReadFile(info->read_output[0], pOv->buf, pOv->length - 1, &dwRead, NULL);
 		if (!bSuccess)
 			break;
 
