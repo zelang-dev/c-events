@@ -121,6 +121,7 @@ If `assembly`, reduced to:
 #	include <sys/un.h>
 #	if __APPLE__ && __MACH__
 #		include <notify.h>
+#		define vfork fork
 #	else
 #   	include <sys/eventfd.h>
 #	endif
