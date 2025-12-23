@@ -88,6 +88,7 @@ typedef struct events_deque_s {
 struct _thread_worker {
 	data_types type;
 	int id;
+	int last_fd;
 	events_t *loop;
 	events_deque_t *queue;
 	atomic_spinlock mutex;

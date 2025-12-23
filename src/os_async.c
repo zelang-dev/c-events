@@ -226,6 +226,7 @@ os_worker_t *events_add_pool(events_t *loop) {
 		f_work->queue->jobs = array();
 		f_work->queue->loop = loop;
 		f_work->loop = loop;
+		f_work->last_fd = TASK_ERRED;
 		f_work->type = DATA_PTR;
 		local[index]->thread = os_create(__threads_wrapper, (void *)f_work);
 		if (local[index]->thread == OS_NULL)
@@ -372,6 +373,7 @@ static EVENTS_INLINE void *_os_unlink(param_t args) {
 }
 
 EVENTS_INLINE int async_fs_open(os_worker_t *thrd, const char *path, int flag, int mode) {
+	thrd->last_fd = TASK_DEAD;
 	return await_for(queue_work(thrd, _os_open, 3, path, casting(flag), casting(mode))).integer;
 }
 
@@ -405,7 +407,15 @@ EVENTS_INLINE ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t l
 }
 
 EVENTS_INLINE int async_fs_close(os_worker_t *thrd, int fd) {
-	return await_for(queue_work(thrd, _os_close, 1, casting(fd))).integer;
+	if (thrd->last_fd == fd) {
+		thrd->last_fd = TASK_ERRED;
+		return TASK_ERRED;
+	}
+
+	int r = await_for(queue_work(thrd, _os_close, 1, casting(fd))).integer;
+	thrd->last_fd = fd;
+
+	return r;
 }
 
 EVENTS_INLINE int fs_close(int fd) {

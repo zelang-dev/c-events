@@ -170,7 +170,7 @@ install(
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION lib)
-install(FILES include/events.h include/arrays.h include/os.h DESTINATION include)
+install(FILES include/*.h DESTINATION include)
 include(CPack)
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
