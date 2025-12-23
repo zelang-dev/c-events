@@ -702,7 +702,7 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 	if (is_spawn && i->io_func) {
 		CloseHandle(i->write_input[0]);
 		CloseHandle(i->read_output[1]);
-		fdTable[i->fd].buffer = events_calloc(1, Kb(64));
+		fdTable[i->fd].buffer = events_calloc(1, Kb(64) + 1);
 		fdTable[i->fd].ovList->length = Kb(64);
 		fdTable[i->fd].ovList->data = i;
 		fdTable[i->fd].ovList->buf = fdTable[i->fd].buffer;
@@ -787,7 +787,7 @@ DWORD __stdcall spawn_io_thread(void *arg) {
 	BOOL bSuccess = FALSE;
 
 	for (;;) {
-		bSuccess = ReadFile(info->read_output[0], pOv->buf, pOv->length - 1, &dwRead, NULL);
+		bSuccess = ReadFile(info->read_output[0], pOv->buf, pOv->length, &dwRead, NULL);
 		if (!bSuccess)
 			break;
 
