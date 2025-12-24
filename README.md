@@ -572,7 +572,7 @@ func main() {
 
 ## Comparisons
 
-Same functions and behavior as Linux `mkfifo` for Windows, of **libevent** [event-read-fifo](https://github.com/libevent/libevent/blob/release-2.2.1-alpha/sample/event-read-fifo.c) sample, it states **Windows** sections don't work.
+Same functions and behavior of Linux's `mkfifo` for Windows also, minor changes in **libevent** [event-read-fifo](https://github.com/libevent/libevent/blob/release-2.2.1-alpha/sample/event-read-fifo.c) sample, where it states **Windows** sections don't work.
 
 ```c
 #include <events.h>
