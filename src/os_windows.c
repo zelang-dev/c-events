@@ -467,7 +467,7 @@ int os_iodispatch(int ms) {
 
 			switch (fdTable[fd].type) {
 				case FD_MONITOR_ASYNC:
-					(target->callback)(fd, EVENTS_WATCH, target->cb_arg);
+					(target->callback)(fd, EVENTS_DIRWATCH, target->cb_arg);
 					break;
 				case FD_FILE_ASYNC:
 					(pOv->proc)((intptr_t)fdTable[fd].fid.value, bytes, pOv->data);

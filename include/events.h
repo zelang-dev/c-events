@@ -138,7 +138,8 @@ If `assembly`, reduced to:
 #define EVENTS_WRITE 	2
 #define EVENTS_TIMEOUT 	4
 #define EVENTS_CLOSED 	5
-#define EVENTS_WATCH 	8
+#define EVENTS_DIRWATCH 	8
+#define EVENTS_FILEWATCH 	17
 #define EVENTS_SIGNAL 	255
 #define EVENTS_ADD		0x40000000
 #define EVENTS_DEL 		0x20000000

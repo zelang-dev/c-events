@@ -54,6 +54,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [ ] Complete implementation of `events_addtasks_pool()`, a *thread pool* creation function for **Events API** only.
 * [ ] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**.
 * [ ] Complete implementation of `inotify_add_watch()` for **Apple macOS**.
+* [ ] Implement *event* `EVENTS_FILEWATCH`, `EVENTS_DIRWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
 * [ ] Completion of ALL OS *file system* function routines with matching **thread** ~async_fs_~ *version*.
 
 ## Design
