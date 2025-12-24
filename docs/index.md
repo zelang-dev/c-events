@@ -489,13 +489,9 @@ Besides all *code snippets* above, this *example* recreate **Google's** [waitGro
 
 <table>
 <tr>
-<th></th>
-<th></th>
-</tr>
-<tr>
 <td>
 
-```c
+<pre><code>
 #include <events.h>
 
 void *worker(param_t args) {
@@ -529,12 +525,12 @@ int main(int argc, char **argv) {
 
  return 0;
 }
-```
+</code></pre>
 
 </td>
 <td>
 
-```go
+<pre><code>
 package main
 
 import (
@@ -568,7 +564,7 @@ func main() {
 
   wg.Wait()
 }
-```
+</code></pre>
 
 </td>
 </tr>
