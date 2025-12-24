@@ -485,7 +485,7 @@ C_API bool spawn_is_finish(execinfo_t *child);
 
 ## Usage
 
-Besides all *code snippets* above, this *example* recreate **Google's** [waitGroups](https://gobyexample.com/waitgroups>) of **goroutine's**.
+Besides all *code snippets* above, this *example* recreate **Google's** [waitGroups](https://gobyexample.com/waitgroups) of **goroutine's**.
 
 <table>
 <tr>
