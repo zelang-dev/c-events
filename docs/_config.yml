@@ -1,9 +1,9 @@
-title: libtls for OpenSSL
-description: A new TLS library, designed to make it easier to write foolproof applications.
+title: c-events, Yet another event loop, simpler, smaller, faster.
+description: A tiny, lightning fast event loop, utilizing single interface for epoll, kqueue, iocp.
 remote_theme: carlosperate/jekyll-theme-rtd
 
 # Theme settings:
-repo_url: "https://github.com/zelang-dev/openTLS"
+repo_url: "https://github.com/zelang-dev/c-events"
 edit_on_github: true
 github_docs_folder: true
 sticky_navigation: true

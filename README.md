@@ -1,6 +1,6 @@
 # events
 
-A *tiny*, *lightning fast* event loop.
+A *tiny*, *lightning fast* **event loop**, utilizing single interface for **epoll**, **kqueue**, **iocp**.
 
 This project takes up where [picoev](https://github.com/kazuho/picoev) left off, it forks and remake, bringing in aspects from [FastCGI_A_High-Performance_Web_Server_Interface_FastCGI.html](https://fastcgi-archives.github.io/FastCGI_A_High-Performance_Web_Server_Interface_FastCGI.html) source [fcgi2](https://github.com/FastCGI-Archives/fcgi2), specificity, how to make **Windows** `file descriptors` aka *fake* behave like on **Linux**. As such, this **events** library handles general non-blocking file I/O.
 
