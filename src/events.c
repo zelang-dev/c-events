@@ -1340,7 +1340,7 @@ values_t yielded(generator_t gen) {
 		yield_task();
 	}
 
-	if (data_type(gen) != DATA_GENERATOR)
+	if (data_type(gen) != DATA_GENERATOR || (gen->context->halt && !gen->is_ready))
 		return data_values_empty->value;
 
 	active_task()->gen_id = gen->rid;
@@ -1385,6 +1385,11 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	/* Stack size should be at least `TASK_STACK_SIZE`. */
 	if ((heapsize != 0 && heapsize < TASK_STACK_SIZE) || heapsize == 0)
 		heapsize = TASK_STACK_SIZE;
+
+#if __APPLE__ && __MACH__
+	if (heapsize < MINSIGSTKSZ)
+		heapsize = MINSIGSTKSZ;
+#endif
 
 	if (atomic_load(&sys_event.id_generate) == 1)
 		heapsize = heapsize * 4;
@@ -1605,6 +1610,7 @@ array_t tasks_wait(task_group_t *wg) {
 
 		$delete(wg->group);
 		wg->group = NULL;
+		memset(wg, DATA_INVALID, sizeof(data_types));
 		events_free(wg);
 		if (!is_sleeping)
 			__thrd()->task_count--;
