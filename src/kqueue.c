@@ -185,22 +185,21 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 		if (loop->loop.loop_id == target->loop_id
 			&& (event->filter & (EVFILT_READ | EVFILT_WRITE)) != 0) {
 			int revents;
-			if (event->flags & EV_EOF) {
-				revents = EVENTS_CLOSED;
-			} else {
-				switch (event->filter) {
-					case EVFILT_READ:
-						revents = EVENTS_READ;
-						break;
-					case EVFILT_WRITE:
-						revents = EVENTS_WRITE;
-						break;
-					default:
-						assert(0);
-						revents = 0; // suppress compiler warning
-						break;
-				}
+			switch (event->filter) {
+				case EVFILT_READ:
+					revents = EVENTS_READ;
+					break;
+				case EVFILT_WRITE:
+					revents = EVENTS_WRITE;
+					break;
+				default:
+					assert(0);
+					revents = 0; // suppress compiler warning
+					break;
 			}
+
+			if (event->flags & EV_EOF)
+				revents &= EVENTS_CLOSED;
 			(*target->callback)(event->ident, revents, target->cb_arg);
 		}
 	}
