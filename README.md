@@ -50,7 +50,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Merge aspects of **[fcgi2](https://github.com/FastCGI-Archives/fcgi2)**, the *pseudo file descriptors* creation implementation.
 * [x] Add/recreate *tests and examples* some derived from **[libevent](https://github.com/libevent/libevent)**.
 * [x] Bug fix *tests and examples* for proper execution under **Windows** and **Linux**.
-* [ ] Bug fix *tests and examples* for proper execution under **Apple macOS**.
+* [x] Bug fix *tests and examples* for proper execution under **Apple macOS**.
 * [ ] Complete implementation of `events_addtasks_pool()`, a *thread pool* creation function for **Events API** only.
 * [ ] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**.
 * [ ] Complete implementation of `inotify_add_watch()` for **Apple macOS**.
@@ -78,7 +78,7 @@ The following "simple TCP proxy" example demonstrate the simplicity of using `ev
 **Run:**
 
 ```shell
-tcpproxy 1234 www.google.com 80
+tcp_proxy 1234 www.google.com 80
 ```
 
 **Then visit <http://localhost:1234/> and see Google.**
@@ -787,7 +787,7 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.1.0.zip
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.1.1.zip
         URL_MD5 e2ec8e145bc702b052fe857d03c95c31
     )
     FetchContent_MakeAvailable(events)

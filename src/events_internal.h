@@ -216,7 +216,7 @@ struct events_loop_s {
 		void *_free_addr;
 	} timeout;
 	time_t now;
-	sys_signal_t *signal_set;
+	sys_signal_t *signal_handlers;
 	timerlist_t timers[1];
 };
 

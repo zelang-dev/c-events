@@ -339,9 +339,9 @@ EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_i
 	if (event == EVENTS_SIGNAL) {
 		atomic_thread_fence(memory_order_seq_cst);
 		if ((sig_idx = events_add_signal(fd, callback, cb_arg)) >= 0) {
-			loop->signal_set = events_signals();
+			loop->signal_handlers = events_signals();
 			loop->active_signals++;
-			loop->signal_set[sig_idx].loop = loop;
+			loop->signal_handlers[sig_idx].loop = loop;
 			target->loop = loop;
 			target->signal_idx = sig_idx;
 			target->signal_set = true;
@@ -392,15 +392,15 @@ EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_i
 EVENTS_INLINE int events_del(fds_t sfd) {
 	events_fd_t *target = NULL;
 	events_t *loop = NULL;
-	sys_signal_t *signal_set = NULL;
+	sys_signal_t *signal_handlers = NULL;
 	int fd = socket2fd(sfd);
 
 	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(fd));
 	target = events_target(fd);
 	if (target->signal_set) {
-		signal_set = events_signals();
-		if (signal_set[target->signal_idx].sig == fd
-			&& signal_set[target->signal_idx].is_running) {
+		signal_handlers = events_signals();
+		if (signal_handlers[target->signal_idx].sig == fd
+			&& signal_handlers[target->signal_idx].is_running) {
 			events_del_signal(fd, target->signal_idx);
 			target->signal_set = false;
 			target->loop->active_signals--;
@@ -531,7 +531,7 @@ int events_init_loop_internal(events_t *loop, int max_timeout) {
 	loop->active_io = 0;
 	loop->active_timers = 0;
 	loop->active_signals = 0;
-	loop->signal_set = NULL;
+	loop->signal_handlers = NULL;
 	memset(loop->timers, 0, sizeof(loop->timers));
 	assert(EVENTS_TOO_MANY_LOOPS);
 	if ((loop->timeout.vec_of_vec = (short *)events_memalign(
@@ -1000,10 +1000,10 @@ EVENTS_INLINE void tasks_info(tasks_t *t, int pos) {
 		os_self(),
 		t->tid,
 		t->cid,
-		(t->name != NULL && t->cid > 0 ? t->name : ""),
+		t->name,
 		task_state(t->status),
 		t->cycles,
-		(line_end ? ""CLR_LN : line)
+		(line_end ? CLR_LN : line)
 	);
 #endif
 }
@@ -1387,8 +1387,8 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 		heapsize = TASK_STACK_SIZE;
 
 #if __APPLE__ && __MACH__
-	if (heapsize < MINSIGSTKSZ)
-		heapsize = MINSIGSTKSZ;
+	if (heapsize <= MINSIGSTKSZ)
+		heapsize = MINSIGSTKSZ + heapsize;
 #endif
 
 	if (atomic_load(&sys_event.id_generate) == 1)
