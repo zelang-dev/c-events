@@ -47,13 +47,14 @@ typedef enum {
 	DATA_PTR,
 	DATA_FUNC,
 	DATA_ARRAY,
-	DATA_TASK,
+	DATA_TASKGROUP,
 	DATA_DEQUE,
 	DATA_GENERATOR,
 	DATA_UDP,
 	DATA_TCP,
 	DATA_PIPE,
 	DATA_FILE,
+	DATA_MAXCOUNTER,
 } data_types;
 
 /* Generic simple union storage types. */
@@ -127,10 +128,14 @@ C_API void data_delete(array_t);
 C_API void data_remove(array_t, size_t);
 C_API array_t data_reset(array_t);
 C_API size_t data_size(array_t);
+C_API size_t data_capacity(array_t);
+C_API void data_reserve(array_t, size_t);
+C_API atomic_spinlock *data_lock(array_t);
 C_API size_t data_queue_size(void);
-C_API bool is_data(void *);
-C_API bool is_group(void *);
 C_API data_types data_type(void *self);
+C_API bool is_data(void *);
+C_API bool is_taskgroup(void *);
+C_API bool is_waitgroup(void *);
 C_API bool is_ptr_usable(void *self);
 C_API bool defer_free(void *data);
 
@@ -152,6 +157,8 @@ C_API bool defer_free(void *data);
 #define $size(arr) 						data_size((array_t)arr)
 #define $delete(arr) 					data_delete((array_t)arr)
 #define $capacity(arr) 					data_capacity((array_t)arr)
+#define $lock(arr) 						data_lock((array_t)arr)
+#define $reserve(arr, cap)				data_reserve((array_t)arr, (size_t)cap)
 #endif
 
 C_API bool str_is(const char *str, const char *str2);

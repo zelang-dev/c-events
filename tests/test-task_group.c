@@ -18,7 +18,7 @@ TEST(task_group) {
 	int cid[10], i;
 
 	task_group_t *wg = task_group();
-	ASSERT_TASK((is_group(wg) == true));
+	ASSERT_TASK((is_taskgroup(wg) == true));
 	for (i = 0; i < 10; i++) {
 		cid[i] = async_task(worker, 1, i);
 		ASSERT_EQ(cid[i], i + 2);
@@ -26,7 +26,7 @@ TEST(task_group) {
 	ASSERT_EQ(tasks_count(wg), 10);
 	array_t wgr = tasks_wait(wg);
 	ASSERT_TASK(is_data(wgr));
-	ASSERT_TASK((is_group(wg) == false));
+	ASSERT_TASK((is_taskgroup(wg) == false));
 	ASSERT_EQ($size(wgr), 2);
 	ASSERT_EQ(32, results_for(cid[2]).integer);
 	ASSERT_TASK(str_is("hello world", results_for(cid[1]).char_ptr));

@@ -1,8 +1,9 @@
 
 set(TARGET_LIST
+	argdumper
+	child_command
 	_cat
 	_mkfifo
-	argdumper
 	bench_cascade
 	event-read-fifo
 	events_echo
@@ -17,7 +18,7 @@ set(TARGET_LIST
 	tcp_proxy
 	helloworld
 	spawn
-	child_command
+ 	waitgroup
 )
 
 foreach (TARGET ${TARGET_LIST})

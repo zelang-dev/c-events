@@ -8,7 +8,7 @@ void *main_main(param_t args) {
 	os_worker_t *thrd = events_add_pool(args->object);
 	ASSERT_TASK((data_type(thrd) == DATA_PTR));
 	ASSERT_TASK((data_type(events_pool()) == DATA_PTR));
-	ASSERT_TASK((events_pool() != thrd));
+	ASSERT_TASK((events_pool() == thrd));
 	ASSERT_TASK(((host = async_get_hostbyname(thrd, "dns.google")) != NULL));
 	ASSERT_TASK(str_is(gethostbyname_ip(host), "8.8.8.8") || str_is(gethostbyname_ip(host), "8.8.4.4"));
 	return 0;

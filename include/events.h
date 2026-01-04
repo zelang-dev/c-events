@@ -196,6 +196,7 @@ typedef void (*actor_cb)(actor_t *, void *);
 typedef void (*os_cb)(intptr_t file, int bytes, void *data);
 typedef void *(*param_func_t)(param_t);
 typedef events_cb sig_cb;
+typedef task_group_t *waitgroup_t;
 
 C_API sys_events_t sys_event;
 C_API volatile sig_atomic_t events_got_signal;
@@ -349,6 +350,7 @@ and indicate a terminated/finish status.
 The initialization ends when `tasks_wait()` is called, as such current `task` will pause,
 and execution will begin and wait for the group of `tasks` to finished. */
 C_API task_group_t *task_group(void);
+C_API waitgroup_t waitgroup(uint32_t capacity);
 
  /* Pauses current `task`, and begin execution of `tasks` in `task_group_t` object,
 will wait for all to finish.
@@ -356,6 +358,9 @@ will wait for all to finish.
 Returns `array` of `results id`, accessible using `results_for()` function. */
 C_API array_t tasks_wait(task_group_t *);
 C_API size_t tasks_count(task_group_t *wg);
+
+C_API array_t waitfor(waitgroup_t wg);
+C_API events_t *tasks_loop(void);
 
 /* Return the unique `result id` for the current `task`. */
 C_API uint32_t task_id(void);
@@ -366,7 +371,7 @@ C_API bool task_is_ready(uint32_t id);
 /* Check for `task` termination/return. */
 C_API bool task_is_terminated(tasks_t *);
 
-/* Print an `task` internal data state, only active in `debug` builds. */
+/* Print `task` internal data state, only active in `debug` builds. */
 C_API void tasks_info(tasks_t *t, int pos);
 
 /* Return `current` task ~user_data~. */
@@ -393,7 +398,7 @@ C_API void tasks_stack_check(int n);
 /* Register an `event loop` handle to an `new` thread pool `os_worker_t` instance,
 for `blocking` cpu ~system~ handling calls. */
 C_API os_worker_t *events_add_pool(events_t *loop);
-C_API os_tasks_t *events_addtasks_pool(events_t *loop);
+C_API int events_tasks_pool(events_t *loop);
 
 /* Return `current` thread pool handle. */
 C_API os_worker_t *events_pool(void);
@@ -423,6 +428,7 @@ of given `function` with `number` of args, then `arguments`.
 NOTE: The `task` will be added to `current` thread ~schedular~ `run queue`,
 same behavior as GoLang's `Go` statement. */
 C_API uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...);
+C_API uint32_t go(param_func_t fn, size_t num_of_args, ...);
 
 /*  Low-level call sitting underneath `async_read` and `async_write`.
  Puts task to ~sleep~ while waiting for I/O to be possible on `fd`.

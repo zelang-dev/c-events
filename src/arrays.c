@@ -7,6 +7,8 @@ typedef struct array_metadata_s {
 	size_t size;
 	size_t capacity;
 	free_func destructor;
+	events_cacheline_t _pad;
+	atomic_spinlock lock;
 } array_metadata_t;
 
 static char EVENTS_ARGS[EVENTS_ARGS_LENGTH] = {0};
@@ -20,6 +22,7 @@ const data_values_t data_values_empty[1] = {0};
 #define array_set_type(vec, _type) array_address(vec)->type = (_type)
 #define array_set_destructor(vec, elem_destructor_fn) array_address(vec)->destructor = (elem_destructor_fn)
 #define array_destructor(vec) array_address(vec)->destructor
+#define array_mutex(vec) array_address(vec)->lock
 #define array_length(vec) ((vec) ? array_address(vec)->size : (size_t)0)
 #define array_type(vec) ((vec) ? array_address(vec)->type : DATA_INVALID)
 #define array_cap(vec) ((vec) ? array_address(vec)->capacity : (size_t)0)
@@ -40,6 +43,14 @@ const data_values_t data_values_empty[1] = {0};
         array_set_capacity((vec), (count));		\
     } while (0)
 
+#define array_reserve(vec, n)					\
+    do {										\
+        size_t reserve = array_cap(vec);		\
+        if (reserve < (n)) {					\
+            array_grow((vec), (n));				\
+        }										\
+    } while (0)
+
 #ifndef in
 #	define in ,
 #endif
@@ -58,6 +69,15 @@ EVENTS_INLINE size_t data_size(array_t v) {
 
 EVENTS_INLINE size_t data_capacity(array_t v) {
 	return array_cap(v);
+}
+
+EVENTS_INLINE atomic_spinlock *data_lock(array_t v) {
+	return &array_mutex(v);
+}
+
+EVENTS_INLINE void data_reserve(array_t v, size_t capacity) {
+	if (v && capacity)
+		array_reserve(v, capacity);
 }
 
 EVENTS_INLINE void data_remove(array_t arr, size_t i) {
@@ -226,6 +246,7 @@ array_t data_of(size_t count, ...) {
 	}
 
 	array_set_type(params, DATA_ARRAY);
+	atomic_flag_clear(&array_mutex(params));
 	return params;
 }
 
@@ -234,17 +255,13 @@ EVENTS_INLINE array_t array(void) {
 }
 
 EVENTS_INLINE data_types data_type(void *self) {
-	return ((data_t *)self)->type;
+	return self == NULL ? DATA_INVALID : ((data_t *)self)->type;
 }
 
 EVENTS_INLINE bool is_data(void *params) {
 	return (params == NULL || !is_ptr_usable(params))
 		? false
 		: array_type((array_t)params) == DATA_ARRAY;
-}
-
-EVENTS_INLINE bool is_group(void *params) {
-	return data_type(params) == DATA_TASK;
 }
 
 EVENTS_INLINE bool is_ptr_usable(void *self) {

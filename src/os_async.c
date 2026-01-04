@@ -158,7 +158,7 @@ int async_write(int fd, void *buf, int n) {
 	return tot;
 }
 
-EVENTS_INLINE void enqueue_pool_request(os_worker_t *j, os_request_t *r) {
+EVENTS_INLINE void enqueue_request(os_worker_t *j, os_request_t *r) {
 	atomic_lock(&j->mutex);
 	events_deque_t *queue = sys_event.local[j->id];
 	$append(queue->jobs, r);
@@ -174,66 +174,9 @@ static uint32_t async_loop(events_t *loop, size_t heapsize, param_func_t fn, uin
 	va_end(ap);
 
 	tasks_t *t = create_task(heapsize, (data_func_t)fn, params);
-	t->tid = loop->loop_id - 1;
-	return task_push(t, true);
-}
-
-static int __threads_wrapper(void *arg) {
-	os_worker_t *work = (os_worker_t *)arg;
-	events_deque_t *queue = work->queue;
-	values_t res[1] = {0};
-	int status = 0, tid = work->id;
-
-	while (!atomic_flag_load(&queue->started))
-		;
-
-	do {
-		if ((int)atomic_load(&queue->available) > 0) {
-			atomic_fetch_sub(&queue->available, 1);
-			atomic_lock(&work->mutex);
-			os_request_t *worker = (os_request_t *)$shift(queue->jobs).object;
-			atomic_unlock(&work->mutex);
-			res->object = worker->func(worker->args);
-			thread_result_set(worker, res->object);
-			$delete(worker->args);
-		} else {
-			os_sleep(1);
-		}
-	} while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed));
-	$delete(queue->jobs);
-	events_free(arg);
-	os_exit(status);
-	return status;
-}
-
-os_worker_t *events_add_pool(events_t *loop) {
-	events_deque_t **local = sys_event.local;
-	os_worker_t *f_work = NULL;
-	int index = loop->loop_id - 1;
-	if (index <= sys_event.cpu_count) {
-		local[index] = (events_deque_t *)events_malloc(sizeof(events_deque_t));
-		if (local[index] == NULL)
-			abort();
-
-		deque_init(local[index], sys_event.queue_size);
-		f_work = events_calloc(1, sizeof(os_worker_t));
-		if (f_work == NULL)
-			abort();
-
-		atomic_unlock(&f_work->mutex);
-		f_work->id = (int)index;
-		f_work->queue = local[index];
-		f_work->queue->jobs = array();
-		f_work->queue->loop = loop;
-		f_work->loop = loop;
-		f_work->last_fd = TASK_ERRED;
-		f_work->type = DATA_PTR;
-		local[index]->thread = os_create(__threads_wrapper, (void *)f_work);
-		if (local[index]->thread == OS_NULL)
-			abort();
-	}
-
-	return f_work;
+	uint32_t id = task_push(t, false);
+	t->tid = loop->loop_id;
+	return id;
 }
 
 static void *queue_work_handler(param_t args) {
@@ -244,7 +187,7 @@ static void *queue_work_handler(param_t args) {
 	task_name("queue_work #%d", job->id);
 	atomic_flag_test_and_set(&thrd->queue->started);
 
-	enqueue_pool_request(thrd, job);
+	enqueue_request(thrd, job);
 	yield_task();
 	while (!atomic_flag_load(&job->done)) {
 		tasks_info(active_task(), 1);
@@ -265,7 +208,7 @@ uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...) {
 	os_request_t *f = (os_request_t*)events_calloc(1, sizeof(os_request_t));
 	f->args = args;
 	f->func = fn;
-	atomic_unlock(&f->mutex);
+	atomic_flag_clear(&f->mutex);
 	atomic_flag_clear(&f->done);
 	uint32_t id = async_loop(thrd->loop, Kb(64), queue_work_handler, 2, thrd, f);
 	yield_task();

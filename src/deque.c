@@ -32,10 +32,12 @@ void deque_init(events_deque_t *q, int size_hint) {
 	atomic_init(&q->array, a);
 	atomic_flag_clear(&q->shutdown);
 	atomic_flag_clear(&q->started);
+	q->tasks = NULL;
 	q->jobs = NULL;
 	q->loop = NULL;
 	q->type = DATA_DEQUE;
-	deque_thread_set = true;
+	if (!deque_thread_set)
+		deque_thread_set = true;
 }
 
 void deque_resize(events_deque_t *q) {
@@ -148,13 +150,15 @@ void deque_destroy(void) {
 		size_t i, count = atomic_load(&sys_event.num_loops);
 		sys_event.local = NULL;
 		if (deque_thread_set) {
-			for (i = 0; i < count; i++) {
-				atomic_flag_test_and_set(&queue[i]->started);
-				atomic_flag_test_and_set(&queue[i]->shutdown);
+			for (i = 0; i <= count; i++) {
+				if (is_ptr_usable(queue[i])) {
+					atomic_flag_test_and_set(&queue[i]->started);
+					atomic_flag_test_and_set(&queue[i]->shutdown);
+				}
 			}
 
 			os_sleep(count);
-			for (i = 0; i < count; i++) {
+			for (i = 1; i <= count; i++) {
 				if (data_type(queue[i]) == DATA_DEQUE) {
 					queue[i]->type = DATA_INVALID;
 					os_join(queue[i]->thread, -1, NULL);
@@ -162,6 +166,8 @@ void deque_destroy(void) {
 				}
 			}
 		}
+
+		deque_free(queue[0]);
 		events_free(queue);
 	}
 }

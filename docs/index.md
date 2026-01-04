@@ -51,7 +51,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Add/recreate *tests and examples* some derived from **[libevent](https://github.com/libevent/libevent)**.
 * [x] Bug fix *tests and examples* for proper execution under **Windows** and **Linux**.
 * [x] Bug fix *tests and examples* for proper execution under **Apple macOS**.
-* [ ] Complete implementation of `events_addtasks_pool()`, a *thread pool* creation function for **Events API** only.
+* [ ] Complete implementation of `events_tasks_pool()`, a *thread pool* creation function for **Events API** only.
 * [ ] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**.
 * [ ] Complete implementation of `inotify_add_watch()` for **Apple macOS**.
 * [ ] Implement *event* `EVENTS_FILEWATCH`, `EVENTS_DIRWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
@@ -69,9 +69,9 @@ Most function signatures are the same, just **passthru** to the **Operating Syst
 
 The Operating System **file descriptor** is represented by `fds_t` and `filefd_t`. For Windows, this system will create a `pseudo fd` that actually has all [Windows event system](https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-concepts) **mechanisms** *attached*. This action allows the creation of simpler a alternative *Linux* functions for *Windows* like `mkfifo()` **IPC**, and still in development `inotify_add_watch()` **file/directory monitor**, with same signatures. It's also the basics for `spawn()` **child process** *input/output* control. The functions `events_new_fd()` and `events_assign_fd()` was mainly for **Windows**,  but also available for **Linux** using [eventfd](https://man7.org/linux/man-pages/man2/eventfd.2.html) interface, and **Apple macOS** using [Darwin Notify](https://developer.apple.com/documentation/darwinnotify) functionality.
 
-This would also allow nonblocking file system handling. But for cross-platform simplicity, everything is a *pass-thru* to a thread pool instead. A default of `1`, which is automatically created with first `events_create()` **loop** `events_t` handle. An thread pool `os_worker_t` is created by calling `events_add_pool()` with a **loop** handle. The `os_worker_t` must be pass as first parameter to standard file system functions, a few currently implemented, all prefixed as **~async_fs_~**. These functions constructed as a wrapper call to `queue_work()` in coroutine to call thread handler. Using `events_add_pool()` is intended for *FileSystem/CPU* intensive workload offloading, NO actual **Events API** should be run in another thread, using this *thread pool*. That can be achieved using `events_addtasks_pool()`, see [TODO's](#todos).
+This would also allow nonblocking file system handling. But for cross-platform simplicity, everything is a *pass-thru* to a thread pool instead. A default of `1`, which is automatically created with first `events_create()` **loop** `events_t` handle. An thread pool `os_worker_t` is created by calling `events_add_pool()` with a **loop** handle. The `os_worker_t` must be pass as first parameter to standard file system functions, a few currently implemented, all prefixed as **~async_fs_~**. These functions constructed as a wrapper call to `queue_work()` in coroutine to call thread handler. Using `events_add_pool()` is intended for *FileSystem/CPU* intensive workload offloading, NO actual **Events API** should be run in another thread, using this *thread pool*. That can be achieved using `events_tasks_pool()`, see [TODO's](#todos).
 
-The *behavior/process* of coroutine *execution* in **c-raii** is setup for *automatically* creating/moving and putting **coroutines** in different *threads*. In which intergrating **libuv** into **c-asio** that feature had to be completely disabled on first `yield()` encounter, it's possibale, but reqquire more complexity or **thread local storage** introduction to **libuv** source, a major breaking change. Where `events_addtasks_pool()` create a `os_tasks_t` thread pool, will be for explicitly running **Events API** in another *thread*.
+The *behavior/process* of coroutine *execution* in **c-raii** is setup for *automatically* creating/moving and putting **coroutines** in different *threads*. In which intergrating **libuv** into **c-asio** that feature had to be completely disabled on first `yield()` encounter, it's possibale, but reqquire more complexity or **thread local storage** introduction to **libuv** source, a major breaking change. Where `events_tasks_pool()` create a `os_tasks_t` thread pool, will be for explicitly running **Events API** in another *thread*.
 
 The following "simple TCP proxy" example demonstrate the simplicity of using `events_add()` by way of a `async_wait()` call. The `read()` and `write()` functions only has `async_wait` called added. These routines only work correctly when user set **file descriptor** to *non-blocking*. The standard process of creating a **socket** is in embedded in `async_listener()`, `async_connect()`, `async_accept()`, and are the only functions that will set **non-blocking** by default. Functions `async_connect`, `async_accept` includes a `async_wait` call.
 
@@ -353,7 +353,7 @@ C_API void tasks_stack_check(int n);
 /* Register an `event loop` handle to an `new` thread pool `os_worker_t` instance,
 for `blocking` cpu ~system~ handling calls. */
 C_API os_worker_t *events_add_pool(events_t *loop);
-C_API os_tasks_t *events_addtasks_pool(events_t *loop);
+C_API os_tasks_t *events_tasks_pool(events_t *loop);
 
 /* Return `current` thread pool handle. */
 C_API os_worker_t *events_pool(void);
@@ -787,7 +787,7 @@ find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
         URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.1.1.zip
-        URL_MD5 e2ec8e145bc702b052fe857d03c95c31
+        URL_MD5 23cb7f64d0ce6acc8b1756b39dcbd33e
     )
     FetchContent_MakeAvailable(events)
 endif()

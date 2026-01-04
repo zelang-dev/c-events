@@ -78,6 +78,7 @@ typedef struct events_deque_s {
 	data_types type;
 	os_thread_t thread;
 	array_t jobs;
+	waitgroup_t tasks;
 	events_t *loop;
 	events_cacheline_t _pad;
 	atomic_flag started, shutdown;
@@ -99,6 +100,7 @@ struct _thread_tasks_worker {
 	data_types type;
 	int id;
 	events_t *loop;
+	os_worker_t *pool;
 	events_deque_t *queue;
 };
 
@@ -168,6 +170,7 @@ struct sys_events_s {
 	filefd_t pHandle;
 	char pNamed[FILENAME_MAX];
 	array_t gc;
+	array_t cpu_index;
 	events_deque_t **local;
 	events_cacheline_t pad;
 	atomic_spinlock lock;
@@ -176,6 +179,10 @@ struct sys_events_s {
 	atomic_size_t id_generate;
 	/* result id generator */
 	atomic_size_t result_id_generate;
+	/* Used to determent which thread's `run queue`
+	receive next `task`, `count % (task thread pool)`,
+	must not be greater than cpu cores */
+	atomic_size_t thrd_id_count;
 	atomic_size_t num_loops;
 #if __APPLE__ && __MACH__
 	atomic_results_t results;
@@ -261,6 +268,7 @@ struct events_task_s {
 	size_t cycles;
 	task_states status;
 	bool ready;
+	bool taken;
 	bool halt;
 	bool system;
 	bool waiting;
@@ -268,6 +276,7 @@ struct events_task_s {
 	bool group_finish;
 	bool referenced;
 	bool is_generator;
+	bool is_threaded;
 	int err_code;
 	/* unique task id */
 	uint32_t cid;

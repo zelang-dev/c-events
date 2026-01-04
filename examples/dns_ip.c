@@ -1,8 +1,7 @@
 #include <events.h>
 
 void *main_main(param_t args) {
-	os_worker_t *thrd = events_add_pool(args[0].object);
-	struct hostent *ip = async_get_hostbyname(thrd, args[1].char_ptr);
+	struct hostent *ip = async_gethostbyname(args[0].char_ptr);
 	printf("\n> %s <\n", gethostbyname_ip(ip));
 	return 0;
 }
@@ -15,7 +14,7 @@ int main(int argc, char **argv) {
 
 	events_init(1024);
 	events_t *loop = events_create(6);
-	async_task(main_main, 2, loop, argv[1]);
+	async_task(main_main, 1, argv[1]);
 	async_run(loop);
 	events_destroy(loop);
 
