@@ -173,8 +173,8 @@ static uint32_t async_loop(events_t *loop, size_t heapsize, param_func_t fn, uin
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	tasks_t *t = create_task(heapsize, (data_func_t)fn, params);
-	uint32_t id = task_push(t, false);
+	tasks_t *t = create_task(heapsize, (data_func_t)fn, params, false);
+	uint32_t id = task_push(t);
 	t->tid = loop->loop_id;
 	return id;
 }

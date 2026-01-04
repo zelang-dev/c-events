@@ -871,7 +871,7 @@ static void __thrd_init(bool is_main, uint32_t thread_id) {
 	__thrd()->main_handle = NULL;
 	__thrd()->loop = NULL;
 	__thrd()->pool = NULL;
-	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL), false) >= 0;
+	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL, false)) >= 0;
 }
 
 static EVENTS_INLINE void task_scheduler_switch(void) {
@@ -1317,8 +1317,8 @@ generator_t generator(param_func_t fn, size_t num_of, ...) {
 	param_t params = data_ex(num_of, ap);
 	va_end(ap);
 
-	tasks_t *t = create_task(Kb(32), (data_func_t)fn, params);
-	uint32_t rid = task_push(t, false);
+	tasks_t *t = create_task(Kb(32), (data_func_t)fn, params, false);
+	uint32_t rid = task_push(t);
 	if (rid != TASK_ERRED && snprintf(t->name, sizeof(t->name), "Generator #%d", (int)rid)) {
 		gen = events_calloc(1, sizeof(struct generator_s));
 		if (gen != NULL) {
@@ -1403,7 +1403,7 @@ static EVENTS_INLINE size_t _tasks_align_forward(size_t addr, size_t align) {
 }
 
 /* Create new task. */
-tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
+tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread) {
 	void *memory = NULL;
 	tasks_t *co = NULL;
 	/* Stack size should be at least `TASK_STACK_SIZE`. */
@@ -1417,6 +1417,10 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 
 	if (atomic_load(&sys_event.id_generate) == 1)
 		heapsize = heapsize * 4;
+#if !defined(_WIN32) && !defined(USE_FIBER)
+	else if (is_thread && heapsize <= Kb(32))
+		heapsize = Kb(32) + heapsize;
+#endif
 
 	heapsize = _tasks_align_forward(heapsize + sizeof(tasks_t), 16); /* Stack size should be aligned to 16 bytes. */
 	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL
@@ -1438,7 +1442,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	co->ready = false;
 	co->waiting = false;
 	co->taken = false;
-	co->is_threaded = false;
+	co->is_threaded = is_thread;
 	co->is_generator = false;
 	co->group_active = false;
 	co->group_finish = true;
@@ -1461,7 +1465,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args) {
 	return co;
 }
 
-uint32_t task_push(tasks_t *t, bool is_thread) {
+uint32_t task_push(tasks_t *t) {
 	if (t && t->status == TASK_SUSPENDED && t->cid == DATA_INVALID) {
 		tasks_t *c = active_task();
 		bool is_group = false;
@@ -1474,7 +1478,7 @@ uint32_t task_push(tasks_t *t, bool is_thread) {
 			$append(c->task_group->group, t);
 		}
 
-		if (!is_thread) {
+		if (!t->is_threaded) {
 			t->tid = __thrd()->thrd_id;
 			__thrd()->task_count++;
 			t->ready = true;
@@ -1561,7 +1565,7 @@ uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, .
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	return task_push(create_task(heapsize, (data_func_t)fn, params), false);
+	return task_push(create_task(heapsize, (data_func_t)fn, params, false));
 }
 
 uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
@@ -1571,7 +1575,7 @@ uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	return task_push(create_task(Kb(18), (data_func_t)fn, params), false);
+	return task_push(create_task(Kb(18), (data_func_t)fn, params, false));
 }
 
 static EVENTS_INLINE task_group_t *create_task_group(void) {
@@ -1632,12 +1636,11 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 		param_t params = data_ex(num_of_args, ap);
 		va_end(ap);
 
-		tasks_t *t = create_task(Kb(9), (data_func_t)fn, params);
-		if (t == NULL)
-			return TASK_ERRED;
-
-		t->is_threaded = true;
-		return task_push(t, t->is_threaded);
+#if defined(_WIN32) && defined(USE_FIBER)
+		return task_push(create_task(Kb(9), (data_func_t)fn, params, true));
+#else
+		return task_push(create_task(Kb(18), (data_func_t)fn, params, true));
+#endif
 	}
 
 	panic("MUST call `events_tasks_pool()` first!");
