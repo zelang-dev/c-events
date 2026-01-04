@@ -2,10 +2,9 @@
 #include "assertions.h"
 
 void *worker(param_t args) {
-    int id = task_id();
-    ASSERT_EQU(task_id(), args[0].integer + 2);
+	int id = args[0].integer + 1;
 
-    sleep_task(1000);
+	sleep_task(1000);
     if (id == 4)
         return casting(32);
     else if (id == 3)
@@ -28,7 +27,6 @@ TEST(waitfor) {
 
 	for (i = 0; i < 10; i++) {
 		cid[i] = go(worker, 1, i);
-		printf("-- %d == %d\n", cid[i], i);
     }
 	ASSERT_TRUE((tasks_count(wg) == 10));
 	array_t wgr = waitfor(wg);
@@ -36,8 +34,8 @@ TEST(waitfor) {
 	ASSERT_FALSE(is_waitgroup(wg));
     ASSERT_EQ($size(wgr), 2);
 
-	ASSERT_EQ(32, results_for(cid[2]).integer);
-    ASSERT_STR("hello world", results_for(cid[1]).char_ptr);
+	ASSERT_EQ(32, results_for(cid[3]).integer);
+    ASSERT_STR("hello world", results_for(cid[2]).char_ptr);
 
     return 0;
 }

@@ -396,7 +396,7 @@ If not present, `abort` stack overflow has happen. */
 C_API void tasks_stack_check(int n);
 
 /* Register an `event loop` handle to an `new` thread pool `os_worker_t` instance,
-for `blocking` cpu ~system~ handling calls. */
+for `blocking` file/cpu ~system~ handling calls. */
 C_API os_worker_t *events_add_pool(events_t *loop);
 C_API int events_tasks_pool(events_t *loop);
 

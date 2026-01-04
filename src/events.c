@@ -1483,6 +1483,10 @@ uint32_t task_push(tasks_t *t, bool is_thread) {
 			enqueue(l, t);
 		} else if (!is_group) {
 			t->tid = sys_event.cpu_index[(atomic_fetch_add(&sys_event.thrd_id_count, 1) % $size(sys_event.cpu_index))].u_int;
+#if defined(_WIN32) && defined(USE_FIBER)
+			DeleteFiber(t->type->fiber);
+			t->type->fiber = NULL;
+#endif
 			enqueue_tasks(t);
 		}
 	}
@@ -1603,6 +1607,10 @@ static void tasks_poster(waitgroup_t wg) {
 				for (c = 0; c < wg->capacity; c++) {
 					tasks_t *t = (tasks_t *)$pop(wg->group).object;
 					t->tid = k;
+#if defined(_WIN32) && defined(USE_FIBER)
+					DeleteFiber(t->type->fiber);
+					t->type->fiber = NULL;
+#endif
 					$append(q->jobs, t);
 				}
 				q->tasks = wg;
@@ -1624,7 +1632,7 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 		param_t params = data_ex(num_of_args, ap);
 		va_end(ap);
 
-		tasks_t *t = create_task(Kb(32), (data_func_t)fn, params);
+		tasks_t *t = create_task(Kb(9), (data_func_t)fn, params);
 		if (t == NULL)
 			return TASK_ERRED;
 
@@ -1675,7 +1683,7 @@ waitgroup_t waitgroup(uint32_t capacity) {
 }
 
 static EVENTS_INLINE void group_result_set(array_t wgr, tasks_t *co) {
-	if (is_data(wgr)) {
+	if (is_data(wgr) && is_ptr_usable(co->results)) {
 		atomic_lock($lock(wgr));
 		$append_unsigned(wgr, co->rid);
 		atomic_unlock($lock(wgr));
@@ -1693,6 +1701,7 @@ static void __thrd_waitfor(events_deque_t *q) {
 	tasks_t *co, *t = active_task();
 	waitgroup_t wg = q->tasks;
 	tasklist_t *l = __thrd()->run_queue;
+	array_t wgr = wg->results;
 	bool is_sleeping = false;
 	q->tasks = NULL;
 
@@ -1700,10 +1709,14 @@ static void __thrd_waitfor(events_deque_t *q) {
 		co = (tasks_t *)task.object;
 		co->ready = true;
 		if (!co->taken) {
+#if defined(_WIN32) && defined(USE_FIBER)
+			coroutine_t *worker = (coroutine_t *)co;
+			worker->fiber = CreateFiber((co->stack_size - sizeof(_results_data_t)), fiber_thunk, (void *)task_func);
+#endif
 			co->taken = true;
 			__thrd()->task_count++;
 		}
-		enqueue(l, t);
+		enqueue(l, co);
 	}
 
 	yield_task();
@@ -1713,7 +1726,7 @@ static void __thrd_waitfor(events_deque_t *q) {
 			if (task_is_terminated(co)) {
 				$remove(q->jobs, igroup);
 				if (co->results != NULL)
-					group_result_set(wg->results, co);
+					group_result_set(wgr, co);
 
 				co->waiting = false;
 				task_delete(co);
@@ -1755,6 +1768,15 @@ array_t waitfor(waitgroup_t wg) {
 		wgr = array();
 		wg->results = wgr;
 		tasks_poster(wg);
+		foreach(co in wg->group) {
+			worker = (tasks_t *)co.object;
+			worker->ready = true;
+			if (!worker->taken) {
+				worker->taken = true;
+				__thrd()->task_count++;
+			}
+			enqueue(l, worker);
+		}
 		yield_task();
 		while ($size(wg->group) > 0) {
 			foreach(task in wg->group) {
@@ -1998,6 +2020,12 @@ static bool task_take(events_deque_t *queue) {
 
 			atomic_fetch_sub(&queue->available, 1);
 			t->ready = true;
+#if defined(_WIN32) && defined(USE_FIBER)
+			if (!t->taken) {
+				coroutine_t *worker = (coroutine_t *)t;
+				worker->fiber = CreateFiber((t->stack_size - sizeof(_results_data_t)), fiber_thunk, (void *)task_func);
+			}
+#endif
 			enqueue(l, t);
 			if (!t->taken) {
 				t->taken = true;
@@ -2041,16 +2069,13 @@ static void *__worker_tasks_main(param_t args) {
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
 		tasks_info(active_task(), 1);
+		task_take(queue);
 		if (queue->tasks != NULL)
 			__thrd_waitfor(queue);
-		else
-			task_take(queue);
-
-		if (__thrd()->task_count > 1 || __thrd()->loop != NULL) {
+		else if (__thrd()->task_count > 1 || __thrd()->loop != NULL)
 			yield_task();
-		} else {
+		else
 			break;
-		}
 	}
 
 	__thrd()->loop = NULL;
@@ -2060,21 +2085,14 @@ static void *__worker_tasks_main(param_t args) {
 static int __worker_tasks_wrapper(void *arg) {
 	os_tasks_t *work = (os_tasks_t *)arg;
 	events_deque_t *queue = work->queue;
-	events_t *loop = work->loop;
+	events_t *loop = queue->loop;
 	uint32_t status, res = TASK_ERRED, tid = work->id;
-	events_free(arg);
 
 	__thrd_init(false, tid);
-
 	while (!atomic_flag_load_explicit(&queue->started, memory_order_relaxed))
 		;
 
-	if (loop == NULL)
-		__thrd()->loop = queue->loop;
-	else
-		__thrd()->loop = loop;
-
-	loop = __thrd()->loop;
+	__thrd()->loop = loop;
 	if ((int)async_task_ex(Kb(32), __worker_tasks_main, 2, queue, loop) > 0) {
 		__thrd()->pool = work->pool;
 		res = 0;
@@ -2098,6 +2116,7 @@ static int __worker_tasks_wrapper(void *arg) {
 		__thrd()->sleep_handle = NULL;
 	}
 
+	events_free(arg);
 	os_exit(res);
 	return res;
 }
@@ -2115,7 +2134,7 @@ int events_tasks_pool(events_t *loop) {
 				t_work->id = (int)index;
 				t_work->queue = local[index];
 				t_work->queue->jobs = array();
-				t_work->loop = loop;
+				t_work->queue->loop = loop;
 				t_work->pool = __thrd()->pool;
 				t_work->type = DATA_PTR;
 				local[index]->thread = os_create(__worker_tasks_wrapper, (void *)t_work);
@@ -2130,10 +2149,10 @@ int events_tasks_pool(events_t *loop) {
 				errno = EAGAIN;
 			}
 		}
-	} /*else if (local[index]) {
+	} else if (is_ptr_usable(local[index])) {
 		errno = save_err;
 		return 0;
-	}*/
+	}
 
 	return TASK_ERRED;
 }
@@ -2173,29 +2192,27 @@ os_worker_t *events_add_pool(events_t *loop) {
 	os_worker_t *f_work = NULL;
 	int index = loop->loop_id;
 	if (index <= sys_event.cpu_count && local[index] == NULL) {
-		local[index] = (events_deque_t *)events_malloc(sizeof(events_deque_t));
-		if (local[index] == NULL)
-			abort();
-
-		deque_init(local[index], sys_event.queue_size);
-		f_work = events_calloc(1, sizeof(os_worker_t));
-		if (f_work == NULL)
-			abort();
-
-		atomic_flag_clear(&f_work->mutex);
-		f_work->id = (int)index;
-		f_work->queue = local[index];
-		f_work->queue->jobs = array();
-		f_work->queue->loop = loop;
-		f_work->loop = loop;
-		f_work->last_fd = TASK_ERRED;
-		f_work->type = DATA_PTR;
-		local[index]->thread = os_create(__threads_wrapper, (void *)f_work);
-		if (local[index]->thread == OS_NULL)
-			abort();
-	} else if (local[index] && __thrd()->pool) {
-		return __thrd()->pool;
+		if ((local[index] = (events_deque_t *)events_malloc(sizeof(events_deque_t)))) {
+			deque_init(local[index], sys_event.queue_size);
+			if ((f_work = events_calloc(1, sizeof(os_worker_t)))) {
+				atomic_flag_clear(&f_work->mutex);
+				f_work->id = (int)index;
+				f_work->queue = local[index];
+				f_work->queue->jobs = array();
+				f_work->queue->loop = loop;
+				f_work->last_fd = TASK_ERRED;
+				f_work->type = DATA_PTR;
+				local[index]->thread = os_create(__threads_wrapper, (void *)f_work);
+				if (local[index]->thread == OS_NULL) {
+					events_free(f_work);
+					f_work = NULL;
+				}
+			}
+		}
 	}
+
+	if (f_work == NULL && __thrd()->pool)
+		return __thrd()->pool;
 
 	return f_work;
 }

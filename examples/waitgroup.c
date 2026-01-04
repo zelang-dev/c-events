@@ -5,7 +5,7 @@ void *worker(param_t args) {
 
     printf("Worker %d starting\n", wid);
     tasks_info(active_task(), 1);
-    sleep_task(1000);
+    sleep_task(10);
 	printf("Worker %d done\n", wid);
 	tasks_info(active_task(), 1);
 
@@ -29,7 +29,8 @@ void *main_main(param_t args) {
     }
     array_t wgr = waitfor(wg);
 
-    printf("\nWorker # %d returned: %d\n", cid[3], results_for(cid[3]).integer);
+	printf("\n\nWorkers has (%zd) results. \n\n", $size(wgr));
+	printf("Worker # %d returned: %d\n", cid[3], results_for(cid[3]).integer);
     printf("Worker # %d returned: %s\n", cid[2], results_for(cid[2]).char_ptr);
     return 0;
 }

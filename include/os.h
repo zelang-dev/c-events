@@ -53,7 +53,7 @@
 #	define Statement(s) do {	\
 			s	\
 		}	while (0)
-#	define trace Statement(printf("%s:%d: Trace\n", __FILE__, __LINE__);)
+#	define trace Statement(printf(CLR"%s:%d Trace", __FILE__, __LINE__);)
 #endif
 
 #include <arrays.h>

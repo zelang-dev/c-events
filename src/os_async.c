@@ -210,7 +210,7 @@ uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...) {
 	f->func = fn;
 	atomic_flag_clear(&f->mutex);
 	atomic_flag_clear(&f->done);
-	uint32_t id = async_loop(thrd->loop, Kb(64), queue_work_handler, 2, thrd, f);
+	uint32_t id = async_loop(thrd->queue->loop, Kb(64), queue_work_handler, 2, thrd, f);
 	yield_task();
 	return id;
 }
@@ -431,11 +431,11 @@ static void *spawning(param_t args) {
 	pid = exec((const char *)command, args[1].const_char_ptr, info);
 	if (info->io_func) {
 #ifndef _WIN32
-		status = events_add(events_pool()->loop, (fds_t)info->read_output[1], EVENTS_WRITE, 0, spawn_io, info);
+		status = events_add(events_pool()->queue->loop, (fds_t)info->read_output[1], EVENTS_WRITE, 0, spawn_io, info);
 #else
 		status = -1;
 		if (events_assign_fd(info->read_output[0], (intptr_t)pid)) {
-			status = events_add(events_pool()->loop, (fds_t)pid, EVENTS_READ, 0, spawn_io, info);
+			status = events_add(events_pool()->queue->loop, (fds_t)pid, EVENTS_READ, 0, spawn_io, info);
 			ioThread = CreateThread(0, Kb(16), spawn_io_thread, info, 0, NULL);
 		}
 #endif

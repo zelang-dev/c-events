@@ -90,7 +90,6 @@ struct _thread_worker {
 	data_types type;
 	int id;
 	int last_fd;
-	events_t *loop;
 	events_deque_t *queue;
 	atomic_spinlock mutex;
 	char buffer[MAX_PATH];
@@ -99,7 +98,6 @@ struct _thread_worker {
 struct _thread_tasks_worker {
 	data_types type;
 	int id;
-	events_t *loop;
 	os_worker_t *pool;
 	events_deque_t *queue;
 };
