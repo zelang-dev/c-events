@@ -2125,6 +2125,17 @@ static int __worker_tasks_wrapper(void *arg) {
 	return res;
 }
 
+events_t *events_thread_init(void) {
+	if (__thrd()->loop == NULL){
+		events_add_pool(events_create(sys_event.cpu_count));}
+
+	int i = __thrd()->loop->loop_id;
+	for (i; i < sys_event.cpu_count; i++)
+		events_tasks_pool(events_create(sys_event.cpu_count));
+
+	return __thrd()->loop;
+}
+
 int events_tasks_pool(events_t *loop) {
 	events_deque_t **local = sys_event.local;
 	os_tasks_t *t_work = NULL;

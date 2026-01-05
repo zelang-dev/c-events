@@ -350,6 +350,10 @@ and indicate a terminated/finish status.
 The initialization ends when `tasks_wait()` is called, as such current `task` will pause,
 and execution will begin and wait for the group of `tasks` to finished. */
 C_API task_group_t *task_group(void);
+
+/* Same as `task_group()`, except all ~tasks~ executed in an `multi-threaded` ~pool~ with `main thread`,
+whereas ~`task_group()`~ is single threaded, `current`.
+- MUST use `go()` to create `tasks`. */
 C_API waitgroup_t waitgroup(uint32_t capacity);
 
  /* Pauses current `task`, and begin execution of `tasks` in `task_group_t` object,
@@ -359,8 +363,8 @@ Returns `array` of `results id`, accessible using `results_for()` function. */
 C_API array_t tasks_wait(task_group_t *);
 C_API size_t tasks_count(task_group_t *wg);
 
+/* Same as `tasks_wait()`, except require `waitgroup()` call for an ~waitgroup_t~ instance. */
 C_API array_t waitfor(waitgroup_t wg);
-C_API events_t *tasks_loop(void);
 
 /* Return the unique `result id` for the current `task`. */
 C_API uint32_t task_id(void);
@@ -395,13 +399,27 @@ C_API size_t tasks_cpu_count(void);
 If not present, `abort` stack overflow has happen. */
 C_API void tasks_stack_check(int n);
 
+/* Return `current` ~thread~ `events_t` ~loop~ handle. */
+C_API events_t *tasks_loop(void);
+
 /* Register an `event loop` handle to an `new` thread pool `os_worker_t` instance,
 for `blocking` file/cpu ~system~ handling calls. */
 C_API os_worker_t *events_add_pool(events_t *loop);
+
+/* Return `current/default` ~thread~ pool `os_worker_t` handle. */
+C_API os_worker_t *events_pool(void);
+
+/* Register an `event loop` handle to an `new` ~thread~ `tasks/coroutine` pool.
+- This ~pool~ is where `go()` calls are executed in.
+- This function MUST be called at least ONCE before any ~`go()`~ execution,
+otherwise system will `panic/abort` on `go()`.
+- The maximin number of `pools` possible is tried to Operating System `cpu cores` available. */
 C_API int events_tasks_pool(events_t *loop);
 
-/* Return `current` thread pool handle. */
-C_API os_worker_t *events_pool(void);
+/* Setup/initialize all available `cpu cores`, and return `events_t` ~loop~ handle.
+- This function possibly calls `events_add_pool()` once, if not previous executed.
+- All remainding `cores` assigned by calling `events_tasks_pool()`. */
+C_API events_t *events_thread_init(void);
 
 /* This runs the function `fn` in thread `thrd` pool,
 asynchronously in a separate `task`. Returns a `result id`
@@ -428,6 +446,9 @@ of given `function` with `number` of args, then `arguments`.
 NOTE: The `task` will be added to `current` thread ~schedular~ `run queue`,
 same behavior as GoLang's `Go` statement. */
 C_API uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...);
+
+/* Same as `async_task()`, except the ~`coroutine`~ `added/executed` in ~thread~ pool.
+WILL `panic/abort`, if `events_tasks_pool()` not set. */
 C_API uint32_t go(param_func_t fn, size_t num_of_args, ...);
 
 /*  Low-level call sitting underneath `async_read` and `async_write`.

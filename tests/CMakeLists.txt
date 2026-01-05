@@ -9,7 +9,7 @@ set(TARGET_LIST
  test-thread
  test-time
  test-thrd_static
- test-queue_work
+ test-dns
  test-spawn
  test-fs
  test-waitgroup
