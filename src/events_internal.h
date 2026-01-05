@@ -365,7 +365,6 @@ void *events_realloc(void *ptr, size_t size);
 void events_free(void *ptr);
 
 uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
-uint32_t async_task_loop(events_t *loop, size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
 void thread_result_set(os_request_t *p, void *res);
 uint32_t task_push(tasks_t *t);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread);
