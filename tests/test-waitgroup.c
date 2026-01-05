@@ -14,15 +14,15 @@ void *worker(param_t args) {
 }
 
 TEST(waitfor) {
-    int cid[10], i;
+    int cid[30], i;
 
     waitgroup_t wg = waitgroup(10);
 	ASSERT_TRUE(is_waitgroup(wg));
 
-	for (i = 0; i < 10; i++) {
+	for (i = 0; i < 30; i++) {
 		cid[i] = go(worker, 1, i);
     }
-	ASSERT_TRUE((tasks_count(wg) == 10));
+	ASSERT_TRUE((tasks_count(wg) == 30));
 
 	array_t wgr = waitfor(wg);
     ASSERT_TRUE(is_data(wgr));

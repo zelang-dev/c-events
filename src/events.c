@@ -111,12 +111,6 @@ static void enqueue_tasks(tasks_t *t);
 
 #include "deque.c"
 
-#ifdef MPROTECT
-alignas(4096)
-#else
-section(text)
-#endif
-
 EVENTS_INLINE bool events_is_shutdown(void) {
 	return events_shutdown_set;
 }
@@ -1416,7 +1410,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 
 #if __APPLE__ && __MACH__
 	if (heapsize <= MINSIGSTKSZ)
-		heapsize = MINSIGSTKSZ + heapsize;
+		heapsize = is_thread ? (SIGSTKSZ + heapsize) * 6: MINSIGSTKSZ + heapsize;
 #endif
 
 	if (atomic_load(&sys_event.id_generate) == 1)

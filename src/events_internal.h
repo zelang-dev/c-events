@@ -13,16 +13,18 @@
 #	define MAX_PATH          260
 #endif
 
-#if defined(_MSC_VER)
-  #undef  MPROTECT
-  #define MPROTECT
-  #define section(name) __declspec(allocate("." #name))
-#elif defined(__APPLE__)
-  #define section(name) __attribute__((section("__TEXT,__" #name)))
-#else
-  #define section(name) __attribute__((section("." #name "#")))
-#endif
+/* In alignas(a), 'a' should be a power of two that is at least the type's
+   alignment and at most the implementation's alignment limit.  This limit is
+   2**13 on MSVC. To be portable to MSVC through at least version 10.0,
+   'a' should be an integer constant, as MSVC does not support expressions
+   such as 1 << 3.
 
+   The following C11 requirements are NOT supported on MSVC:
+
+   - If 'a' is zero, alignas has no effect.
+   - alignas can be used multiple times; the strictest one wins.
+   - alignas (TYPE) is equivalent to alignas (alignof (TYPE)).
+*/
 #if !defined(alignas)
   #if defined(__STDC__) /* C Language */
     #if defined(_MSC_VER) /* Don't rely on MSVC's C11 support */
@@ -47,6 +49,47 @@
       /* Do nothing */
     #endif
   #endif /* = !defined(__STDC_VERSION__) && !defined(__cplusplus) */
+#endif
+
+/*[amd64, arm, ppc, x86]:
+   by default, coro_swap_function is marked as a text (code) section
+   if not supported, uncomment the below line to use mprotect instead */
+/* #define MPROTECT */
+
+/*[amd64]:
+   Win64 only: provides a substantial speed-up, but will thrash XMM regs
+   do not use this unless you are certain your application won't use SSE */
+/* #define NO_SSE */
+
+/*[amd64, aarch64]:
+   Win64 only: provides a small speed-up, but will break stack unwinding
+   do not use this if your application uses exceptions or setjmp/longjmp */
+/* #define NO_TIB */
+
+#if defined(__clang__)
+  #pragma clang diagnostic ignored "-Wparentheses"
+
+  /* placing code in section(text) does not mark it executable with Clang. */
+#	undef  MPROTECT
+#	define MPROTECT
+#endif
+
+#if (defined(__clang__) || defined(__GNUC__)) && defined(__i386__)
+#	define fastcall __attribute__((fastcall))
+#elif defined(_MSC_VER) && defined(_M_IX86)
+#	define fastcall __fastcall
+#else
+#	define fastcall
+#endif
+
+#if defined(_MSC_VER)
+  #undef  MPROTECT
+  #define MPROTECT
+  #define section(name) __declspec(allocate("." #name))
+#elif defined(__APPLE__)
+  #define section(name) __attribute__((section("__TEXT,__" #name)))
+#else
+  #define section(name) __attribute__((section("." #name "#")))
 #endif
 
 #ifdef __cplusplus
@@ -227,7 +270,59 @@ struct events_loop_s {
 
 /* Base events coroutine context. */
 struct coro_events_s {
-#if defined(_WIN32) && defined(USE_FIBER)
+#if defined(_WIN32) && defined(_M_IX86) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15;
+	void *xmm[20]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
+	void *fiber_storage;
+	void *dealloc_stack;
+#elif (defined(__x86_64__) || defined(_M_X64)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+#ifdef _WIN32
+	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15, *rdi, *rsi;
+	void *xmm[20]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
+	void *fiber_storage;
+	void *dealloc_stack;
+#else
+	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15;
+#endif
+#elif (defined(__i386) || defined(__i386__)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+	void *eip, *esp, *ebp, *ebx, *esi, *edi;
+#elif defined(__riscv) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+	void *s[12]; /* s0-s11 */
+	void *ra;
+	void *pc;
+	void *sp;
+#ifdef __riscv_flen
+#if __riscv_flen == 64
+	double fs[12]; /* fs0-fs11 */
+#elif __riscv_flen == 32
+	float fs[12]; /* fs0-fs11 */
+#endif
+#endif /* __riscv_flen */
+#elif defined(__ARM_EABI__) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+#ifndef __SOFTFP__
+	void *f[16];
+#endif
+	void *d[4]; /* d8-d15 */
+	void *r[4]; /* r4-r11 */
+	void *lr;
+	void *sp;
+#elif (defined(_M_ARM64) || defined(__aarch64__)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+	void *x[12]; /* x19-x30 */
+	void *sp;
+	void *lr;
+	void *d[8]; /* d8-d15 */
+#elif (defined(__powerpc64__) && defined(_CALL_ELF) && _CALL_ELF == 2) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+	uint64_t gprs[32];
+	uint64_t lr;
+	uint64_t ccr;
+	/* FPRs */
+	uint64_t fprs[32];
+#ifdef __ALTIVEC__
+	/* Altivec (VMX) */
+	uint64_t vmx[12 * 2];
+	uint32_t vrsave;
+#endif
+#elif defined(_WIN32) && defined(USE_FIBER)
 	LPVOID fiber;
 #elif defined(USE_SJLJ)
 	sigjmp_buf sig_ctx;
