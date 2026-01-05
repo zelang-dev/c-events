@@ -1171,10 +1171,12 @@ static EVENTS_INLINE void __stdcall fiber_thunk(void *func) {
 }
 
 /* Windows fibers do not allow users to supply their own memory */
-static EVENTS_INLINE tasks_t *task_derive(void *memory, uint32_t heapsize) {
+static EVENTS_INLINE tasks_t *task_derive(void *memory, uint32_t heapsize, bool is_thread) {
 	active_task();
 	coroutine_t *co = (coroutine_t *)memory;
-	co->fiber = CreateFiber(heapsize, fiber_thunk, (void *)task_func);
+	if (!is_thread)
+		co->fiber = CreateFiber(heapsize, fiber_thunk, (void *)task_func);
+
 	return (tasks_t *)co;
 }
 
@@ -1211,7 +1213,8 @@ static void task_switch(tasks_t *co) {
 	}
 }
 
-static tasks_t *task_derive(void *co, size_t stack_size) {
+static tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
+	(void)is_thread;
 	coroutine_t *contxt = (coroutine_t *)co;
 	void *memory = (unsigned char *)co + sizeof(_results_data_t);
 	stack_size -= sizeof(tasks_t);
@@ -1253,7 +1256,8 @@ static tasks_t *task_derive(void *co, size_t stack_size) {
 }
 
 #else
-static tasks_t *task_derive(void *co, size_t stack_size) {
+static tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
+	(void)is_thread;
 	ucontext_t *ctx = (ucontext_t *)co;
 	size_t size = stack_size + sizeof(_results_data_t);
 	size -= sizeof(ucontext_t);
@@ -1424,7 +1428,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 
 	heapsize = _tasks_align_forward(heapsize + sizeof(tasks_t), 16); /* Stack size should be aligned to 16 bytes. */
 	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL
-		|| (co = task_derive(memory, heapsize)) == NULL) {
+		|| (co = task_derive(memory, heapsize, is_thread))== NULL) {
 		perror("Error! calloc/task_derive");
 		return NULL;
 	}
@@ -1487,10 +1491,6 @@ uint32_t task_push(tasks_t *t) {
 			enqueue(l, t);
 		} else if (!is_group) {
 			t->tid = sys_event.cpu_index[(atomic_fetch_add(&sys_event.thrd_id_count, 1) % $size(sys_event.cpu_index))].u_int;
-#if defined(_WIN32) && defined(USE_FIBER)
-			DeleteFiber(t->type->fiber);
-			t->type->fiber = NULL;
-#endif
 			enqueue_tasks(t);
 		}
 	}
@@ -1611,10 +1611,6 @@ static void tasks_poster(waitgroup_t wg) {
 				for (c = 0; c < wg->capacity; c++) {
 					tasks_t *t = (tasks_t *)$pop(wg->group).object;
 					t->tid = k;
-#if defined(_WIN32) && defined(USE_FIBER)
-					DeleteFiber(t->type->fiber);
-					t->type->fiber = NULL;
-#endif
 					$append(q->jobs, t);
 				}
 				q->tasks = wg;
@@ -1775,11 +1771,16 @@ array_t waitfor(waitgroup_t wg) {
 			worker = (tasks_t *)co.object;
 			worker->ready = true;
 			if (!worker->taken) {
+#if defined(_WIN32) && defined(USE_FIBER)
+				coroutine_t *work = (coroutine_t *)worker;
+				work->fiber = CreateFiber((worker->stack_size - sizeof(_results_data_t)), fiber_thunk, (void *)task_func);
+#endif
 				worker->taken = true;
 				__thrd()->task_count++;
 			}
 			enqueue(l, worker);
 		}
+
 		yield_task();
 		while ($size(wg->group) > 0) {
 			foreach(task in wg->group) {
@@ -2122,6 +2123,17 @@ static int __worker_tasks_wrapper(void *arg) {
 	events_free(arg);
 	os_exit(res);
 	return res;
+}
+
+events_t *events_thread_init(void) {
+	if (__thrd()->loop == NULL)
+		events_add_pool(events_create(sys_event.cpu_count));
+
+	int i = __thrd()->loop->loop_id;
+	for (i; i < sys_event.cpu_count; i++)
+		events_tasks_pool(events_create(sys_event.cpu_count));
+
+	return __thrd()->loop;
 }
 
 int events_tasks_pool(events_t *loop) {
