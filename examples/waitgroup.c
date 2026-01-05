@@ -20,9 +20,6 @@ void *worker(param_t args) {
 void *main_main(param_t args) {
     int cid[50], i;
 
-	events_tasks_pool(events_create(6));
-	events_tasks_pool(events_create(6));
-	events_tasks_pool(events_create(6));
     waitgroup_t wg = waitgroup(50);
     for (i = 0; i < 50; i++) {
         cid[i] = go(worker, 1, i);
@@ -38,7 +35,7 @@ void *main_main(param_t args) {
 int main(int argc, char **argv) {
 	events_init(1024);
 	async_task(main_main, 0);
-	events_t *loop = events_create(6);
+	events_t *loop = events_thread_init();
 	async_run(loop);
 	events_destroy(loop);
 
