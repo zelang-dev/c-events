@@ -350,9 +350,16 @@ struct ucontext_s {
 
 /* Extended events coroutine context. */
 struct events_task_s {
+#if defined(USE_UCONTEXT)
+	ucontext_t type[1];
+#else
 	coroutine_t type[1];
+#endif
 	/* Stack base address, can be used to scan memory in a garbage collector. */
 	void *stack_base;
+#if defined(_WIN32) && (defined(_M_X64) || defined(_M_IX86))
+	void *stack_limit;
+#endif
 	/* Used to check stack overflow. */
 	size_t magic_number;
 	/* Coroutine stack size. */

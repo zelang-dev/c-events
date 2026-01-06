@@ -29,7 +29,11 @@ If `assembly`, reduced to:
 */
 #define USE_UCONTEXT
 
-#ifndef _WIN32
+#if __APPLE__ && __MACH__
+# 	undef USE_FIBER
+# 	undef USE_SJLJ
+typedef unsigned long __sigset_t;
+#elif !defined(_WIN32)
 #	define _GNU_SOURCE
 # 	undef USE_FIBER
 # 	undef USE_UCONTEXT
@@ -47,8 +51,19 @@ If `assembly`, reduced to:
 
 #if defined(__APPLE__) || defined(__MACH__)
 #	define _DARWIN_C_SOURCE
-#undef _POSIX_C_SOURCE
-#undef _XOPEN_SOURCE
+#	undef _POSIX_C_SOURCE
+#	undef _XOPEN_SOURCE
+#	if defined(USE_UCONTEXT)
+#		define _XOPEN_SOURCE
+#		include <ucontext.h>
+#		if __INTEL_COMPILER
+#			pragma warning(push)
+#			pragma warning(disable:1478)
+#		elif __clang__
+#			pragma clang diagnostic push
+#			pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#		endif
+#	endif
 #	include <mach/clock.h>
 #	include <mach/mach.h>
 #endif

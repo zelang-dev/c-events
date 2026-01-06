@@ -1410,7 +1410,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 
 #if __APPLE__ && __MACH__
 	if (heapsize <= MINSIGSTKSZ)
-		heapsize = is_thread ? (SIGSTKSZ + heapsize) * 6: MINSIGSTKSZ + heapsize;
+		heapsize = MINSIGSTKSZ + heapsize;
 #endif
 
 	if (atomic_load(&sys_event.id_generate) == 1)
