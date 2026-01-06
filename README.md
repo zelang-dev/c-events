@@ -815,7 +815,7 @@ find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
         URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.2.0.zip
-        URL_MD5 23cb7f64d0ce6acc8b1756b39dcbd33e
+        URL_MD5 e4a958301106f673115ef663ef217e8d
     )
     FetchContent_MakeAvailable(events)
 endif()

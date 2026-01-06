@@ -1,71 +1,26 @@
 #ifndef _EVENTS_H
 #define _EVENTS_H
 
-/** Coroutines uses the C standard library's `setjump`/`longjmp` API.
-Overhead: `~30x` in cost compared to an ordinary function call.
-See https://www.usenix.org/legacy/publications/library/proceedings/usenix2000/general/full_papers/engelschall/engelschall_html/index.html
-If `assembly`, reduced to:
-~5x on `x86`,
-~10x (Windows) on `amd64`,
-~6x (all other platforms) on `amd64`.
-*/
-#define USE_SJLJ
-
-/** Coroutines uses the Windows "fibers" API.
-Overhead: `~15x` in cost compared to an ordinary function call.
-If `assembly`, reduced to:
-~5x on `x86`,
-~10x (Windows) on `amd64`,
-~6x (all other platforms) on `amd64`.
-*/
-#define USE_FIBER
-
-/** Coroutines uses the POSIX "ucontext" API.
-Overhead: `~300x` in cost compared to an ordinary function call.
-If `assembly`, reduced to:
-~5x on `x86`,
-~10x (Windows) on `amd64`,
-~6x (all other platforms) on `amd64`.
-*/
-#define USE_UCONTEXT
-
-#if __APPLE__ && __MACH__
-# 	undef USE_FIBER
-# 	undef USE_SJLJ
+#if defined(__APPLE__) || defined(__MACH__)
+#	define _DARWIN_C_SOURCE
+#	define _XOPEN_SOURCE
+#	if __INTEL_COMPILER
+#		pragma warning(push)
+#		pragma warning(disable:1478)
+#	elif __clang__
+#		pragma clang diagnostic push
+#		pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#	endif
+#	include <ucontext.h>
+#	include <mach/clock.h>
+#	include <mach/mach.h>
 typedef unsigned long __sigset_t;
 #elif !defined(_WIN32)
 #	define _GNU_SOURCE
-# 	undef USE_FIBER
-# 	undef USE_UCONTEXT
-#else
-# 	undef USE_UCONTEXT
-# 	undef USE_SJLJ
-#endif
-
-#if defined(USE_SJLJ)
 /* for sigsetjmp(), sigjmp_buf, and stack_t */
 #	define _POSIX_C_SOURCE 200809L
 /* for SA_ONSTACK */
 #	define _XOPEN_SOURCE 600
-#endif
-
-#if defined(__APPLE__) || defined(__MACH__)
-#	define _DARWIN_C_SOURCE
-#	undef _POSIX_C_SOURCE
-#	undef _XOPEN_SOURCE
-#	if defined(USE_UCONTEXT)
-#		define _XOPEN_SOURCE
-#		include <ucontext.h>
-#		if __INTEL_COMPILER
-#			pragma warning(push)
-#			pragma warning(disable:1478)
-#		elif __clang__
-#			pragma clang diagnostic push
-#			pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#		endif
-#	endif
-#	include <mach/clock.h>
-#	include <mach/mach.h>
 #endif
 
 #include <limits.h>
@@ -82,6 +37,7 @@ typedef unsigned long __sigset_t;
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/timeb.h>
+#include <string.h>
 
 #ifndef C_API
  /* Public API qualifier. */
@@ -99,6 +55,10 @@ typedef unsigned long __sigset_t;
 #		define SYS_PIPE_PRE "\\pipe\\"
 #		define SYS_DIRSEP "\\"
 #	endif
+#	include <WinSock2.h>
+#	include <ws2tcpip.h>
+#	include <io.h>
+#	include <direct.h>
 #else
 #	ifndef SYS_CONSOLE
 		/* O.S. platform ~input/output~ console `DEVICE`. */
@@ -115,15 +75,6 @@ typedef unsigned long __sigset_t;
 #			define SYS_PIPE_PRE "/tmp/"
 #		endif
 #	endif
-#endif
-
-#ifdef _WIN32
-#	define FD_SETSIZE      256
-#	include <WinSock2.h>
-#	include <ws2tcpip.h>
-#	include <io.h>
-#	include <direct.h>
-#else
 #	include <poll.h>
 #	include <unistd.h>
 #	include <arpa/inet.h>
@@ -145,9 +96,8 @@ typedef unsigned long __sigset_t;
 #	endif
 #endif
 
-#include <os.h>
 #include <stdlib.h>
-#include <string.h>
+#include <os.h>
 
 #define EVENTS_READ 	1
 #define EVENTS_WRITE 	2

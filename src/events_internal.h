@@ -3,6 +3,43 @@
 
 #include <events.h>
 
+#ifndef USE_ASSEMBLY
+/** Coroutines uses the C standard library's `setjump`/`longjmp` API.
+Overhead: `~30x` in cost compared to an ordinary function call.
+See https://www.usenix.org/legacy/publications/library/proceedings/usenix2000/general/full_papers/engelschall/engelschall_html/index.html
+If `assembly`, reduced to:
+~5x on `x86`,
+~10x (Windows) on `amd64`,
+~6x (all other platforms) on `amd64`. */
+#	define USE_SJLJ
+
+/** Coroutines uses the Windows "fibers" API.
+Overhead: `~15x` in cost compared to an ordinary function call.
+If `assembly`, reduced to:
+~5x on `x86`,
+~10x (Windows) on `amd64`,
+~6x (all other platforms) on `amd64`. */
+#	define USE_FIBER
+
+/** Coroutines uses the POSIX "ucontext" API.
+Overhead: `~300x` in cost compared to an ordinary function call.
+If `assembly`, reduced to:
+~5x on `x86`,
+~10x (Windows) on `amd64`,
+~6x (all other platforms) on `amd64`. */
+#	define USE_UCONTEXT
+#	if __APPLE__ && __MACH__
+# 		undef USE_FIBER
+# 		undef USE_SJLJ
+#	elif !defined(_WIN32)
+# 		undef USE_FIBER
+# 		undef USE_UCONTEXT
+#	else
+# 		undef USE_UCONTEXT
+# 		undef USE_SJLJ
+#	endif
+#endif
+
 #if defined(USE_DEBUG)
 #   include <assert.h>
 #else
@@ -92,12 +129,16 @@
   #define section(name) __attribute__((section("." #name "#")))
 #endif
 
+#ifndef NSIG
+#	define NSIG 32
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 enum {
-	max_event_sig = 32
+	max_event_sig = NSIG
 };
 
  /* The estimated size of the CPU's cache line when atomically updating memory.
@@ -270,12 +311,12 @@ struct events_loop_s {
 
 /* Base events coroutine context. */
 struct coro_events_s {
-#if defined(_WIN32) && defined(_M_IX86) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+#if defined(_WIN32) && defined(_M_IX86) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ) && !defined(USE_FIBER)
 	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15;
 	void *xmm[20]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
 	void *fiber_storage;
 	void *dealloc_stack;
-#elif (defined(__x86_64__) || defined(_M_X64)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+#elif (defined(__x86_64__) || defined(_M_X64)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ) && !defined(USE_FIBER)
 #ifdef _WIN32
 	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15, *rdi, *rsi;
 	void *xmm[20]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
