@@ -51,7 +51,8 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Add/recreate *tests and examples* some derived from **[libevent](https://github.com/libevent/libevent)**.
 * [x] Bug fix *tests and examples* for proper execution under **Windows** and **Linux**.
 * [x] Bug fix *tests and examples* for proper execution under **Apple macOS**.
-* [ ] Complete implementation of `events_tasks_pool()`, a *thread pool* creation function for **Events API** only.
+* [x] Complete implementation of `events_tasks_pool()`, a coroutine *thread pool* creation function for **Events API**.
+* [x] Implement `go()`, `waitgroup()` and `waitfor()`, functions to *manage/create* **tasks** to run in coroutine *thread pool*. Same behavior as **goroutine**.
 * [ ] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**.
 * [ ] Complete implementation of `inotify_add_watch()` for **Apple macOS**.
 * [ ] Implement *event* `EVENTS_FILEWATCH`, `EVENTS_DIRWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
@@ -812,7 +813,7 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.1.1.zip
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.2.0.zip
         URL_MD5 23cb7f64d0ce6acc8b1756b39dcbd33e
     )
     FetchContent_MakeAvailable(events)
