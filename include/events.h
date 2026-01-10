@@ -11,7 +11,6 @@
 #		pragma clang diagnostic push
 #		pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #	endif
-#	include <ucontext.h>
 #	include <mach/clock.h>
 #	include <mach/mach.h>
 typedef unsigned long __sigset_t;
@@ -103,7 +102,7 @@ typedef unsigned long __sigset_t;
 #define EVENTS_WRITE 	2
 #define EVENTS_TIMEOUT 	4
 #define EVENTS_CLOSED 	5
-#define EVENTS_DIRWATCH 	8
+#define EVENTS_PATHWATCH 	8
 #define EVENTS_FILEWATCH 	17
 #define EVENTS_SIGNAL 	255
 #define EVENTS_ADD		0x40000000
@@ -128,6 +127,7 @@ typedef enum {
 	FD_SOCK_ASYNC,	/* Socket non-blocking */
 	FD_FIFO_ASYNC,	/* pipe non-blocking */
 	FD_WATCH_ASYNC,	/* Directory watch non-blocking */
+	FD_WATCH_SYNC,	/* Directory watch blocking */
 } fd_types;
 
 typedef enum {
@@ -139,7 +139,8 @@ typedef enum {
 	FD_PIPE_SYNC = FD_FIFO,
 	FD_PIPE_ASYNC = FD_FIFO_ASYNC,
 	FD_PROCESS_ASYNC = FD_CHILD,
-	FD_MONITOR_ASYNC = FD_WATCH_ASYNC
+	FD_MONITOR_ASYNC = FD_WATCH_ASYNC,
+	FD_MONITOR_SYNC = FD_WATCH_SYNC
 } FILE_TYPE;
 
 typedef unsigned short events_id_t;

@@ -19,6 +19,7 @@ set(TARGET_LIST
 	helloworld
 	spawn
  	waitgroup
+	inotify
 )
 
 foreach (TARGET ${TARGET_LIST})

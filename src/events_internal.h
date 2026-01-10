@@ -230,6 +230,7 @@ struct events_fd_s {
 	int signal_idx;
 	bool signal_set;
 	bool is_iodispatch;
+	bool is_pathwatcher;
 	bool backend_used;
 };
 make_atomic(events_fd_t *, atomic_events_t)
@@ -520,6 +521,8 @@ tasks_t *deque_peek(events_deque_t *q, int index);
 void deque_push(events_deque_t *q, tasks_t *w);
 void deque_free(events_deque_t *q);
 void deque_destroy(void);
+
+void inotify_handler(int fd, inotify_t *event, watch_cb handler);
 
 #ifdef _WIN32
 DWORD __stdcall spawn_io_thread(void *arg);

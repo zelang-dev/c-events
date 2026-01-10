@@ -401,6 +401,23 @@ EVENTS_INLINE size_t fs_filesize(const char *path) {
 	return 0;
 }
 
+int fs_writefile(const char *path, char *text) {
+	int len, fd;
+	if ((fd = fs_open(path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR)) > 0) {
+		if ((len = (int)strlen(text)) > 0)
+			len = fs_write(fd, text, len);
+
+		if (!fs_close(fd))
+			return len;
+	}
+
+	return task_err_code();
+}
+
+int fs_events(const char *path, watch_cb moniter) {
+	return TASK_ERRED;
+}
+
 static void spawn_io(fds_t fd, int events, void *arg) {
 	execinfo_t *info = (execinfo_t *)arg;
 	spawn_cb func = info->io_func;

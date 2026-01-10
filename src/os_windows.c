@@ -16,20 +16,6 @@ volatile sig_atomic_t events_got_signal = 0;
 static HANDLE hIoCompPort = INVALID_HANDLE_VALUE;
 static int ioTableSize = 256;
 
-/*
- * struct inotify_event - structure read from the inotify device for each event
- *
- * When you are watching a directory, you will receive the filename for events
- * such as IN_CREATE, IN_DELETE, IN_OPEN, IN_CLOSE, ..., relative to the wd.
- */
-struct inotify_event {
-	int		wd;		/* watch descriptor */
-	uint32_t	mask;		/* watch mask */
-	uint32_t	cookie;		/* cookie to synchronize two events */
-	uint32_t	len;		/* length (including nulls) of name */
-	char	name[];	/* stub for possible name */
-};
-
 /**
  * An enumeration of the file types
  * supported by the FD_TABLE structure.
@@ -62,6 +48,7 @@ struct FD_TABLE {
 	FILE_TYPE type;
 	char *path; 		/* mkfifo path or cached filename */
 	char *buffer;
+	DWORD length;
 	DWORD Errno;
 	unsigned long instance;
 	int status;
@@ -135,8 +122,7 @@ static void clear_pseudo_events(void) {
 			PostQueuedCompletionStatus(hIoCompPort, -1, i, &fdTable[i].ovList->overlapped);
 			if (fdTable[i].inotify != NULL) {
 				foreach(watch in fdTable[i].inotify) {
-					CloseHandle((filefd_t)watch.ulong_long);
-					//$remove(fdTable[i].inotify, iwatch);
+					os_close(watch.integer);
 				}
 				$delete(fdTable[i].inotify);
 				fdTable[i].inotify = NULL;
@@ -156,7 +142,9 @@ bool events_assign_fd(filefd_t handle, int pseudo) {
 		|| !CreateIoCompletionPort(handle, hIoCompPort, pseudo, 0)) {
 		errno = GetLastError();
 		perror("events_assign_fd");
-		events_free_fd(pseudo);
+		if (pseudo != -1)
+			events_free_fd(pseudo);
+
 		CloseHandle(handle);
 		return false;
 	}
@@ -208,7 +196,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].offset = DATA_INVALID;
 		fdTable[index].offsetHighPtr = fdTable[index].offsetLowPtr = NULL;
 		fdTable[index].inotify = NULL;
-		fdTable[index].ovList->overlapped.hEvent = CreateEvent(NULL, FALSE,	FALSE, NULL);
+		fdTable[index].ovList->overlapped.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
 		fdTable[index].ovList->length = 0;
 		fdTable[index].process->fd = TASK_ERRED;
 		fdTable[index].process->env = NULL;
@@ -243,6 +231,7 @@ void events_free_fd(int pseudo) {
 			case FD_FILE_SYNC:
 			case FD_FILE_ASYNC:
 			case FD_PIPE_ASYNC:
+			case FD_MONITOR_SYNC:
 				if (fdTable[pseudo].path != NULL)
 					events_free(fdTable[pseudo].path);
 				fdTable[pseudo].path = NULL;
@@ -333,7 +322,7 @@ EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) 
 }
 
 int os_read(int fd, char *buf, size_t len) {
-	int ret = -1;
+	int pseudofd, ret = TASK_ERRED;
 	DWORD bytesRead;
 	if (sys_event.num_loops == 0 || fdTable[fd].type == FD_UNUSED || is_socket(fd)) {
 		if (is_socket(fd)) {
@@ -341,20 +330,38 @@ int os_read(int fd, char *buf, size_t len) {
 				os_geterror();
 			return ret;
 		}
-		return _read(fd, buf, len);
+
+		if (!events_valid_fd(fd))
+			return _read(fd, buf, len);
 	}
 
 	assert((fd >= 0) && (fd < ioTableSize));
 	switch (fdTable[fd].type) {
+		case FD_MONITOR_ASYNC:
+			pseudofd = fdTable[fd].instance;
+			if (ReadDirectoryChangesW(fdTable[pseudofd].fid.fileHandle, buf, len, true, fdTable[pseudofd].status, &bytesRead, NULL, NULL))
+				ret = bytesRead;
+			else
+				fdTable[fd].Errno = GetLastError();
+
+			if (ret != TASK_ERRED) {
+				if (fdTable[pseudofd].path == null) {
+					fdTable[pseudofd].path = events_calloc(1, (ARRAY_SIZE * 2) + 1);
+					fdTable[pseudofd].length = ARRAY_SIZE * 2;
+				}
+
+				fdTable[pseudofd].process->buffer = buf;
+				fdTable[pseudofd].process->rid = ret;
+			}
+			break;
 		case FD_FILE_SYNC:
 		case FD_FILE_ASYNC:
 		case FD_PIPE_SYNC:
 		case FD_PIPE_ASYNC:
-			if (ReadFile(fdTable[fd].fid.fileHandle, buf, len, &bytesRead, NULL)) {
+			if (ReadFile(fdTable[fd].fid.fileHandle, buf, len, &bytesRead, NULL))
 				ret = bytesRead;
-			} else {
+			else
 				fdTable[fd].Errno = GetLastError();
-			}
 			break;
 		default:
 			assert(0);
@@ -425,6 +432,8 @@ int os_close(int fd) {
 		case FD_FILE_SYNC:
 		case FD_FILE_ASYNC:
 		case FD_PROCESS_ASYNC:
+		case FD_MONITOR_ASYNC:
+		case FD_MONITOR_SYNC:
 			CloseHandle(fdTable[fd].fid.fileHandle);
 			break;
 		default:
@@ -466,9 +475,6 @@ int os_iodispatch(int ms) {
 				| (target->events & EVENTS_CLOSED ? EVENTS_CLOSED : 0);
 
 			switch (fdTable[fd].type) {
-				case FD_MONITOR_ASYNC:
-					(target->callback)(fd, EVENTS_DIRWATCH, target->cb_arg);
-					break;
 				case FD_FILE_ASYNC:
 					(pOv->proc)((intptr_t)fdTable[fd].fid.value, bytes, pOv->data);
 					break;
@@ -476,6 +482,14 @@ int os_iodispatch(int ms) {
 				case FD_PROCESS_ASYNC:
 					(target->callback)((intptr_t)fdTable[fd].fid.value, bytes, pOv->data);
 					break;
+				case FD_MONITOR_ASYNC:
+					inotify_handler((int)fd, (inotify_t *)fdTable[fd].buffer, (watch_cb)target->callback);
+					break;
+					/*
+				case FD_MONITOR_SYNC:
+					inotify_handler((int)fd, (inotify_t *)fdTable[fdTable[fd].status].buffer, (watch_cb)target->callback);
+					break;
+					*/
 				default:
 					if (revents != 0 && target->is_iodispatch && target->loop_id != 0)
 						(target->callback)((target->backend_used ? fdTable[fd].fid.value : fd), revents, target->cb_arg);
@@ -1468,6 +1482,7 @@ int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
 }
 
 EVENTS_INLINE int inotify_init(void) {
+	events_init(256);
 	return events_new_fd(FD_MONITOR_ASYNC, (intptr_t)hIoCompPort, -1);
 }
 
@@ -1476,42 +1491,138 @@ EVENTS_INLINE int inotify_init1(int flags) {
 	return inotify_init();
 }
 
-filefd_t inotify_add_watch(int fd, const char *name, uint32_t mask) {
-	struct stat st;
-	if (!fs_stat(name, &st) && (st.st_mode & S_IFMT) == S_IFDIR) {
-		// create a handle for a directory to look for
-		HANDLE hDir = CreateFileA(name, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
-		if (hDir != INVALID && events_assign_fd(hDir, fd)) {
-			if (fdTable[fd].buffer == NULL)
-				fdTable[fd].buffer = (char *)events_calloc(1, 4096);
+EVENTS_INLINE uint32_t inotify_mask(inotify_t *event) {
+	return (uint32_t)event->Action;
+}
 
-			int r = ReadDirectoryChangesW(hDir, fdTable[fd].buffer, 4096, true, mask, NULL,
+EVENTS_INLINE bool inotify_added(inotify_t *event) {
+	return event->Action == FILE_ACTION_ADDED || event->Action == FILE_ACTION_RENAMED_NEW_NAME;
+}
+
+EVENTS_INLINE bool inotify_removed(inotify_t *event) {
+	return event->Action == FILE_ACTION_REMOVED || event->Action == FILE_ACTION_RENAMED_OLD_NAME;
+}
+
+EVENTS_INLINE bool inotify_modified(inotify_t *event) {
+	return event->Action == FILE_ACTION_MODIFIED;
+}
+
+EVENTS_INLINE char *inotify_name(inotify_t *event) {
+	char *filename = null;
+	int i;
+
+	for (i = 0; i < ioTableSize; ++i) {
+		if (fdTable[i].type == FD_MONITOR_SYNC && fdTable[i].process->buffer == (char *)event) {
+			WideCharToMultiByte(CP_ACP,
+				0,
+				event->FileName,
+				(event->FileNameLength / 2),
+				fdTable[i].path,
+				fdTable[i].length,
+				NULL,
+				NULL);
+			filename = fdTable[i].path;
+			break;
+		}
+	}
+	return filename;
+}
+
+EVENTS_INLINE uint32_t inotify_length(inotify_t *event) {
+	return (event == null || !is_ptr_usable(event)) ? 0 : (uint32_t)event->FileNameLength / 2;
+}
+
+EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
+	if (event->NextEntryOffset)
+		return (FILE_NOTIFY_INFORMATION *)event + event->NextEntryOffset;
+
+	return null;
+}
+
+void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
+	char filename[(ARRAY_SIZE * 2) + 1] = nil;
+	events_monitors action = WATCH_INVALID;
+	switch (event->Action) {
+		case FILE_ACTION_ADDED:
+		case FILE_ACTION_RENAMED_NEW_NAME:
+			action = WATCH_ADDED;
+			break;
+		case FILE_ACTION_REMOVED:
+		case FILE_ACTION_RENAMED_OLD_NAME:
+			action = WATCH_REMOVED;
+			break;
+		case FILE_ACTION_MODIFIED:
+			action = WATCH_MODIFIED;
+			break;
+	}
+
+	if (action) {
+		WideCharToMultiByte(CP_ACP,
+			0,
+			event->FileName,
+			(event->FileNameLength / 2),
+			filename,
+			(ARRAY_SIZE * 2),
+			NULL,
+			NULL);
+		handler(fd, action, (const char *)filename);
+	}
+}
+
+int inotify_add_watch(int fd, const char *name, uint32_t mask) {
+	struct stat st;
+	if ((sys_event.num_loops > 0 ? !fs_stat(name, &st) : !stat(name, &st)) && (st.st_mode & S_IFMT) == S_IFDIR) {
+		// create a handle for a directory to look for
+		HANDLE hDir = CreateFileA(name, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+			NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
+		if (hDir != INVALID && sys_event.num_loops > 0 && events_assign_fd(hDir, fd)) {
+			if (fdTable[fd].buffer == NULL) {
+				fdTable[fd].length = 4096;
+				fdTable[fd].buffer = (char *)events_calloc(1, fdTable[fd].length);
+			}
+
+			int r = ReadDirectoryChangesW(hDir, fdTable[fd].buffer, fdTable[fd].length, true, mask, NULL,
 				&fdTable[fd].ovList->overlapped, NULL);
 			if (r == 1) {
 				SetLastError(ERROR_IO_PENDING);
 			} else if (GetLastError() != ERROR_IO_PENDING) {
 				CloseHandle(hDir);
 				events_free_fd(fd);
-				return (filefd_t)TASK_ERRED;
+				return TASK_ERRED;
 			}
 
-			//fdTable[fd].fid.fileHandle = hDir;
-			$append(fdTable[fd].inotify, hDir);
-			return hDir;
+			r = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
+			$append_signed(fdTable[fd].inotify, r);
+			fdTable[r].instance = (unsigned long)fd;
+			fdTable[r].status = mask;
+			fdTable[fd].status = mask;
+			return r;
+		} else if (hDir != INVALID && !sys_event.num_loops) {
+			int newfd = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
+			fdTable[newfd].status = mask;
+			fdTable[fd].status = mask;
+			fdTable[fd].instance = (unsigned long)newfd;
+			return newfd;
+		} else {
+			errno = GetLastError();
 		}
 	}
 
-	return(filefd_t)TASK_ERRED;
+	return TASK_ERRED;
 }
 
-EVENTS_INLINE int inotify_rm_watch(int fd, filefd_t wd) {
-	foreach(watch in fdTable[fd].inotify) {
-		if ((filefd_t)watch.ulong_long == wd) {
-			$remove(fdTable[fd].inotify, iwatch);
-			//CloseHandle((filefd_t)wd);
-			return 0;
+int inotify_rm_watch(int fd, int wd) {
+	if (!sys_event.num_loops && events_valid_fd(wd))
+		return os_close(wd);
+
+	if (sys_event.num_loops > 0 && events_valid_fd(fd)) {
+		foreach(watch in fdTable[fd].inotify) {
+			if (watch.integer == wd) {
+				$remove(fdTable[fd].inotify, iwatch);
+				return os_close(wd);
+			}
 		}
 	}
 
-	return -1;
+	return TASK_ERRED;
 }

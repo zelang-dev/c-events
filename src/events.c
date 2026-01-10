@@ -355,7 +355,6 @@ EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_i
 
 	target = events_target(fd);
 	if (event == EVENTS_SIGNAL) {
-		atomic_thread_fence(memory_order_seq_cst);
 		if ((sig_idx = events_add_signal(fd, callback, cb_arg)) >= 0) {
 			loop->signal_handlers = events_signals();
 			loop->active_signals++;
@@ -369,6 +368,7 @@ EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_i
 		return -1;
 	}
 
+	target->is_pathwatcher = event == EVENTS_PATHWATCH;
 	target->is_iodispatch = false;
 	target->backend_used = false;
 #ifdef _WIN32

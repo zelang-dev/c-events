@@ -53,9 +53,10 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Bug fix *tests and examples* for proper execution under **Apple macOS**.
 * [x] Complete implementation of `events_tasks_pool()`, a coroutine *thread pool* creation function for **Events API**.
 * [x] Implement `go()`, `waitgroup()` and `waitfor()`, functions to *manage/create* **tasks** to run in coroutine *thread pool*. Same behavior as **goroutine**.
-* [ ] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**.
-* [ ] Complete implementation of `inotify_add_watch()` for **Apple macOS**.
-* [ ] Implement *event* `EVENTS_FILEWATCH`, `EVENTS_DIRWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
+* [x] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**. This includes additional functions `inotify_mask()`, `inotify_length()`, `inotify_name()`, `inotify_added()`, `inotify_removed()`, `inotify_modified()`, `inotify_next()` for simplified cross-platform access.
+* [ ] Complete implementation of `inotify_add_watch()` for **macOS** aka **BSD** *platforms*.
+* [ ] Implement *event* `EVENTS_FILEWATCH`, `EVENTS_PATHWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
+* [ ] Implement `fs_events()` function, for fully automatic *setup* and *execution* for directory monitoring of **inotify** interface.
 * [ ] Completion of ALL OS *file system* function routines with matching **thread** ~async_fs_~ *version*.
 
 ## Design

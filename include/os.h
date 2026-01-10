@@ -53,7 +53,7 @@
 #	define Statement(s) do {	\
 			s	\
 		}	while (0)
-#	define trace Statement(printf(CLR"%s:%d Trace", __FILE__, __LINE__);)
+#	define trace Statement(printf(CLR_LN"%s:%d Trace ", __FILE__, __LINE__);)
 #endif
 
 #include <arrays.h>
@@ -111,7 +111,6 @@ typedef void (*sigcall_t)(void);
 typedef struct coro_events_s coroutine_t;
 typedef struct events_task_s tasks_t;
 typedef struct execinfo_s execinfo_t;
-typedef struct inotify_event inotify_event_t;
 typedef struct _thread_worker os_worker_t;
 typedef struct _thread_tasks_worker os_tasks_t;
 
@@ -126,6 +125,7 @@ typedef uint32_t uid_t;
 typedef pid_t process_t;
 typedef int socklen_t;
 typedef DWORD tls_emulate_t;
+
 #if defined(_MSC_VER)
 #	define S_IRUSR S_IREAD  /* read, user */
 #	define S_IWUSR S_IWRITE /* write, user */
@@ -256,26 +256,63 @@ typedef uint16_t in_port_t;
 #define CLD_EXITED 		0
 #define EFD_CLOEXEC 	0
 #define EFD_NONBLOCK 	0
-#define	IN_CREAT		FILE_ACTION_ADDED
-#define IN_DELETE		FILE_ACTION_REMOVED
-#define IN_MODIFY 		FILE_ACTION_MODIFIED
-#define IN_MOVED_FROM 	FILE_ACTION_RENAMED_OLD_NAME
-#define IN_MOVED_TO		FILE_ACTION_RENAMED_NEW_NAME
+#define	IN_ISDIR		0 /* event occurred against dir */
+#define	IN_CREATE		FILE_NOTIFY_CHANGE_CREATION /* Subfile was created */
+#define IN_DELETE		FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME /* Subfile was deleted */
+#define IN_MODIFY 		FILE_NOTIFY_CHANGE_SECURITY | FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE /* File was modified */
+#define IN_MOVED_FROM 	FILE_NOTIFY_CHANGE_FILE_NAME /* File was moved from X */
+#define IN_MOVED_TO		FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_CREATION /* File was moved to Y */
 #define IN_MOVE			(IN_MOVED_FROM | IN_MOVED_TO) /* moves */
-#define EVENTS_DIR_CHANGED	\
+
+/*
+ * All of the events - we build the list by hand so that we can add flags in
+ * the future and not break backward compatibility.  Apps will get only the
+ * events that they originally wanted.  Be sure to add new events here!
+ */
+#define IN_ALL_EVENTS 	\
 	(FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME /*rename, delete, create*/ \
 		| FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE \
 		| FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_SECURITY)
+typedef FILE_NOTIFY_INFORMATION inotify_t;
 #else /* !_WIN32 */
-#if __APPLE__ && __MACH__
-#	define _DARWIN_C_LEVEL >= __DARWIN_C_FULL
-#undef in
-#	include <CoreServices/CoreServices.h>
-#define in ,
-#	include <mach/mach_time.h>
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ __APPLE__ || __MACH__
+#define IN_CREATE		NOTE_WRITE /* Subfile was created */
+#define IN_DELETE		(NOTE_DELETE | NOTE_REVOKE | NOTE_RENAME) /* Subfile was deleted */
+#define IN_MODIFY 		NOTE_ATTRIB | NOTE_EXTEND | NOTE_LINK /* File was modified */
+#define IN_MOVED_FROM 	NOTE_RENAME /* File was moved from X */
+#define IN_MOVED_TO		NOTE_WRITE | NOTE_EXTEND /* File was moved to Y */
+#define IN_MOVE			(IN_MOVED_FROM | IN_MOVED_TO) /* moves */
+
+/*
+ * All of the events - we build the list by hand so that we can add flags in
+ * the future and not break backward compatibility.  Apps will get only the
+ * events that they originally wanted.  Be sure to add new events here!
+ */
+#define IN_ALL_EVENTS	(NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME | NOTE_REVOKE)
+#	if __APPLE__ || __MACH__
+#		undef in
+#		include <CoreServices/CoreServices.h>
+#		define in ,
+#		include <mach/mach_time.h>
+#	endif
+
+/*
+ * struct inotify_event - structure read from the inotify device for each event
+ *
+ * When you are watching a directory, you will receive the filename for events
+ * such as IN_CREATE, IN_DELETE, IN_OPEN, IN_CLOSE, ..., relative to the wd.
+ */
+typedef struct inotify_event {
+	int		wd;		/* watch descriptor */
+	uint32_t	mask;		/* watch mask */
+	uint32_t	cookie;		/* cookie to synchronize two events */
+	uint32_t	len;		/* length (including nulls) of name */
+	char	name[];	/* stub for possible name */
+} inotify_t;
 #else
 #	include <sys/sendfile.h>
 #	include <sys/inotify.h>
+typedef struct inotify_event inotify_t;
 #endif
 
 #include <sys/wait.h>
@@ -287,10 +324,6 @@ typedef void (*emulate_dtor)(void *);
 #define inherit  -1
 #define INVALID  -1
 #define OS_NULL	 0
-#define EVENTS_DIR_CHANGED	\
-	(IN_CREATE | IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE \
-		| IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO \
-		| IN_DELETE_SELF | IN_MOVE_SELF)
 #endif
 
 #ifndef STDIN_FILENO
@@ -352,10 +385,9 @@ typedef int id_t;
 #else
 #if __APPLE__ && __MACH__
 #   include <sys/ucontext.h>
-#else
-#	include <ucontext.h>
 #endif
 
+#include <ucontext.h>
 #include <pthread.h>
 #include <sys/syscall.h>
 
@@ -373,6 +405,14 @@ typedef struct cpu_set {
 typedef cpu_set_t os_cpumask;
 #endif
 
+#if !defined(EV_RECEIPT)
+#	define EV_RECEIPT 0
+#endif
+
+#if !defined(O_EVTONLY)
+#	define O_EVTONLY O_RDONLY
+#endif
+
 typedef pthread_t os_thread_t;
 #define __os_stdcall
 typedef int (__os_stdcall *os_thread_proc)(void *);
@@ -380,7 +420,6 @@ typedef struct addrinfo **__restrict__ addrinfo_t;
 #endif
 
 #ifdef _WIN32
-#define read 	os_read
 #define write 	os_write
 
 #define R_OK    4
@@ -403,11 +442,15 @@ C_API int pipe2(int fildes[2], int flags);
 
 C_API int inotify_init(void);
 C_API int inotify_init1(int flags);
-C_API filefd_t inotify_add_watch(int fd, const char *name, uint32_t mask);
-C_API int inotify_rm_watch(int fd, filefd_t wd);
+C_API int inotify_add_watch(int fd, const char *name, uint32_t mask);
+C_API int inotify_rm_watch(int fd, int wd);
 
 #else
+#define inotify_add_watch	__inotify_add_watch
+#define inotify_rm_watch	__inotify_rm_watch
 C_API int os_open(const char *path, int flags, mode_t mode);
+C_API int __inotify_add_watch(int fd, const char *name, uint32_t mask);
+C_API int __inotify_rm_watch(int fd, int wd);
 #endif
 
 #if !defined(thread_local) /* User can override thread_local for obscure compilers */
@@ -600,12 +643,42 @@ C_API int os_open(const char *path, int flags, mode_t mode);
 #endif
 #endif /* thrd_local */
 
+typedef enum {
+	WATCH_INVALID = 0,
+	WATCH_ADDED = 1,
+	WATCH_MODIFIED = 3,
+	WATCH_REMOVED = 2
+} events_monitors;
+
+typedef void (*watch_cb)(int, events_monitors, const char *);
 typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
 typedef exec_io_cb spawn_cb;
+
+#ifndef nil
+#	define nil	{0}
+#endif
+
+#ifndef null
+#	define null	NULL
+#endif
+
+#ifndef ARRAY_SIZE
+#	define ARRAY_SIZE	MAX_PATH
+#endif
+
 #define open			os_open
 #define close 			os_close
 #define connect			os_connect
+#define read 			os_read
 #define mkfifo(a, b)	os_mkfifo(a, b)
+
+C_API uint32_t inotify_mask(inotify_t *);
+C_API uint32_t inotify_length(inotify_t *);
+C_API char *inotify_name(inotify_t *);
+C_API bool inotify_added(inotify_t *);
+C_API bool inotify_removed(inotify_t *);
+C_API bool inotify_modified(inotify_t *);
+C_API inotify_t *inotify_next(inotify_t *);
 
 /**
  * Set up the library for use.
@@ -807,6 +880,8 @@ C_API int fs_access(const char *path, int mode);
 
 C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
+C_API int fs_writefile(const char *path, char *text);
+C_API int fs_events(const char *path, watch_cb moniter);
 
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);

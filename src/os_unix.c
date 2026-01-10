@@ -8,6 +8,8 @@
 #undef open
 #undef connect
 #undef mkfifo
+#undef inotify_add_watch
+#undef inotify_rm_watch
 
 static void clear_pseudo_events(void);
 static sigset_t events_siglock, events_siglock_all;
@@ -34,7 +36,7 @@ typedef struct {
 	int offset;
 	void *buf;
 	int inUse;
-	inotify_event_t *inotify;	/* for watched directory handles */
+	inotify_t *inotify;	/* for watched directory handles */
 	execinfo_t process[1];
 } FD_TABLE;
 
@@ -190,6 +192,20 @@ EVENTS_INLINE int os_open(const char *path, int flags, mode_t mode) {
 	return open(path, flags, mode);
 }
 
+int os_read(int fd, char *buf, size_t len) {
+	if (events_valid_fd(fd)) {
+		int ret = read(fdTable[fd].fd, buf, len);
+		if (fdTable[fd].type != FD_CHILD) {
+			fdTable[fd].process->buffer = buf;
+			fdTable[fd].process->rid = ret;
+		}
+
+		return ret;
+	}
+
+	return read(fd, buf, len);
+}
+
 EVENTS_INLINE int os_close(int fd) {
 	if (fd == -1) return 0;
 	int r, can_clear = events_valid_fd(fd);
@@ -242,13 +258,20 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 	while (target->loop && target->loop->active_descriptors >= ioTableSize)
 		grow_ioTable();
 
-	if (fd > 0 && fd < ioTableSize && fdTable[fd].type == FD_UNUSED) {
-		index = fd;
-	} else {
-		for (i = 1; i < ioTableSize; ++i) {
-			if (fdTable[i].type == FD_UNUSED) {
-				index = i;
-				break;
+	if (desiredFd >= 0 && desiredFd < ioTableSize
+		&& fdTable[desiredFd].type == FD_UNUSED) {
+		index = desiredFd;
+	} else if (fd > 0) {
+		if (fd < ioTableSize && fdTable[fd].type == FD_UNUSED) {
+			index = fd;
+		} else {
+			int i;
+
+			for (i = 1; i < ioTableSize; ++i) {
+				if (fdTable[i].type == FD_UNUSED) {
+					index = i;
+					break;
+				}
 			}
 		}
 	}
@@ -256,7 +279,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 	if (index != -1) {
 		fdTable[index].proc = NULL;
 		fdTable[index].data = NULL;
-		fdTable[index].fd = TASK_ERRED;
+		fdTable[index].fd = desiredFd;
 		fdTable[index].event_fd = fd;
 		fdTable[index].len = DATA_INVALID;
 		fdTable[index].offset = DATA_INVALID;
@@ -319,7 +342,10 @@ void events_free_fd(int pseudo) {
 	if ((pseudo >= 0) && (pseudo < ioTableSize)
 		&& fdTable[pseudo].type != FD_UNUSED) {
 		acquire_lock(pseudo);
-		if (fdTable[pseudo].type != FD_PIPE_ASYNC)
+		if (fdTable[pseudo].type == FD_MONITOR_ASYNC
+			|| fdTable[pseudo].type == FD_MONITOR_SYNC)
+			fdTable[pseudo].inUse = fdTable[pseudo].event_fd;
+		else if (fdTable[pseudo].type != FD_PIPE_ASYNC)
 			close(fdTable[pseudo].event_fd);
 
 		fdTable[pseudo].event_fd = TASK_ERRED;
@@ -703,3 +729,92 @@ EVENTS_INLINE int os_sleep(uint32_t msec) {
 EVENTS_INLINE int os_geterror(void) {
 	return errno;
 }
+
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ __APPLE__ || __MACH__
+//
+//
+#else
+EVENTS_INLINE uint32_t inotify_mask(inotify_t *event) {
+	return event->mask;
+}
+
+EVENTS_INLINE bool inotify_added(inotify_t *event) {
+	return (event->mask & (IN_CREATE | IN_MOVED_TO));
+}
+
+EVENTS_INLINE bool inotify_removed(inotify_t *event) {
+	return (event->mask & (IN_DELETE | IN_MOVED_FROM));
+}
+
+EVENTS_INLINE bool inotify_modified(inotify_t *event) {
+	return (event->mask & IN_MODIFY);
+}
+
+EVENTS_INLINE char *inotify_name(inotify_t *event) {
+	return event->name;
+}
+
+EVENTS_INLINE uint32_t inotify_length(inotify_t *event) {
+	return (event == null || !is_ptr_usable(event)) ? 0 : event->len;
+}
+
+EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
+	int i;
+	for (i = 0; i < ioTableSize; ++i) {
+		if (fdTable[i].type == FD_MONITOR_SYNC && fdTable[i].process->buffer == (char *)event) {
+			char *buf = fdTable[i].process->buffer;
+			size_t numRead = fdTable[i].process->rid;
+			event += sizeof(inotify_t) + event->len;
+			return (event < buf + numRead) ? event : NULL;
+		}
+	}
+
+	return null;
+}
+
+void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
+	char buffer[4096] = {0};
+	int len = read(fd, buffer, sizeof(buffer));
+	if (len < 0)
+		return;
+
+	char *p = buffer;
+	while (p < buffer + len) {
+		inotify_t *evt = (inotify_t *)p;
+		if (evt->len) {
+			if (evt->mask & (IN_CREATE | IN_MOVED_TO)) {
+				handler(fd, WATCH_ADDED, (const char *)evt->name);
+			} else if (evt->mask & (IN_DELETE | IN_MOVED_FROM)) {
+				handler(fd, WATCH_REMOVED, (const char *)evt->name);
+			} else if (evt->mask & IN_MODIFY) {
+				handler(fd, WATCH_MODIFIED, (const char *)evt->name);
+			}
+		}
+		p += sizeof(inotify_t) + evt->len;
+	}
+}
+
+int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
+	int pseudo, wd = inotify_add_watch(fd, name, mask);
+	if (wd == -1)
+		return wd;
+
+	if (!events_valid_fd(fd))
+		events_new_fd(FD_MONITOR_ASYNC, fd, fd);
+
+	pseudo = events_new_fd(FD_MONITOR_SYNC, wd, -1);
+	fdTable[pseudo].fd = wd;
+	return pseudo;
+}
+
+int __inotify_rm_watch(int fd, int wd) {
+	int realFd = events_get_fd(fd), realWd = events_get_fd(wd);
+	if (events_valid_fd(wd)) {
+		events_free_fd(wd);
+		fdTable[wd].type = FD_UNUSED;
+		fdTable[wd].fd = TASK_ERRED;
+	}
+
+	return inotify_rm_watch(realFd, realWd);
+}
+#endif
