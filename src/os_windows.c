@@ -6,6 +6,7 @@
 #undef open
 #undef connect
 
+#if defined(_WIN32) || defined(_WIN64) /* WINDOWS ONLY */
 static CRITICAL_SECTION events_siglock;
 static volatile sig_atomic_t signal_running = false;
 volatile sig_atomic_t events_got_signal = 0;
@@ -1626,3 +1627,4 @@ int inotify_rm_watch(int fd, int wd) {
 
 	return TASK_ERRED;
 }
+#endif /* WINDOWS ONLY */

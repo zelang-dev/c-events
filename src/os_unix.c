@@ -13,6 +13,8 @@
 #undef inotify_init
 #undef inotify_init1
 
+#if !defined(_WIN32) /* UNIX ONLY */
+
 static void clear_pseudo_events(void);
 static sigset_t events_siglock, events_siglock_all;
 static struct sigaction events_sig_sa = {0}, events_sig_osa = {0};
@@ -833,3 +835,5 @@ EVENTS_INLINE int __inotify_rm_watch(int fd, int wd) {
 	return inotify_rm_watch(realFd, realWd);
 }
 #endif
+
+#endif /* UNIX ONLY */
