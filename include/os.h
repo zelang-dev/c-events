@@ -275,7 +275,7 @@ typedef uint16_t in_port_t;
 		| FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_SECURITY)
 typedef FILE_NOTIFY_INFORMATION inotify_t;
 #else /* !_WIN32 */
-#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ __APPLE__ || __MACH__
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 #define IN_CREATE		NOTE_WRITE /* Subfile was created */
 #define IN_DELETE		(NOTE_DELETE | NOTE_REVOKE | NOTE_RENAME) /* Subfile was deleted */
 #define IN_MODIFY 		NOTE_ATTRIB | NOTE_EXTEND | NOTE_LINK /* File was modified */

@@ -34,7 +34,7 @@ typedef struct {
 	int event_fd; 	/* `eventfd` fd descriptor */
 	int len;
 	int offset;
-	void *buf;
+	char *buf;
 	int inUse;
 	inotify_t *inotify;	/* for watched directory handles */
 	execinfo_t process[1];
@@ -196,7 +196,7 @@ int os_read(int fd, char *buf, size_t len) {
 	if (events_valid_fd(fd)) {
 		int ret = read(fdTable[fd].fd, buf, len);
 		if (fdTable[fd].type != FD_CHILD) {
-			fdTable[fd].process->buffer = buf;
+			fdTable[fd].buf = buf;
 			fdTable[fd].process->rid = ret;
 		}
 
@@ -730,7 +730,7 @@ EVENTS_INLINE int os_geterror(void) {
 	return errno;
 }
 
-#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ __APPLE__ || __MACH__
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 //
 //
 #else
@@ -761,11 +761,11 @@ EVENTS_INLINE uint32_t inotify_length(inotify_t *event) {
 EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 	int i;
 	for (i = 0; i < ioTableSize; ++i) {
-		if (fdTable[i].type == FD_MONITOR_SYNC && fdTable[i].process->buffer == (char *)event) {
-			char *buf = fdTable[i].process->buffer;
+		if (fdTable[i].type == FD_MONITOR_SYNC && fdTable[i].buf == (char *)event) {
+			char *buf = fdTable[i].buf;
 			size_t numRead = fdTable[i].process->rid;
 			event += sizeof(inotify_t) + event->len;
-			return (event < buf + numRead) ? event : NULL;
+			return ((char *)event < buf + numRead) ? event : NULL;
 		}
 	}
 
