@@ -815,7 +815,7 @@ EVENTS_INLINE int __inotify_init1(int flags) {
 }
 
 EVENTS_INLINE int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
-	int pseudo, wd = inotify_add_watch(fd, name, mask);
+	int pseudo, wd = inotify_add_watch(events_get_fd(fd), name, mask);
 	if (wd == -1)
 		return wd;
 
