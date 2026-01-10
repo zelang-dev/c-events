@@ -10,6 +10,8 @@
 #undef mkfifo
 #undef inotify_add_watch
 #undef inotify_rm_watch
+#undef inotify_init
+#undef inotify_init1
 
 static void clear_pseudo_events(void);
 static sigset_t events_siglock, events_siglock_all;
@@ -794,20 +796,33 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 	}
 }
 
-int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
+EVENTS_INLINE int __inotify_init(void) {
+	events_init(256);
+	int realfd = inotify_init();
+	if (realfd == -1)
+		return realfd;
+
+	return events_new_fd(FD_MONITOR_ASYNC, realfd, realfd);
+}
+
+EVENTS_INLINE int __inotify_init1(int flags) {
+	events_init(256);
+	int realfd = inotify_init1(flags);
+	if (realfd == -1)
+		return realfd;
+
+	return events_new_fd(FD_MONITOR_ASYNC, realfd, realfd);
+}
+
+EVENTS_INLINE int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	int pseudo, wd = inotify_add_watch(fd, name, mask);
 	if (wd == -1)
 		return wd;
 
-	if (!events_valid_fd(fd))
-		events_new_fd(FD_MONITOR_ASYNC, fd, fd);
-
-	pseudo = events_new_fd(FD_MONITOR_SYNC, wd, -1);
-	fdTable[pseudo].fd = wd;
-	return pseudo;
+	return events_new_fd(FD_MONITOR_SYNC, wd, wd);
 }
 
-int __inotify_rm_watch(int fd, int wd) {
+EVENTS_INLINE int __inotify_rm_watch(int fd, int wd) {
 	int realFd = events_get_fd(fd), realWd = events_get_fd(wd);
 	if (events_valid_fd(wd)) {
 		events_free_fd(wd);
