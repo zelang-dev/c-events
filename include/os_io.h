@@ -342,6 +342,10 @@ typedef exec_io_cb spawn_cb;
 #	define null	NULL
 #endif
 
+#ifndef MAX_PATH
+#	define MAX_PATH          260
+#endif
+
 #ifndef ARRAY_SIZE
 #	define ARRAY_SIZE	MAX_PATH
 #endif

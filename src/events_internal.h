@@ -46,10 +46,6 @@ If `assembly`, reduced to:
 #   define assert
 #endif
 
-#ifndef MAX_PATH
-#	define MAX_PATH          260
-#endif
-
 /* In alignas(a), 'a' should be a power of two that is at least the type's
    alignment and at most the implementation's alignment limit.  This limit is
    2**13 on MSVC. To be portable to MSVC through at least version 10.0,
