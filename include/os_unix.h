@@ -13,8 +13,8 @@
 #include <sys/event.h>
 #define	IN_ISDIR		0 /* event occurred against dir */
 #define IN_CREATE		NOTE_WRITE /* Subfile was created */
-#define IN_DELETE		(NOTE_DELETE | NOTE_REVOKE | NOTE_RENAME) /* Subfile was deleted */
-#define IN_MODIFY 		NOTE_ATTRIB | NOTE_EXTEND | NOTE_LINK /* File was modified */
+#define IN_DELETE		NOTE_DELETE /* Subfile was deleted */
+#define IN_MODIFY 		NOTE_ATTRIB | NOTE_EXTEND | NOTE_REVOKE | NOTE_RENAME /* File was modified */
 #define IN_MOVED_FROM 	0 /* File was moved from X */
 #define IN_MOVED_TO		0 /* File was moved to Y */
 #define IN_MOVE			NOTE_RENAME /* moves */
@@ -56,6 +56,7 @@ typedef struct inotify_event inotify_t;
 #endif
 
 #include <sys/wait.h>
+#include <dirent.h>
 typedef int fds_t;
 typedef fds_t filefd_t;
 typedef pid_t process_t;
@@ -108,6 +109,7 @@ typedef struct addrinfo **__restrict__ addrinfo_t;
 extern "C" {
 #endif
 
+C_API int dirent_entries(const char *path);
 C_API int os_open(const char *path, int flags, mode_t mode);
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 C_API int inotify_init(void);
