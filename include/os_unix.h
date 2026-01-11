@@ -10,12 +10,14 @@
 #endif
 
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
+#include <sys/event.h>
+#define	IN_ISDIR		0 /* event occurred against dir */
 #define IN_CREATE		NOTE_WRITE /* Subfile was created */
 #define IN_DELETE		(NOTE_DELETE | NOTE_REVOKE | NOTE_RENAME) /* Subfile was deleted */
 #define IN_MODIFY 		NOTE_ATTRIB | NOTE_EXTEND | NOTE_LINK /* File was modified */
-#define IN_MOVED_FROM 	NOTE_RENAME /* File was moved from X */
-#define IN_MOVED_TO		NOTE_WRITE | NOTE_EXTEND /* File was moved to Y */
-#define IN_MOVE			(IN_MOVED_FROM | IN_MOVED_TO) /* moves */
+#define IN_MOVED_FROM 	0 /* File was moved from X */
+#define IN_MOVED_TO		0 /* File was moved to Y */
+#define IN_MOVE			NOTE_RENAME /* moves */
 
 /*
  * All of the events - we build the list by hand so that we can add flags in
@@ -36,21 +38,21 @@
  * When you are watching a directory, you will receive the filename for events
  * such as IN_CREATE, IN_DELETE, IN_OPEN, IN_CLOSE, ..., relative to the wd.
  */
-typedef struct inotify_event {
-	int		wd;		/* watch descriptor */
-	uint32_t	mask;		/* watch mask */
-	uint32_t	cookie;		/* cookie to synchronize two events */
-	uint32_t	len;		/* length (including nulls) of name */
-	char	name[];	/* stub for possible name */
-} inotify_t;
+typedef struct kevent inotify_t;
 
 #if __APPLE__ && __MACH__
 #   include <sys/ucontext.h>
 #endif
 #else
+#	include <sys/epoll.h>
 #	include <sys/sendfile.h>
 #	include <sys/inotify.h>
 typedef struct inotify_event inotify_t;
+
+#define inotify_init		__inotify_init
+#define inotify_init1		__inotify_init1
+#define inotify_add_watch	__inotify_add_watch
+#define inotify_rm_watch	__inotify_rm_watch
 #endif
 
 #include <sys/wait.h>
@@ -102,20 +104,22 @@ typedef pthread_t os_thread_t;
 typedef int (__os_stdcall *os_thread_proc)(void *);
 typedef struct addrinfo **__restrict__ addrinfo_t;
 
-#define inotify_init		__inotify_init
-#define inotify_init1		__inotify_init1
-#define inotify_add_watch	__inotify_add_watch
-#define inotify_rm_watch	__inotify_rm_watch
-
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {
 #endif
 
 C_API int os_open(const char *path, int flags, mode_t mode);
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
+C_API int inotify_init(void);
+C_API int inotify_init1(int flags);
+C_API int inotify_add_watch(int fd, const char *name, uint32_t mask);
+C_API int inotify_rm_watch(int fd, int wd);
+#else
 C_API int __inotify_init(void);
 C_API int __inotify_init1(int flags);
 C_API int __inotify_add_watch(int fd, const char *name, uint32_t mask);
 C_API int __inotify_rm_watch(int fd, int wd);
+#endif
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

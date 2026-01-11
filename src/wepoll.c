@@ -33,8 +33,9 @@
 #define WEPOLL_EXPORT
 #endif
 
-#include <stdint.h>
 #include "events_internal.h"
+
+#if defined(_WIN32) || defined(_WIN64) /* WINDOWS ONLY */
 
 enum EPOLL_EVENTS {
 	EPOLLIN = (int)(1U << 0),
@@ -2271,3 +2272,5 @@ SOCKET ws_get_base_socket(SOCKET socket) {
 			return_set_error(INVALID_SOCKET, error);
 	}
 }
+
+#endif /* WINDOWS ONLY */

@@ -27,12 +27,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <errno.h>
-#include <sys/types.h>
-#include <sys/event.h>
-#include <sys/time.h>
-#include <unistd.h>
 #include "events_internal.h"
+
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__ /* BSD ONLY */
 
 #define EV_QUEUE_SZ 128
 
@@ -161,6 +158,10 @@ int events_update_internal(events_t *_loop, int fd, int events) {
 	return 0;
 }
 
+int events_backend_fd(events_t *_loop) {
+	return ((events_kqueue *)_loop)->kq;
+}
+
 int events_poll_once_internal(events_t *_loop, int max_wait) {
 	events_kqueue *loop = (events_kqueue *)_loop;
 	struct timespec ts;
@@ -200,9 +201,15 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 
 			if (event->flags & EV_EOF)
 				revents &= EVENTS_CLOSED;
-			(*target->callback)(event->ident, revents, target->cb_arg);
+
+			if (target->is_pathwatcher)
+				inotify_handler(event->ident, (inotify_t *)event, (watch_cb)target->callback);
+			else
+				(*target->callback)(event->ident, revents, target->cb_arg);
 		}
 	}
 
 	return 0;
 }
+
+#endif /* BSD ONLY */

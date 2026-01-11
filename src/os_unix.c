@@ -40,7 +40,11 @@ typedef struct {
 	int offset;
 	char *buf;
 	int inUse;
-	inotify_t *inotify;	/* for watched directory handles */
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
+	struct kevent inotify[1]; /* for watched directory handles */
+#else
+	inotify_t *inotify; /* for watched directory handles */
+#endif
 	execinfo_t process[1];
 } FD_TABLE;
 
@@ -198,12 +202,19 @@ EVENTS_INLINE int os_open(const char *path, int flags, mode_t mode) {
 
 int os_read(int fd, char *buf, size_t len) {
 	if (events_valid_fd(fd)) {
-		int ret = read(fdTable[fd].fd, buf, len);
+		int ret;
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
+		if (fdTable[fd].type == FD_MONITOR_ASYNC)
+			ret = kevent(fdTable[fd].fd, fdTable[fd].inotify, fdTable[fd].offset, (inotify_t *)buf, fdTable[fd].offset, NULL);
+		else
+			ret = read(fdTable[fd].fd, buf, len);
+#else
+		ret = read(fdTable[fd].fd, buf, len);
 		if (fdTable[fd].type != FD_CHILD) {
 			fdTable[fd].buf = buf;
 			fdTable[fd].process->rid = ret;
 		}
-
+#endif
 		return ret;
 	}
 
@@ -286,10 +297,17 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].fd = desiredFd;
 		fdTable[index].event_fd = fd;
 		fdTable[index].len = DATA_INVALID;
-		fdTable[index].offset = DATA_INVALID;
+		fdTable[index].offset = 0;
 		fdTable[index].buf = NULL;
 		fdTable[index].path = NULL;
+
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
+		fdTable[index].inotify->data = NULL;
+		fdTable[index].inotify->udata = NULL;
+		fdTable[index].inotify->ident = 0;
+#else
 		fdTable[index].inotify = NULL;
+#endif
 		fdTable[index].inUse = 0;
 		fdTable[index].type = type;
 		fdTable[index].process->fd = index;
@@ -735,8 +753,88 @@ EVENTS_INLINE int os_geterror(void) {
 }
 
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
-//
-//
+EVENTS_INLINE uint32_t inotify_mask(inotify_t *event) {
+	return event->fflags;
+}
+
+EVENTS_INLINE bool inotify_added(inotify_t *event) {
+	return (event->fflags & (IN_CREATE | IN_MOVED_TO));
+}
+
+EVENTS_INLINE bool inotify_removed(inotify_t *event) {
+	return (event->fflags & (IN_DELETE | IN_MOVED_FROM));
+}
+
+EVENTS_INLINE bool inotify_modified(inotify_t *event) {
+	return (event->fflags & IN_MODIFY);
+}
+
+EVENTS_INLINE char *inotify_name(inotify_t *event) {
+	return (char *)event->udata;
+}
+
+EVENTS_INLINE uint32_t inotify_length(inotify_t *event) {
+	return (event == null || !is_ptr_usable(event) || event->flags & EV_ERROR)
+		? 0 : event->ident;
+}
+
+EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
+	return null;
+}
+
+void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
+	if (event->fflags & (IN_CREATE | IN_MOVED_TO)) {
+		handler(fd, WATCH_ADDED, (const char *)event->udata);
+	} else if (event->fflags & (IN_DELETE | IN_MOVED_FROM)) {
+		handler(fd, WATCH_REMOVED, (const char *)event->udata);
+	} else if (event->fflags & IN_MODIFY) {
+		handler(fd, WATCH_MODIFIED, (const char *)event->udata);
+	}
+}
+
+EVENTS_INLINE int inotify_init(void) {
+	events_init(256);
+	/* Create a new kernel event queue */
+	int kq = !sys_event.num_loops ? kqueue() : events_backend_fd(tasks_loop());
+	if (kq == -1)
+		return TASK_ERRED;
+
+	return events_new_fd(FD_MONITOR_ASYNC, kq, kq);
+}
+
+EVENTS_INLINE int inotify_init1(int flags) {
+	(void)flags;
+	return inotify_init();
+}
+
+EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
+	int newfd, wd = open(name, O_EVTONLY);
+	if (wd == -1)
+		return wd;
+
+	newfd = events_new_fd(FD_MONITOR_SYNC, wd, wd);
+	fdTable[newfd].process->workdir = name;
+	fdTable[newfd].offset = mask;
+	fdTable[fd].offset++;
+	EV_SET(fdTable[fd].inotify, wd, EVFILT_VNODE, EV_ADD | EV_ENABLE, mask, 0, 0);
+	if (kevent(fdTable[fd].fd, fdTable[fd].inotify, 1, NULL, 0, NULL) == -1) {
+		os_close(newfd);
+		return TASK_ERRED;
+	}
+
+	return newfd;
+}
+
+EVENTS_INLINE int inotify_rm_watch(int fd, int wd) {
+	if (events_valid_fd(wd)) {
+		EV_SET(fdTable[fd].inotify, fdTable[wd].fd, EVFILT_VNODE, EV_DELETE, fdTable[wd].offset, 0, 0);
+		kevent(fdTable[fd].fd, fdTable[fd].inotify, 1, NULL, 0, NULL);
+		fdTable[fd].offset--;
+		return os_close(wd);
+	}
+
+	return TASK_ERRED;
+}
 #else
 EVENTS_INLINE uint32_t inotify_mask(inotify_t *event) {
 	return event->mask;

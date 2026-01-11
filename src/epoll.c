@@ -27,12 +27,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef _WIN32
-#	include "wepoll.h"
-#else
-#	include <sys/epoll.h>
-#endif
 #include "events_internal.h"
+
+#if defined __linux__ /* LINUX ONLY */
 
 #ifndef EVENTS_EPOLL_DEFER_DELETES
 # define EVENTS_EPOLL_DEFER_DELETES 1
@@ -142,6 +139,10 @@ int events_update_internal(events_t *_loop, int fd, int event) {
 	return 0;
 }
 
+int events_backend_fd(events_t *_loop) {
+	return ((events_epoll *)_loop)->epfd;
+}
+
 int events_poll_once_internal(events_t *_loop, int max_wait) {
 	events_epoll *loop = (events_epoll *)_loop;
 	int i, nevents, ffd = 0;
@@ -173,3 +174,5 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 	}
 	return 0;
 }
+
+#endif /* LINUX ONLY */

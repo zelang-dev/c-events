@@ -13,6 +13,7 @@
 #	define __STDC__ 1
 #endif
 #include <windows.h>
+#include "wepoll.h"
 
 typedef SOCKET fds_t;
 typedef DWORD mode_t;

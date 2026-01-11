@@ -32,6 +32,8 @@
 #ifndef WEPOLL_H_
 #define WEPOLL_H_
 
+#if defined(_WIN32) || defined(_WIN64) /* WINDOWS ONLY */
+
 #ifndef WEPOLL_EXPORT
 #define WEPOLL_EXPORT
 #endif
@@ -109,5 +111,7 @@ WEPOLL_EXPORT int epoll_pwait2(HANDLE ephnd, struct epoll_event *events, int max
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
+
+#endif /* WINDOWS ONLY */
 
 #endif /* WEPOLL_H_ */
