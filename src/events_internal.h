@@ -498,7 +498,7 @@ int events_update_internal(events_t *loop, int fd, int events);
 
 /* internal: poll once and call the handlers (defined by each backend) */
 int events_poll_once_internal(events_t *loop, int max_wait);
-int events_backend_fd(events_t *);
+intptr_t events_backend_fd(events_t *);
 
 void *events_calloc(size_t count, size_t size);
 void *events_malloc(size_t size);

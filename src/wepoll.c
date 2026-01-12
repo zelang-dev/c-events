@@ -37,21 +37,6 @@
 
 #if defined(_WIN32) || defined(_WIN64) /* WINDOWS ONLY */
 
-enum EPOLL_EVENTS {
-	EPOLLIN = (int)(1U << 0),
-	EPOLLPRI = (int)(1U << 1),
-	EPOLLOUT = (int)(1U << 2),
-	EPOLLERR = (int)(1U << 3),
-	EPOLLHUP = (int)(1U << 4),
-	EPOLLRDNORM = (int)(1U << 6),
-	EPOLLRDBAND = (int)(1U << 7),
-	EPOLLWRNORM = (int)(1U << 8),
-	EPOLLWRBAND = (int)(1U << 9),
-	EPOLLMSG = (int)(1U << 10), /* Never reported. */
-	EPOLLRDHUP = (int)(1U << 13),
-	EPOLLONESHOT = (int)(1U << 31)
-};
-
 #define EPOLLIN      (1U <<  0)
 #define EPOLLPRI     (1U <<  1)
 #define EPOLLOUT     (1U <<  2)
@@ -72,24 +57,7 @@ enum EPOLL_EVENTS {
 typedef void *HANDLE;
 typedef uintptr_t SOCKET;
 
-typedef union epoll_data {
-	void *ptr;
-	int fd;
-	uint32_t u32;
-	uint64_t u64;
-	SOCKET sock; /* Windows specific */
-	HANDLE hnd;  /* Windows specific */
-} epoll_data_t;
-
-struct epoll_event {
-	uint32_t events;   /* Epoll events and flags */
-	epoll_data_t data; /* User data variable */
-};
-
 #define _SIGSET_NWORDS (1024 / (8 * sizeof (size_t)))
-typedef struct {
-	size_t __val[_SIGSET_NWORDS];
-} sigset_t;
 
 #ifdef __cplusplus
 extern "C" {

@@ -29,7 +29,7 @@
 
 #include "events_internal.h"
 
-#if defined __linux__ /* LINUX ONLY */
+#if defined __linux__ || defined _WIN32
 
 #ifndef EVENTS_EPOLL_DEFER_DELETES
 # define EVENTS_EPOLL_DEFER_DELETES 1
@@ -139,8 +139,8 @@ int events_update_internal(events_t *_loop, int fd, int event) {
 	return 0;
 }
 
-int events_backend_fd(events_t *_loop) {
-	return ((events_epoll *)_loop)->epfd;
+intptr_t events_backend_fd(events_t *_loop) {
+	return (intptr_t)((events_epoll *)_loop)->epfd;
 }
 
 int events_poll_once_internal(events_t *_loop, int max_wait) {
@@ -175,4 +175,4 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 	return 0;
 }
 
-#endif /* LINUX ONLY */
+#endif

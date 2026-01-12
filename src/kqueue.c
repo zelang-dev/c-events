@@ -158,8 +158,8 @@ int events_update_internal(events_t *_loop, int fd, int events) {
 	return 0;
 }
 
-int events_backend_fd(events_t *_loop) {
-	return ((events_kqueue *)_loop)->kq;
+intptr_t events_backend_fd(events_t *_loop) {
+	return (intptr_t)((events_kqueue *)_loop)->kq;
 }
 
 int events_poll_once_internal(events_t *_loop, int max_wait) {
