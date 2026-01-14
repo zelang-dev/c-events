@@ -344,19 +344,26 @@ EVENTS_INLINE events_fd_t *events_target(int fd) {
 	return (events_fd_t *)atomic_load_explicit(&sys_event.fds, memory_order_relaxed) + fd;
 }
 
+EVENTS_INLINE int events_del_watch(events_t *loop) {
+	int fd = loop->inotify_fd;
+	loop->inotify_fd = DATA_INVALID;
+
+	return inotify_close(fd);
+}
+
 EVENTS_INLINE int events_watch(events_t *loop, const char *name, watch_cb handler) {
 	if (loop->inotify_fd == DATA_INVALID)
 		if ((loop->inotify_fd = inotify_init()) < 0)
 			return -1;
 
-	int wd = inotify_add_watch(loop->inotify_fd, name, IN_ALL_EVENTS);
-	if (wd < 0)
+	if ((inotify_add_watch(loop->inotify_fd, name, IN_ALL_EVENTS) < 0)
+		|| (events_add(loop, loop->inotify_fd, EVENTS_PATHWATCH, 0, (events_cb)handler, NULL) < 0))
 		return -1;
 
-	return events_add(loop, loop->inotify_fd, EVENTS_PATHWATCH, 0, (events_cb)handler, NULL);
+	return loop->inotify_fd;
 }
 
-EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_in_secs,
+int events_add(events_t *loop, fds_t sfd, int event, int timeout_in_secs,
 	events_cb callback, void *cb_arg) {
 	events_fd_t *target;
 	fd_types type = FD_UNKNOWN;
@@ -419,7 +426,7 @@ EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_i
 	return 0;
 }
 
-EVENTS_INLINE int events_del(fds_t sfd) {
+int events_del(fds_t sfd) {
 	events_fd_t *target = NULL;
 	events_t *loop = NULL;
 	sys_signal_t *signal_handlers = NULL;
@@ -454,9 +461,6 @@ EVENTS_INLINE int events_del(fds_t sfd) {
 }
 
 EVENTS_INLINE bool events_is_registered(events_t *loop, fds_t sfd) {
-	assert(EVENTS_IS_INITD_AND_FD_IN_RANGE(socket2fd(sfd)));
-	if (EVENTS_IS_INITD)
-		return false;
 	return loop != NULL
 		? events_target(socket2fd(sfd))->loop_id == loop->loop_id
 		: events_target(socket2fd(sfd))->loop_id != 0;

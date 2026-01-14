@@ -1588,7 +1588,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				SetLastError(ERROR_IO_PENDING);
 			} else if (GetLastError() != ERROR_IO_PENDING) {
 				CloseHandle(hDir);
-				events_free_fd(fd);
+				inotify_close(fd);
 				return TASK_ERRED;
 			}
 
@@ -1612,9 +1612,25 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	return TASK_ERRED;
 }
 
+int inotify_close(int fd) {
+	if (events_valid_fd(fd)) {
+		foreach(watch in fdTable[fd].inotify) {
+			os_close(watch.integer);
+		}
+
+		events_free_fd(fd);
+		return 0;
+	}
+
+	return TASK_ERRED;
+}
+
 int inotify_rm_watch(int fd, int wd) {
 	if (!sys_event.num_loops && events_valid_fd(wd))
 		return os_close(wd);
+
+	if (wd < 0)
+		return inotify_close(fd);
 
 	if (sys_event.num_loops > 0 && events_valid_fd(fd)) {
 		foreach(watch in fdTable[fd].inotify) {

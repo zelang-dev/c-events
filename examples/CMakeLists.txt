@@ -20,6 +20,7 @@ set(TARGET_LIST
 	spawn
  	waitgroup
 	inotify
+	events_watch
 )
 
 foreach (TARGET ${TARGET_LIST})

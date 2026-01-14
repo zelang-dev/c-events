@@ -170,6 +170,7 @@ C_API bool inotify_added(inotify_t *);
 C_API bool inotify_removed(inotify_t *);
 C_API bool inotify_modified(inotify_t *);
 C_API inotify_t *inotify_next(inotify_t *);
+C_API int inotify_close(int fd);
 
 /**
  * Set up the library for use.
