@@ -109,7 +109,6 @@ typedef struct addrinfo **__restrict__ addrinfo_t;
 extern "C" {
 #endif
 
-C_API int dirent_entries(const char *path);
 C_API int os_open(const char *path, int flags, mode_t mode);
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 C_API int inotify_init(void);

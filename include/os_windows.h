@@ -12,8 +12,15 @@
 #if !defined(__cplusplus)
 #	define __STDC__ 1
 #endif
+
 #include <windows.h>
-#include <wepoll.h>
+#include <compat/epoll.h>
+#include <compat/dirent.h>
+#include <compat/unistd.h>
+#include <compat/fcntl.h>
+#include <compat/sys/stat.h>
+#include <compat/sys/socket.h>
+#include <compat/ucontext.h>
 
 typedef SOCKET fds_t;
 typedef DWORD mode_t;
@@ -24,20 +31,6 @@ typedef pid_t process_t;
 typedef int socklen_t;
 typedef DWORD tls_emulate_t;
 
-#if defined(_MSC_VER)
-#	define S_IRUSR S_IREAD  /* read, user */
-#	define S_IWUSR S_IWRITE /* write, user */
-#	define S_IXUSR 0 /* execute, user */
-#	define S_IRGRP 0 /* read, group */
-#	define S_IWGRP 0 /* write, group */
-#	define S_IXGRP 0 /* execute, group */
-#	define S_IROTH 0 /* read, others */
-#	define S_IWOTH 0 /* write, others */
-#	define S_IXOTH 0 /* execute, others */
-#	define S_IRWXU 0
-#	define S_IRWXG 0
-#	define S_IRWXO 0
-#endif
 #ifdef _WIN32_PLATFORM_X86
 /* see TLS_MAXIMUM_AVAILABLE */
 #define EMULATED_THREADS_TSS_DTOR_SLOTS 1088
@@ -52,62 +45,8 @@ typedef void(__stdcall *emulate_dtor)(PVOID lpFlsData);
 /* Type used for the number of file descriptors. */
 typedef unsigned long int nfds_t;
 
-#	ifndef access
-#		define access 		_access
-#	endif
-#	ifndef dup
-#		define dup 			_dup
-#	endif
-#	ifndef dup2
-#		define dup2			_dup2
-#	endif
-#	ifndef ftruncate
-#		define ftruncate 	_chsize
-#	endif
-#	ifndef fsync
-#		define fsync 		_commit
-#	endif
-#	ifndef fileno
-#		define fileno 		_fileno
-#	endif
-#	ifndef getcwd
-#		define getcwd 		_getcwd
-#	endif
-#	ifndef chdir
-#		define chdir 		_chdir
-#	endif
-#	ifndef unlink
-#		define unlink 		_unlink
-#	endif
-#	ifndef isatty
-#		define isatty 		_isatty
-#	endif
-#	ifndef lseek
-#		define lseek 		_lseek
-#	endif
-#	ifndef realpath
-#		define realpath(a, b)	_fullpath((b), (a), FILENAME_MAX)
-#	endif
-#	ifndef lstat
-#ifdef _WIN64
-#		define  stat 		_stat64i32
-#		define  lstat(a,b) 	_stat64i32((const char *)(a), (struct stat*)(b))
-#else
-#		define  stat 		_stat32i64
-#		define  lstat(a,b) 	_stat32i64((const char *)(a), (struct stat*)(b))
-#endif
-#	endif
-#	ifndef mkdir
-#		define mkdir(a, b) 	_mkdir(a)
-#	endif
 #	ifndef pipe
 #		define pipe(fds) 	os_pipe(fds)
-#	endif
-#	ifndef O_NONBLOCK
-#		define O_NONBLOCK 	0x100000
-#	endif
-#	ifndef O_CLOEXEC
-#		define O_CLOEXEC 	0x200000
 #	endif
 #	ifndef O_ASYNC
 #		define O_ASYNC		0x500000  /* no delay */
@@ -117,30 +56,6 @@ typedef unsigned long int nfds_t;
 #	endif
 #	ifndef O_DIRECT
 #		define O_DIRECT		FILE_FLAG_WRITE_THROUGH | FILE_FLAG_NO_BUFFERING
-#	endif
-#	ifndef FD_CLOEXEC
-#		define FD_CLOEXEC 1
-#	endif
-#	ifndef ssize_t
-#		ifdef _WIN64
-#			define ssize_t __int64
-#		else
-#			define ssize_t long
-#		endif
-#	endif
-#	ifndef SHUT_RDWR
-#		define SHUT_RDWR SD_BOTH
-#	endif
-#	ifndef SHUT_RD
-#		define SHUT_RD   SD_RECEIVE
-#	endif
-#	ifndef SHUT_WR
-#		define SHUT_WR   SD_SEND
-#	endif
-#	if !defined(SOCK_NONBLOCK) || !defined(SOCK_CLOEXEC)
-#		define NEED_SOCKET_FLAGS
-#		define SOCK_CLOEXEC            0x8000  /* set FD_CLOEXEC */
-#		define SOCK_NONBLOCK           0x4000  /* set O_NONBLOCK */
 #	endif
 #ifdef __ANDROID__
 typedef uint16_t in_port_t;
@@ -172,28 +87,6 @@ typedef uint16_t in_port_t;
 		| FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE \
 		| FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_SECURITY)
 typedef FILE_NOTIFY_INFORMATION inotify_t;
-#   if defined(_X86_)
-#       define DUMMYARGS
-#   else
-#       define DUMMYARGS long dummy0, long dummy1, long dummy2, long dummy3,
-#   endif
-
-typedef struct ucontext_s ucontext_t;
-typedef struct __stack {
-	void *ss_sp;
-	size_t ss_size;
-	int ss_flags;
-} stack_t;
-
-typedef CONTEXT mcontext_t;
-typedef unsigned long __sigset_t;
-
-C_API int getcontext(ucontext_t *ucp);
-C_API int setcontext(const ucontext_t *ucp);
-C_API int makecontext(ucontext_t *, void (*)(), int, ...);
-C_API int swapcontext(ucontext_t *, const ucontext_t *);
-
-#include <process.h>
 #define __os_stdcall  __stdcall
 typedef HANDLE os_thread_t;
 typedef int (__os_stdcall *os_thread_proc)(void *);
@@ -203,14 +96,8 @@ struct os_cpumask {
 };
 typedef PADDRINFOA *addrinfo_t;
 typedef int id_t;
-#define write 	os_write
 
-#define R_OK    4
-#define W_OK    2
-#ifndef X_OK
-#	define X_OK    0
-#endif
-#define F_OK    0
+#define write 	os_write
 
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {

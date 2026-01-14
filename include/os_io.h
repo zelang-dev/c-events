@@ -86,45 +86,6 @@ will also indicate a tasks is valid, not freed. */
 #   define TASK_STACK_SIZE (8 * 1024)
 #endif
 
-/* Events task status states. */
-typedef enum {
-	TASK_ERRED = DATA_INVALID, /* The task has erred. */
-	TASK_DEAD, /* The coroutine is uninitialized or deleted. */
-	TASK_NORMAL,   /* The coroutine is active but not running (that is, it has switch to another coroutine, suspended). */
-	TASK_RUNNING,  /* The coroutine is active and running. */
-	TASK_SUSPENDED, /* The coroutine is suspended (in a startup, or it has not started running yet). */
-	TASK_SLEEPING, /* The coroutine is sleeping and scheduled to run later. */
-	TASK_FINISH, /* The coroutine has completed and returned. */
-	TASK_EVENT, /* The coroutine is in an Event Loop callback. */
-} task_states;
-
-typedef enum {
-	ASYNC_UDP = DATA_UDP,
-	ASYNC_TCP,
-	ASYNC_PIPE,
-	ASYNC_FILE,
-} async_types;
-
-typedef void (*exit_cb)(int exit_status, int term_signal);
-typedef void (*sigcall_t)(void);
-typedef struct coro_events_s coroutine_t;
-typedef struct events_task_s tasks_t;
-typedef struct execinfo_s execinfo_t;
-typedef struct _thread_worker os_worker_t;
-typedef struct _thread_tasks_worker os_tasks_t;
-
-#ifndef STDIN_FILENO
-#	define STDIN_FILENO  0
-#endif
-
-#ifndef STDOUT_FILENO
-#	define STDOUT_FILENO 1
-#endif
-
-#ifndef STDERR_FILENO
-#	define STDERR_FILENO 2
-#endif
-
 #ifndef MAXPATHLEN
 #	define MAXPATHLEN 1024
 #endif
@@ -323,6 +284,30 @@ typedef struct _thread_tasks_worker os_tasks_t;
 #endif
 #endif /* thrd_local */
 
+/* Events task status states. */
+typedef enum {
+	TASK_ERRED = DATA_INVALID, /* The task has erred. */
+	TASK_DEAD, /* The coroutine is uninitialized or deleted. */
+	TASK_NORMAL,   /* The coroutine is active but not running (that is, it has switch to another coroutine, suspended). */
+	TASK_RUNNING,  /* The coroutine is active and running. */
+	TASK_SUSPENDED, /* The coroutine is suspended (in a startup, or it has not started running yet). */
+	TASK_SLEEPING, /* The coroutine is sleeping and scheduled to run later. */
+	TASK_FINISH, /* The coroutine has completed and returned. */
+	TASK_EVENT, /* The coroutine is in an Event Loop callback. */
+} task_states;
+
+typedef enum {
+	ASYNC_UDP = DATA_UDP,
+	ASYNC_TCP,
+	ASYNC_PIPE,
+	ASYNC_FILE,
+} async_types;
+
+struct dirent_count {
+	unsigned long dirs;
+	unsigned long files;
+};
+
 typedef enum {
 	WATCH_INVALID = 0,
 	WATCH_ADDED = 1,
@@ -330,8 +315,15 @@ typedef enum {
 	WATCH_REMOVED = 2
 } events_monitors;
 
+typedef struct coro_events_s coroutine_t;
+typedef struct events_task_s tasks_t;
+typedef struct execinfo_s execinfo_t;
+typedef struct _thread_worker os_worker_t;
+typedef struct _thread_tasks_worker os_tasks_t;
+typedef void (*exit_cb)(int exit_status, int term_signal);
 typedef void (*watch_cb)(int, events_monitors, const char *);
 typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
+typedef void (*sigcall_t)(void);
 typedef exec_io_cb spawn_cb;
 
 #ifndef nil
@@ -574,6 +566,8 @@ C_API int fs_events(const char *path, watch_cb moniter);
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);
 C_API bool spawn_is_finish(execinfo_t *child);
+
+C_API struct dirent_count dirent_entries(const char *path, struct dirent_count counts);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

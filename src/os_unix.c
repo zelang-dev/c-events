@@ -215,7 +215,7 @@ int os_read(int fd, char *buf, size_t len) {
 		if (fdTable[fd].type == FD_MONITOR_ASYNC && ret > 0) {
 			inotify_t *event = (inotify_t *)buf;
 			event->udata = (void *)fdTable[event->ident].process->workdir;
-			fdTable[event->ident].offset = dirent_entries((const char *)event->udata);// ((sys_event.num_loops > 0) ? fs_dirent_entries((const char *)event->udata) : dirent_entries((const char *)event->udata);
+			fdTable[event->ident].offset = dirent_entries((const char *)event->udata).files;// ((sys_event.num_loops > 0) ? fs_dirent_entries((const char *)event->udata) : dirent_entries((const char *)event->udata);
 		}
 #else
 		ret = read(fdTable[fd].fd, buf, len);
@@ -764,25 +764,6 @@ EVENTS_INLINE int os_geterror(void) {
 	return errno;
 }
 
-int dirent_entries(const char *path) {
-	int count = 0;
-	DIR *dirp;
-	struct dirent *entry;
-
-	dirp = opendir(path);
-	if (dirp == null)
-		return TASK_ERRED;
-
-	while ((entry = readdir(dirp)) != NULL) {
-		if (entry->d_type == DT_REG || entry->d_type == DT_DIR) {
-			count++;
-		}
-	}
-	closedir(dirp);
-
-	return count;
-}
-
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 EVENTS_INLINE uint32_t inotify_mask(inotify_t *event) {
 	return event->fflags;
@@ -851,7 +832,7 @@ EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 		newfd = events_new_fd(FD_MONITOR_SYNC, wd, wd);
 		fdTable[newfd].process->workdir = name;
 		fdTable[newfd].flags = mask;
-		fdTable[newfd].dir_count = dirent_entries(name);// ((sys_event.num_loops > 0) ? fs_dirent_entries(name) : dirent_entries(name));
+		fdTable[newfd].dir_count = dirent_entries(name).files;// ((sys_event.num_loops > 0) ? fs_dirent_entries(name) : dirent_entries(name));
 		fdTable[fd].changes++;
 		fdTable[fd].flags = mask;
 		fdTable[fd].dir_count = fdTable[newfd].dir_count;
