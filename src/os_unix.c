@@ -764,25 +764,6 @@ EVENTS_INLINE int os_geterror(void) {
 	return errno;
 }
 
-int dirent_entries(const char *path) {
-	int count = 0;
-	DIR *dirp;
-	struct dirent *entry;
-
-	dirp = opendir(path);
-	if (dirp == null)
-		return TASK_ERRED;
-
-	while ((entry = readdir(dirp)) != NULL) {
-		if (entry->d_type == DT_REG || entry->d_type == DT_DIR) {
-			count++;
-		}
-	}
-	closedir(dirp);
-
-	return count;
-}
-
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 EVENTS_INLINE uint32_t inotify_mask(inotify_t *event) {
 	return event->fflags;

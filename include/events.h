@@ -27,7 +27,6 @@ typedef unsigned long __sigset_t;
 #include <stdio.h>
 #include <signal.h>
 #include <setjmp.h>
-#include <signal.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <time.h>
@@ -56,8 +55,6 @@ typedef unsigned long __sigset_t;
 #	endif
 #	include <WinSock2.h>
 #	include <ws2tcpip.h>
-#	include <io.h>
-#	include <direct.h>
 #else
 #	ifndef SYS_CONSOLE
 		/* O.S. platform ~input/output~ console `DEVICE`. */
