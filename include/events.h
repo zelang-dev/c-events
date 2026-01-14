@@ -93,7 +93,7 @@ typedef unsigned long __sigset_t;
 #endif
 
 #include <stdlib.h>
-#include <os_io.h>
+#include <threaded.h>
 
 #define EVENTS_READ 	1
 #define EVENTS_WRITE 	2
