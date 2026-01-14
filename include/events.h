@@ -192,6 +192,11 @@ C_API int events_add(events_t *loop, fds_t sfd, int events, int timeout_in_secs,
 /* Unregisters a file descriptor from event loop. */
 C_API int events_del(fds_t sfd);
 
+/* Registers a directory notification event on `path`, with handler argument to event loop.
+
+*/
+C_API int events_watch(events_t *loop, const char *path, watch_cb handler);
+
 /* Check if `fd` is registered. */
 C_API bool events_is_registered(events_t *loop, fds_t sfd);
 

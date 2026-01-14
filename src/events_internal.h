@@ -289,6 +289,7 @@ struct timerlist_s {
 struct events_loop_s {
 	/* read only */
 	events_id_t loop_id;
+	int inotify_fd;
 	size_t active_signals;
 	size_t active_descriptors;
 	size_t active_io;

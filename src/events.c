@@ -344,6 +344,18 @@ EVENTS_INLINE events_fd_t *events_target(int fd) {
 	return (events_fd_t *)atomic_load_explicit(&sys_event.fds, memory_order_relaxed) + fd;
 }
 
+EVENTS_INLINE int events_watch(events_t *loop, const char *name, watch_cb handler) {
+	if (loop->inotify_fd == DATA_INVALID)
+		if ((loop->inotify_fd = inotify_init()) < 0)
+			return -1;
+
+	int wd = inotify_add_watch(loop->inotify_fd, name, IN_ALL_EVENTS);
+	if (wd < 0)
+		return -1;
+
+	return events_add(loop, loop->inotify_fd, EVENTS_PATHWATCH, 0, (events_cb)handler, NULL);
+}
+
 EVENTS_INLINE int events_add(events_t *loop, fds_t sfd, int event, int timeout_in_secs,
 	events_cb callback, void *cb_arg) {
 	events_fd_t *target;
@@ -545,6 +557,7 @@ EVENTS_INLINE int events_id(events_t *loop) {
 
 int events_init_loop_internal(events_t *loop, int max_timeout) {
 	loop->loop_id = atomic_fetch_add(&sys_event.num_loops, 1) + 1;
+	loop->inotify_fd = DATA_INVALID;
 	loop->active_descriptors = 0;
 	loop->active_io = 0;
 	loop->active_timers = 0;
