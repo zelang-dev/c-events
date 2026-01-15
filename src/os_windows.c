@@ -53,7 +53,7 @@ struct FD_TABLE {
 	DWORD Errno;
 	unsigned long instance;
 	int status;
-	int offset;			/* only valid for async file writes */
+	intptr_t offset;			/* only valid for async file writes */
 	array_t inotify;	/* for watched directory handles */
 	LPDWORD offsetHighPtr;	/* pointers to offset high and low words */
 	LPDWORD offsetLowPtr;	/* only valid for async file writes (logs) */
@@ -445,6 +445,27 @@ int os_close(int fd) {
 	return ret;
 }
 
+static void *inotify_task(param_t args) {
+	int fd = args[0].integer;
+	events_t *loop = (events_t *)args[3].object;
+
+	inotify_handler(fd, (inotify_t *)args[1].object, (watch_cb)args[2].func);
+	memset(fdTable[fd].ovList, 0, sizeof(struct OVERLAPPED_REQUEST));
+	memset(fdTable[fd].buffer, 0, fdTable[fd].length);
+	if (events_is_registered(loop, fd)) {
+		ReadDirectoryChangesW((filefd_t)fdTable[fd].offset,
+			fdTable[fd].buffer,
+			fdTable[fd].length,
+			true,
+			fdTable[fd].status,
+			NULL,
+			&fdTable[fd].ovList->overlapped,
+			NULL);
+	}
+
+	return 0;
+}
+
 int os_iodispatch(int ms) {
 	size_t fd;
 	unsigned long bytes;
@@ -484,15 +505,11 @@ int os_iodispatch(int ms) {
 					(target->callback)((intptr_t)fdTable[fd].fid.value, bytes, pOv->data);
 					break;
 				case FD_MONITOR_ASYNC:
-					inotify_handler((int)fd, (inotify_t *)fdTable[fd].buffer, (watch_cb)target->callback);
+					//inotify_handler((int)fd, (inotify_t *)fdTable[fd].buffer, (watch_cb)target->callback);
+					async_task(inotify_task, 4, casting(fd), fdTable[fd].buffer, target->callback, target->loop);
 					break;
-					/*
-				case FD_MONITOR_SYNC:
-					inotify_handler((int)fd, (inotify_t *)fdTable[fdTable[fd].status].buffer, (watch_cb)target->callback);
-					break;
-					*/
 				default:
-					if (revents != 0 && target->is_iodispatch && target->loop_id != 0)
+					if (revents != 0 && !target->is_pathwatcher && target->is_iodispatch && target->loop_id != 0)
 						(target->callback)((target->backend_used ? fdTable[fd].fid.value : fd), revents, target->cb_arg);
 					break;
 			}
@@ -1543,17 +1560,20 @@ EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 	char filename[(ARRAY_SIZE * 2) + 1] = nil;
 	events_monitors action = WATCH_INVALID;
+	int mask = (WATCH_MODIFIED | WATCH_REMOVED | WATCH_ADDED | WATCH_MOVED);
 	switch (event->Action) {
 		case FILE_ACTION_ADDED:
-		case FILE_ACTION_RENAMED_NEW_NAME:
 			action = WATCH_ADDED;
 			break;
 		case FILE_ACTION_REMOVED:
-		case FILE_ACTION_RENAMED_OLD_NAME:
 			action = WATCH_REMOVED;
 			break;
 		case FILE_ACTION_MODIFIED:
 			action = WATCH_MODIFIED;
+			break;
+		case FILE_ACTION_RENAMED_NEW_NAME:
+		case FILE_ACTION_RENAMED_OLD_NAME:
+			action = WATCH_MOVED;
 			break;
 	}
 
@@ -1566,7 +1586,7 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 			(ARRAY_SIZE * 2),
 			NULL,
 			NULL);
-		handler(fd, action, (const char *)filename);
+		handler(fd, action | ~mask, (const char *)filename);
 	}
 }
 
@@ -1594,9 +1614,9 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 
 			r = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
 			$append_signed(fdTable[fd].inotify, r);
-			fdTable[r].instance = (unsigned long)fd;
 			fdTable[r].status = mask;
 			fdTable[fd].status = mask;
+			fdTable[fd].offset = (intptr_t)hDir;
 			return r;
 		} else if (hDir != INVALID && !sys_event.num_loops) {
 			int newfd = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);

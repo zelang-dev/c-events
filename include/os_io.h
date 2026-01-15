@@ -121,9 +121,10 @@ struct dirent_count {
 
 typedef enum {
 	WATCH_INVALID = 0,
-	WATCH_ADDED = 1,
-	WATCH_MODIFIED = 3,
-	WATCH_REMOVED = 2
+	WATCH_ADDED = 0x10000,
+	WATCH_MODIFIED = 0x4000,
+	WATCH_REMOVED = 0x400000,
+	WATCH_MOVED = 0x400
 } events_monitors;
 
 typedef struct coro_events_s coroutine_t;
