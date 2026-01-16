@@ -1599,8 +1599,8 @@ int inotify_del_monitor(int wd) {
 	return fdTable[wd].type == FD_MONITOR_SYNC ? inotify_rm_watch(fdTable[wd].offset, wd) : TASK_ERRED;
 }
 
-EVENTS_INLINE bool events_is_watching(int fd) {
-	return is_data(fdTable[fd].inotify) && $size(fdTable[fd].inotify) > 0;
+EVENTS_INLINE bool events_is_watching(int inotify) {
+	return is_data(fdTable[inotify].inotify) && $size(fdTable[inotify].inotify) > 0;
 }
 
 int inotify_add_watch(int fd, const char *name, uint32_t mask) {

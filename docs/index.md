@@ -55,7 +55,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Implement `go()`, `waitgroup()` and `waitfor()`, functions to *manage/create* **tasks** to run in coroutine *thread pool*. Same behavior as **goroutine**.
 * [x] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**. This includes additional functions `inotify_mask()`, `inotify_length()`, `inotify_name()`, `inotify_added()`, `inotify_removed()`, `inotify_modified()`, `inotify_next()` for simplified cross-platform access.
 * [x] Complete implementation of `inotify_add_watch()` for **macOS** aka **BSD** *platforms*.
-* [ ] Implement *event* `EVENTS_FILEWATCH`, `EVENTS_PATHWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
+* [x] Implement *event* `EVENTS_PATHWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
 * [ ] Implement `fs_events()` function, for fully automatic *setup* and *execution* for directory monitoring of **inotify** interface.
 * [ ] Completion of ALL OS *file system* function routines with matching **thread** ~async_fs_~ *version*.
 
@@ -205,6 +205,23 @@ C_API int events_add(events_t *loop, fds_t sfd, int events, int timeout_in_secs,
 
 /* Unregister a file descriptor from event loop. */
 C_API int events_del(fds_t sfd);
+
+/* Registers a directory notification event on `path`, with `handler` argument to event loop.
+- MUST call `events_remove()` in `handler` to stop/remove event on directory.
+- MUST call `events_del_watch()` to completely shutdown ALL `watch` notification events.
+- MUST call `events_is_watching()` to check if notifications are active.
+
+returns pseudo `inotify` descriptor. */
+C_API int events_watch(events_t *loop, const char *path, watch_cb handler);
+
+/* Unregister/shutdown `notification event`, and `ALL` ~watch~ directories from event loop. */
+C_API int events_del_watch(events_t *loop);
+
+/* Unregister `wd` ~watch~ directory from event loop. */
+C_API int events_remove(int wd);
+
+/* Check if `inotify` for any ~watch~ directory is still active/registered. */
+C_API bool events_is_watching(int inotify);
 
 /* Check if `fd` is registered. */
 C_API bool events_is_registered(events_t *loop, fds_t sfd);
