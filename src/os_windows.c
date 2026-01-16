@@ -53,6 +53,7 @@ struct FD_TABLE {
 	DWORD Errno;
 	unsigned long instance;
 	int status;
+	int flags;
 	intptr_t offset;			/* only valid for async file writes */
 	array_t inotify;	/* for watched directory handles */
 	LPDWORD offsetHighPtr;	/* pointers to offset high and low words */
@@ -194,6 +195,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].buffer = NULL;
 		fdTable[index].Errno = NO_ERROR;
 		fdTable[index].status = 0;
+		fdTable[index].flags = 0;
 		fdTable[index].offset = DATA_INVALID;
 		fdTable[index].offsetHighPtr = fdTable[index].offsetLowPtr = NULL;
 		fdTable[index].inotify = NULL;
@@ -340,7 +342,7 @@ int os_read(int fd, char *buf, size_t len) {
 	switch (fdTable[fd].type) {
 		case FD_MONITOR_ASYNC:
 			pseudofd = fdTable[fd].instance;
-			if (ReadDirectoryChangesW(fdTable[pseudofd].fid.fileHandle, buf, len, true, fdTable[pseudofd].status, &bytesRead, NULL, NULL))
+			if (ReadDirectoryChangesW(fdTable[pseudofd].fid.fileHandle, buf, len, true, fdTable[pseudofd].flags, &bytesRead, NULL, NULL))
 				ret = bytesRead;
 			else
 				fdTable[fd].Errno = GetLastError();
@@ -446,18 +448,16 @@ int os_close(int fd) {
 }
 
 static void *inotify_task(param_t args) {
-	int fd = args[0].integer;
+	int fd = args[0].integer, inotifyfd = fdTable[fd].offset;
 	events_t *loop = (events_t *)args[3].object;
 
 	inotify_handler(fd, (inotify_t *)args[1].object, (watch_cb)args[2].func);
-	memset(fdTable[fd].ovList, 0, sizeof(struct OVERLAPPED_REQUEST));
-	memset(fdTable[fd].buffer, 0, fdTable[fd].length);
 	if (events_is_registered(loop, fd)) {
-		ReadDirectoryChangesW((filefd_t)fdTable[fd].offset,
-			fdTable[fd].buffer,
-			fdTable[fd].length,
+		ReadDirectoryChangesW(fdTable[fd].fid.fileHandle,
+			fdTable[inotifyfd].buffer,
+			fdTable[inotifyfd].length,
 			true,
-			fdTable[fd].status,
+			fdTable[fd].flags,
 			NULL,
 			&fdTable[fd].ovList->overlapped,
 			NULL);
@@ -505,8 +505,9 @@ int os_iodispatch(int ms) {
 					(target->callback)((intptr_t)fdTable[fd].fid.value, bytes, pOv->data);
 					break;
 				case FD_MONITOR_ASYNC:
-					//inotify_handler((int)fd, (inotify_t *)fdTable[fd].buffer, (watch_cb)target->callback);
-					async_task(inotify_task, 4, casting(fd), fdTable[fd].buffer, target->callback, target->loop);
+				case FD_MONITOR_SYNC:
+					//inotify_handler((int)fd, (inotify_t *)fdTable[fdTable[fd].offset].buffer, (watch_cb)target->callback, target->loop);
+					async_task(inotify_task, 4, casting(fd), fdTable[fdTable[fd].offset].buffer, target->callback, target->loop);
 					break;
 				default:
 					if (revents != 0 && !target->is_pathwatcher && target->is_iodispatch && target->loop_id != 0)
@@ -1590,38 +1591,44 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 	}
 }
 
+EVENTS_INLINE int inotify_wd(int pseudo) {
+	return events_valid_fd(pseudo) && fdTable[pseudo].type == FD_MONITOR_ASYNC ? fdTable[pseudo].offset : pseudo;
+}
+
 int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	struct stat st;
 	if ((sys_event.num_loops > 0 ? !fs_stat(name, &st) : !stat(name, &st)) && (st.st_mode & S_IFMT) == S_IFDIR) {
 		// create a handle for a directory to look for
 		HANDLE hDir = CreateFileA(name, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
 			NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
-		if (hDir != INVALID && sys_event.num_loops > 0 && events_assign_fd(hDir, fd)) {
+		if (hDir != INVALID && sys_event.num_loops > 0) {
+			int newfd = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
 			if (fdTable[fd].buffer == NULL) {
 				fdTable[fd].length = 4096;
 				fdTable[fd].buffer = (char *)events_calloc(1, fdTable[fd].length);
 			}
 
-			int r = ReadDirectoryChangesW(hDir, fdTable[fd].buffer, fdTable[fd].length, true, mask, NULL,
-				&fdTable[fd].ovList->overlapped, NULL);
-			if (r == 1) {
-				SetLastError(ERROR_IO_PENDING);
-			} else if (GetLastError() != ERROR_IO_PENDING) {
-				CloseHandle(hDir);
-				inotify_close(fd);
-				return TASK_ERRED;
-			}
+			if (events_assign_fd(hDir, newfd)) {
+				int r = ReadDirectoryChangesW(hDir, fdTable[fd].buffer, fdTable[fd].length, true, mask, NULL,
+					&fdTable[newfd].ovList->overlapped, NULL);
+				if (r == 1) {
+					SetLastError(ERROR_IO_PENDING);
+				} else if (GetLastError() != ERROR_IO_PENDING) {
+					os_close(newfd);
+					return TASK_ERRED;
+				}
 
-			r = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
-			$append_signed(fdTable[fd].inotify, r);
-			fdTable[r].status = mask;
-			fdTable[fd].status = mask;
-			fdTable[fd].offset = (intptr_t)hDir;
-			return r;
+				fdTable[newfd].flags = mask;
+				fdTable[newfd].offset = fd;
+				$append_signed(fdTable[fd].inotify, newfd);
+				fdTable[fd].flags = mask;
+				fdTable[fd].offset = newfd;
+				return newfd;
+			}
 		} else if (hDir != INVALID && !sys_event.num_loops) {
 			int newfd = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
-			fdTable[newfd].status = mask;
-			fdTable[fd].status = mask;
+			fdTable[newfd].flags = mask;
+			fdTable[fd].flags = mask;
 			fdTable[fd].instance = (unsigned long)newfd;
 			return newfd;
 		} else {
