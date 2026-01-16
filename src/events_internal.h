@@ -521,6 +521,7 @@ void deque_free(events_deque_t *q);
 void deque_destroy(void);
 
 void inotify_handler(int fd, inotify_t *event, watch_cb handler);
+int inotify_del_monitor(int wd);
 
 #ifdef _WIN32
 DWORD __stdcall spawn_io_thread(void *arg);

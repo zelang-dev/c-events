@@ -197,6 +197,8 @@ C_API int events_del(fds_t sfd);
 */
 C_API int events_watch(events_t *loop, const char *path, watch_cb handler);
 C_API int events_del_watch(events_t *loop);
+C_API int events_remove(int wd);
+C_API bool events_is_watching(int fd);
 
 /* Check if `fd` is registered. */
 C_API bool events_is_registered(events_t *loop, fds_t sfd);

@@ -484,8 +484,8 @@ int os_iodispatch(int ms) {
 
 		assert((fd >= 0) && (fd < ioTableSize));
 
-		/* call callback if descriptor still valid */
-		if (pOv && pOv->instance == fdTable[fd].instance) {
+		/* still valid */
+		if (pOv) {
 			if (atomic_flag_load_explicit(&sys_event.loop_signaled, memory_order_relaxed)) {
 				events_signal_clear();
 				return 0;
@@ -1593,6 +1593,14 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 
 EVENTS_INLINE int inotify_wd(int pseudo) {
 	return events_valid_fd(pseudo) && fdTable[pseudo].type == FD_MONITOR_ASYNC ? fdTable[pseudo].offset : pseudo;
+}
+
+int inotify_del_monitor(int wd) {
+	return fdTable[wd].type == FD_MONITOR_SYNC ? inotify_rm_watch(fdTable[wd].offset, wd) : TASK_ERRED;
+}
+
+EVENTS_INLINE bool events_is_watching(int fd) {
+	return is_data(fdTable[fd].inotify) && $size(fdTable[fd].inotify) > 0;
 }
 
 int inotify_add_watch(int fd, const char *name, uint32_t mask) {

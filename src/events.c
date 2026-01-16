@@ -344,6 +344,13 @@ EVENTS_INLINE events_fd_t *events_target(int fd) {
 	return (events_fd_t *)atomic_load_explicit(&sys_event.fds, memory_order_relaxed) + fd;
 }
 
+EVENTS_INLINE int events_remove(int wd) {
+	if (!inotify_del_monitor(wd))
+		return events_del(wd);
+
+	return TASK_ERRED;
+}
+
 EVENTS_INLINE int events_del_watch(events_t *loop) {
 	int fd = loop->inotify_fd;
 	loop->inotify_fd = DATA_INVALID;
@@ -373,7 +380,8 @@ int events_add(events_t *loop, fds_t sfd, int event, int timeout_in_secs,
 	if (!EVENTS_IS_INITD_AND_FD_IN_RANGE(fd)) { return -1; }
 
 #ifdef _WIN32
-	target = events_target((event == EVENTS_PATHWATCH) ? inotify_wd(fd) : fd);
+	fd = (event == EVENTS_PATHWATCH) ? inotify_wd(fd) : fd;
+	target = events_target(fd);
 #else
 	target = events_target(fd);
 #endif

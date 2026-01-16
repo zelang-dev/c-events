@@ -10,7 +10,7 @@ void showfile(int fd, events_monitors events, const char *filename) {
 		printf("The file %s was modified."CLR_LN, filename);
 
 	if (events & WATCH_REMOVED)
-		events_del(fd);
+		events_remove(fd);
 }
 
 void *main_main(param_t args) {
@@ -25,7 +25,7 @@ void *main_main(param_t args) {
 	}
 
 	/* loop */
-	while (events_is_registered(loop, fd)) {
+	while (events_is_watching(fd)) {
 		tasks_info(active_task(), 1);
 		yield_task();
 	}
