@@ -355,13 +355,13 @@ EVENTS_INLINE int events_del_watch(events_t *loop) {
 	return inotify_close(fd);
 }
 
-EVENTS_INLINE int events_watch(events_t *loop, const char *name, watch_cb handler, void *args) {
+EVENTS_INLINE int events_watch(events_t *loop, const char *name, watch_cb handler, void *filter) {
 	if (loop->inotify_fd == DATA_INVALID)
 		if ((loop->inotify_fd = inotify_init1(IN_NONBLOCK)) < 0)
 			return -1;
 
 	if ((inotify_add_watch(loop->inotify_fd, name, IN_ALL_EVENTS) < 0)
-		|| (events_add(loop, loop->inotify_fd, EVENTS_PATHWATCH, 0, (events_cb)handler, args) < 0))
+		|| (events_add(loop, loop->inotify_fd, EVENTS_PATHWATCH, 0, (events_cb)handler, filter) < 0))
 		return -1;
 
 	return loop->inotify_fd;

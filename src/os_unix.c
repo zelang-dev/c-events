@@ -44,11 +44,9 @@ typedef struct {
 	char *buf;
 	int inUse;
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
-	struct kevent inotify[1]; /* for watched directory handles */
-#else
-	inotify_t *inotify; /* for watched directory handles */
+	inotify_t inotify[1]; /* for watched directory handles */
 #endif
-	array_t inotify_wd;
+	array_t inotify_wd; /* for watched directory handles */
 	execinfo_t process[1];
 } FD_TABLE;
 
@@ -318,9 +316,8 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].inotify->data = NULL;
 		fdTable[index].inotify->udata = NULL;
 		fdTable[index].inotify->ident = 0;
-#else
-		fdTable[index].inotify = NULL;
 #endif
+		fdTable[index].inotify_wd = NULL;
 		fdTable[index].inUse = 0;
 		fdTable[index].type = type;
 		fdTable[index].process->fd = index;
