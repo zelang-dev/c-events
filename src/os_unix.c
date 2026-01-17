@@ -802,13 +802,15 @@ EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 	return null;
 }
 
-void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
-	if (event->fflags & (IN_CREATE | IN_MOVED_TO)) {
-		handler(fd, WATCH_ADDED, (const char *)event->udata);
-	} else if (event->fflags & (IN_DELETE | IN_MOVED_FROM)) {
-		handler(fd, WATCH_REMOVED, (const char *)event->udata);
+void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
+	if (event->fflags & (IN_CREATE)) {
+		handler(fd, WATCH_ADDED, (const char *)event->udata, filter);
+	} else if (event->fflags & (IN_DELETE)) {
+		handler(fd, WATCH_REMOVED, (const char *)event->udata, filter);
 	} else if (event->fflags & IN_MODIFY) {
-		handler(fd, WATCH_MODIFIED, (const char *)event->udata);
+		handler(fd, WATCH_MODIFIED, (const char *)event->udata, filter);
+	} else if (event->fflags & IN_MOVE) {
+		handler(fd, WATCH_MOVED, (const char *)event->udata, filter);
 	}
 }
 
@@ -903,7 +905,7 @@ EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 	return null;
 }
 
-void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
+void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 	char buffer[Kb(8)] = {0};
 	int len = read(fd, buffer, sizeof(buffer));
 	if (len < 0)
@@ -915,9 +917,9 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 	while (p < buffer + len) {
 		inotify_t *evt = (inotify_t *)p;
 		if (evt->len) {
-			if (evt->mask & (IN_CREATE | IN_MOVED_TO))
+			if (evt->mask & (IN_CREATE))
 				action = WATCH_ADDED;
-			else if (evt->mask & (IN_DELETE | IN_DELETE_SELF | IN_MOVED_FROM))
+			else if (evt->mask & (IN_DELETE | IN_DELETE_SELF))
 				action = WATCH_REMOVED;
 			else if (evt->mask & (IN_MODIFY | IN_ATTRIB))
 				action = WATCH_MODIFIED;
@@ -925,7 +927,7 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 				action = WATCH_MOVED;
 
 			if (action)
-				handler(evt->wd, action | ~mask, (const char *)evt->name);
+				handler(evt->wd, action | ~mask, (const char *)evt->name, filter);
 		}
 		p += sizeof(inotify_t) + evt->len;
 	}
@@ -979,7 +981,7 @@ int inotify_close(int fd) {
 }
 
 EVENTS_INLINE int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
-	int wd = inotify_add_watch(events_get_fd(fd), name, mask);
+	int wd = inotify_add_watch(events_get_fd(fd), name, (sys_event.num_loops > 0 ? IN_ONLYDIR | mask : mask));
 	if (wd == -1)
 		return wd;
 
@@ -990,6 +992,7 @@ EVENTS_INLINE int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
 
 		$append_signed(fdTable[fd].inotify_wd, pseudo);
 		fdTable[pseudo].offset = fd;
+		fdTable[pseudo].process->workdir = name;
 	}
 
 	return pseudo;

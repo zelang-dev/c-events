@@ -520,7 +520,7 @@ void deque_push(events_deque_t *q, tasks_t *w);
 void deque_free(events_deque_t *q);
 void deque_destroy(void);
 
-void inotify_handler(int fd, inotify_t *event, watch_cb handler);
+void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter);
 int inotify_del_monitor(int wd);
 int inotify_close(int fd);
 

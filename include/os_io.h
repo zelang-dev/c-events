@@ -133,7 +133,7 @@ typedef struct execinfo_s execinfo_t;
 typedef struct _thread_worker os_worker_t;
 typedef struct _thread_tasks_worker os_tasks_t;
 typedef void (*exit_cb)(int exit_status, int term_signal);
-typedef void (*watch_cb)(int, events_monitors, const char *);
+typedef void (*watch_cb)(int wd, events_monitors mask, const char *namepath, void *filter);
 typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
 typedef void (*sigcall_t)(void);
 typedef exec_io_cb spawn_cb;

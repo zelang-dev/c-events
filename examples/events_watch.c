@@ -1,13 +1,17 @@
 
 #include <events.h>
 
-void showfile(int fd, events_monitors events, const char *filename) {
+void showfile(int fd, events_monitors events, const char *filename, void *filter) {
+	(void)filter;
+
 	if (events & WATCH_ADDED)
 		printf("The file %s was created."CLR_LN, filename);
 	else if (events & WATCH_REMOVED)
 		printf("The file %s was deleted."CLR_LN, filename);
 	else if (events & WATCH_MODIFIED)
 		printf("The file %s was modified."CLR_LN, filename);
+	else if (events & WATCH_MOVED)
+		printf("The file %s was moved."CLR_LN, filename);
 
 	if (events & WATCH_REMOVED)
 		events_remove(fd);
@@ -18,7 +22,7 @@ void *main_main(param_t args) {
 	events_t *loop = args[0].object;
 
 	/* add watch folder and action */
-	int fd = events_watch(loop, args[1].const_char_ptr, showfile);
+	int fd = events_watch(loop, args[1].const_char_ptr, showfile, null);
 	if (fd < 0) {
 		perror("events_watch failed");
 		return 0;

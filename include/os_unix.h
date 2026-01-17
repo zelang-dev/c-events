@@ -14,10 +14,11 @@
 #define	IN_ISDIR		0 /* event occurred against dir */
 #define IN_CREATE		NOTE_WRITE /* Subfile was created */
 #define IN_DELETE		NOTE_DELETE /* Subfile was deleted */
-#define IN_MODIFY 		NOTE_ATTRIB | NOTE_EXTEND | NOTE_REVOKE | NOTE_RENAME /* File was modified */
+#define IN_MODIFY 		NOTE_ATTRIB | NOTE_EXTEND | NOTE_REVOKE /* File was modified */
 #define IN_MOVED_FROM 	0 /* File was moved from X */
 #define IN_MOVED_TO		0 /* File was moved to Y */
 #define IN_MOVE			NOTE_RENAME /* moves */
+#define IN_NONBLOCK 	0
 
 /*
  * All of the events - we build the list by hand so that we can add flags in

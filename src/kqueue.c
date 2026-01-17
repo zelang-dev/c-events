@@ -203,7 +203,7 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 				revents &= EVENTS_CLOSED;
 
 			if (target->is_pathwatcher)
-				inotify_handler(event->ident, (inotify_t *)event, (watch_cb)target->callback);
+				inotify_handler(event->ident, (inotify_t *)event, (watch_cb)target->callback, target->cb_arg);
 			else
 				(*target->callback)(event->ident, revents, target->cb_arg);
 		}

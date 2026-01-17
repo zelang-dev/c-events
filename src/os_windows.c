@@ -451,7 +451,7 @@ static void *inotify_task(param_t args) {
 	int fd = args[0].integer, inotifyfd = fdTable[fd].offset;
 	events_t *loop = (events_t *)args[3].object;
 
-	inotify_handler(fd, (inotify_t *)args[1].object, (watch_cb)args[2].func);
+	inotify_handler(fd, (inotify_t *)args[1].object, (watch_cb)args[2].func, args[4].object);
 	if (events_is_registered(loop, fd)) {
 		ReadDirectoryChangesW(fdTable[fd].fid.fileHandle,
 			fdTable[inotifyfd].buffer,
@@ -507,7 +507,7 @@ int os_iodispatch(int ms) {
 				case FD_MONITOR_ASYNC:
 				case FD_MONITOR_SYNC:
 					//inotify_handler((int)fd, (inotify_t *)fdTable[fdTable[fd].offset].buffer, (watch_cb)target->callback, target->loop);
-					async_task(inotify_task, 4, casting(fd), fdTable[fdTable[fd].offset].buffer, target->callback, target->loop);
+					async_task(inotify_task, 5, casting(fd), fdTable[fdTable[fd].offset].buffer, target->callback, target->loop, target->cb_arg);
 					break;
 				default:
 					if (revents != 0 && !target->is_pathwatcher && target->is_iodispatch && target->loop_id != 0)
@@ -1558,7 +1558,7 @@ EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 	return null;
 }
 
-void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
+void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 	char filename[(ARRAY_SIZE * 2) + 1] = nil;
 	events_monitors action = WATCH_INVALID;
 	int mask = (WATCH_MODIFIED | WATCH_REMOVED | WATCH_ADDED | WATCH_MOVED);
@@ -1587,7 +1587,7 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 			(ARRAY_SIZE * 2),
 			NULL,
 			NULL);
-		handler(fd, action | ~mask, (const char *)filename);
+		handler(fd, action | ~mask, (const char *)filename, filter);
 	}
 }
 

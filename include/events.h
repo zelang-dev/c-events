@@ -188,13 +188,13 @@ C_API int events_add(events_t *loop, fds_t sfd, int events, int timeout_in_secs,
 /* Unregisters a file descriptor from event loop. */
 C_API int events_del(fds_t sfd);
 
-/* Registers a directory notification event on `path`, with `handler` argument to event loop.
+/* Registers a directory notification event on `path`, with `handler`, `filter` argument to event `loop`.
 - MUST call `events_remove()` in `handler` to stop/remove event on directory.
 - MUST call `events_del_watch()` to completely shutdown ALL `watch` notification events.
 - MUST call `events_is_watching()` to check if notifications are active.
 
 returns pseudo `inotify` descriptor. */
-C_API int events_watch(events_t *loop, const char *path, watch_cb handler);
+C_API int events_watch(events_t *loop, const char *path, watch_cb handler, void *filter);
 
 /* Unregister/shutdown `notification event`, and `ALL` ~watch~ directories from event loop. */
 C_API int events_del_watch(events_t *loop);

@@ -161,7 +161,7 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 				| ((event->events & EPOLLOUT) != 0 ? EVENTS_WRITE : 0)
 				| ((event->events & EPOLLHUP) != 0 ? EVENTS_CLOSED : 0);
 			if (target->is_pathwatcher) {
-				inotify_handler(event->data.fd, (inotify_t *)null, (watch_cb)target->callback);
+				inotify_handler(event->data.fd, (inotify_t *)null, (watch_cb)target->callback, target->cb_arg);
 			} else if (revents != 0) {
 				(*target->callback)(event->data.fd, revents, target->cb_arg);
 			}

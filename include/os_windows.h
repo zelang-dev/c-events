@@ -69,6 +69,7 @@ typedef uint16_t in_port_t;
 #define CLD_EXITED 		0
 #define EFD_CLOEXEC 	0
 #define EFD_NONBLOCK 	0
+#define IN_NONBLOCK 	0
 #define	IN_ISDIR		0 /* event occurred against dir */
 #define	IN_CREATE		FILE_NOTIFY_CHANGE_CREATION /* Subfile was created */
 #define IN_DELETE		FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME /* Subfile was deleted */
