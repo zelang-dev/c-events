@@ -1596,7 +1596,12 @@ EVENTS_INLINE int inotify_wd(int pseudo) {
 }
 
 int inotify_del_monitor(int wd) {
-	return fdTable[wd].type == FD_MONITOR_SYNC ? inotify_rm_watch(fdTable[wd].offset, wd) : TASK_ERRED;
+	if (fdTable[wd].type == FD_MONITOR_SYNC) {
+		inotify_rm_watch(fdTable[wd].offset, wd);
+		return events_del(wd);
+	}
+
+	return TASK_ERRED;
 }
 
 EVENTS_INLINE bool events_is_watching(int inotify) {

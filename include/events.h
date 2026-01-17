@@ -87,9 +87,6 @@ typedef unsigned long __sigset_t;
 #	else
 #   	include <sys/eventfd.h>
 #	endif
-#	if defined(_SYS_EPOLL_H)
-#		define epoll_close close
-#	endif
 #endif
 
 #include <threaded.h>

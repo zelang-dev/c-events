@@ -101,6 +101,7 @@ typedef cpu_set_t os_cpumask;
 #endif
 
 #define __os_stdcall
+#define epoll_close close
 typedef pthread_t os_thread_t;
 typedef int (__os_stdcall *os_thread_proc)(void *);
 typedef struct addrinfo **__restrict__ addrinfo_t;

@@ -345,10 +345,7 @@ EVENTS_INLINE events_fd_t *events_target(int fd) {
 }
 
 EVENTS_INLINE int events_remove(int wd) {
-	if (!inotify_del_monitor(wd))
-		return events_del(wd);
-
-	return TASK_ERRED;
+	return inotify_del_monitor(wd);
 }
 
 EVENTS_INLINE int events_del_watch(events_t *loop) {
@@ -360,7 +357,7 @@ EVENTS_INLINE int events_del_watch(events_t *loop) {
 
 EVENTS_INLINE int events_watch(events_t *loop, const char *name, watch_cb handler) {
 	if (loop->inotify_fd == DATA_INVALID)
-		if ((loop->inotify_fd = inotify_init()) < 0)
+		if ((loop->inotify_fd = inotify_init1(IN_NONBLOCK)) < 0)
 			return -1;
 
 	if ((inotify_add_watch(loop->inotify_fd, name, IN_ALL_EVENTS) < 0)
@@ -383,6 +380,7 @@ int events_add(events_t *loop, fds_t sfd, int event, int timeout_in_secs,
 	fd = (event == EVENTS_PATHWATCH) ? inotify_wd(fd) : fd;
 	target = events_target(fd);
 #else
+	fd = (event == EVENTS_PATHWATCH) ? events_get_fd(fd) : fd;
 	target = events_target(fd);
 #endif
 	if (event == EVENTS_SIGNAL) {

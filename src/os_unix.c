@@ -48,6 +48,7 @@ typedef struct {
 #else
 	inotify_t *inotify; /* for watched directory handles */
 #endif
+	array_t inotify_wd;
 	execinfo_t process[1];
 } FD_TABLE;
 
@@ -381,6 +382,11 @@ void events_free_fd(int pseudo) {
 			fdTable[pseudo].inUse = fdTable[pseudo].event_fd;
 		else if (fdTable[pseudo].type != FD_PIPE_ASYNC)
 			close(fdTable[pseudo].event_fd);
+
+		if (fdTable[pseudo].type == FD_MONITOR_ASYNC && fdTable[pseudo].inotify_wd != NULL) {
+			$delete(fdTable[pseudo].inotify_wd);
+			fdTable[pseudo].inotify_wd = NULL;
+		}
 
 		fdTable[pseudo].event_fd = TASK_ERRED;
 		if (fdTable[pseudo].path != NULL) {
@@ -904,16 +910,22 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 		return;
 
 	char *p = buffer;
+	events_monitors action = WATCH_INVALID;
+	int mask = (WATCH_MODIFIED | WATCH_REMOVED | WATCH_ADDED | WATCH_MOVED);
 	while (p < buffer + len) {
 		inotify_t *evt = (inotify_t *)p;
 		if (evt->len) {
-			if (evt->mask & (IN_CREATE | IN_MOVED_TO)) {
-				handler(fd, WATCH_ADDED, (const char *)evt->name);
-			} else if (evt->mask & (IN_DELETE | IN_MOVED_FROM)) {
-				handler(fd, WATCH_REMOVED, (const char *)evt->name);
-			} else if (evt->mask & IN_MODIFY) {
-				handler(fd, WATCH_MODIFIED, (const char *)evt->name);
-			}
+			if (evt->mask & (IN_CREATE | IN_MOVED_TO))
+				action = WATCH_ADDED;
+			else if (evt->mask & (IN_DELETE | IN_DELETE_SELF | IN_MOVED_FROM))
+				action = WATCH_REMOVED;
+			else if (evt->mask & (IN_MODIFY | IN_ATTRIB))
+				action = WATCH_MODIFIED;
+			else if (evt->mask & (IN_MOVE | IN_MOVE_SELF))
+				action = WATCH_MOVED;
+
+			if (action)
+				handler(fd, action | ~mask, (const char *)evt->name);
 		}
 		p += sizeof(inotify_t) + evt->len;
 	}
@@ -937,16 +949,67 @@ EVENTS_INLINE int __inotify_init1(int flags) {
 	return events_new_fd(FD_MONITOR_ASYNC, realfd, realfd);
 }
 
+int inotify_del_monitor(int wd) {
+	if (fdTable[wd].type == FD_MONITOR_SYNC) {
+		__inotify_rm_watch(fdTable[wd].offset, wd);
+		if ($size(fdTable[fdTable[wd].offset].inotify_wd) == 0)
+			return events_del(fdTable[wd].offset);
+
+		return 0;
+	}
+
+	return TASK_ERRED;
+}
+
+EVENTS_INLINE bool events_is_watching(int inotify) {
+	return is_data(fdTable[inotify].inotify_wd) && $size(fdTable[inotify].inotify_wd) > 0;
+}
+
+int inotify_close(int fd) {
+	if (events_valid_fd(fd)) {
+		foreach(watch in fdTable[fd].inotify_wd) {
+			$remove(fdTable[fd].inotify_wd, iwatch);
+		}
+
+		os_close(fd);
+		return 0;
+	}
+
+	return TASK_ERRED;
+}
+
 EVENTS_INLINE int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	int wd = inotify_add_watch(events_get_fd(fd), name, mask);
 	if (wd == -1)
 		return wd;
 
-	return events_new_fd(FD_MONITOR_SYNC, wd, wd);
+	int pseudo = events_new_fd(FD_MONITOR_SYNC, wd, wd);
+	if (sys_event.num_loops > 0) {
+		if (fdTable[fd].inotify_wd == NULL)
+			fdTable[fd].inotify_wd = array();
+
+		$append_signed(fdTable[fd].inotify_wd, pseudo);
+		fdTable[pseudo].offset = fd;
+	}
+
+	return pseudo;
 }
 
 EVENTS_INLINE int __inotify_rm_watch(int fd, int wd) {
 	int realFd = events_get_fd(fd), realWd = events_get_fd(wd);
+
+	if (wd < 0)
+		return inotify_close(fd);
+
+	if (sys_event.num_loops > 0 && events_valid_fd(wd)) {
+		foreach(watch in fdTable[fd].inotify_wd) {
+			if (watch.integer == wd) {
+				$remove(fdTable[fd].inotify_wd, iwatch);
+				break;
+			}
+		}
+	}
+
 	if (events_valid_fd(wd)) {
 		events_free_fd(wd);
 		fdTable[wd].type = FD_UNUSED;
