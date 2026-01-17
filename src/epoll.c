@@ -100,7 +100,7 @@ int events_update_internal(events_t *_loop, int fd, int event) {
 		return 0;
 	}
 
-	ev.events = ((event & EVENTS_READ) != 0 ? EPOLLIN : 0)
+	ev.events = ((event & EVENTS_READ || event == EVENTS_PATHWATCH) != 0 ? EPOLLIN : 0)
 		| ((event & EVENTS_WRITE) != 0 ? EPOLLOUT : 0);
 	ev.data.fd = fd;
 

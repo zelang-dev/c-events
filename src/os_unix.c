@@ -904,7 +904,7 @@ EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 }
 
 void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
-	char buffer[4096] = {0};
+	char buffer[Kb(8)] = {0};
 	int len = read(fd, buffer, sizeof(buffer));
 	if (len < 0)
 		return;
@@ -925,7 +925,7 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler) {
 				action = WATCH_MOVED;
 
 			if (action)
-				handler(fd, action | ~mask, (const char *)evt->name);
+				handler(evt->wd, action | ~mask, (const char *)evt->name);
 		}
 		p += sizeof(inotify_t) + evt->len;
 	}
