@@ -28,6 +28,8 @@ void *main_main(param_t args) {
 		return 0;
 	}
 
+	printf("\nNumber of directories beening watched recursively: %d\n", events_watch_count(fd));
+
 	/* loop */
 	while (events_is_watching(fd)) {
 		tasks_info(active_task(), 1);

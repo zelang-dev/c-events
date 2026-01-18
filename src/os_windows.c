@@ -1604,8 +1604,8 @@ int inotify_del_monitor(int wd) {
 	return TASK_ERRED;
 }
 
-EVENTS_INLINE bool events_is_watching(int inotify) {
-	return is_data(fdTable[inotify].inotify) && $size(fdTable[inotify].inotify) > 0;
+EVENTS_INLINE int events_watch_count(int inotify) {
+	return is_data(fdTable[inotify].inotify) ? $size(fdTable[inotify].inotify) : 0;
 }
 
 int inotify_add_watch(int fd, const char *name, uint32_t mask) {

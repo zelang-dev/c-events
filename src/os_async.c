@@ -545,7 +545,7 @@ EVENTS_INLINE bool spawn_is_finish(execinfo_t *child) {
  * path - relative pathname of a directory whose files should be counted
  * counts - pointer to struct containing file/dir counts
  */
-static void recursive_entries(const char *path, struct dirent_count *counts) {
+static void recursive_entries(const char *path, struct dirent_entry *counts) {
 	DIR *dir;                /* dir structure we are reading */
 	struct dirent *entry;      /* directory entry currently being processed */
 	char subpath[PATH_MAX * 16];  /* buffer for building complete subdir and file names */
@@ -571,7 +571,7 @@ static void recursive_entries(const char *path, struct dirent_count *counts) {
 	closedir(dir);
 }
 
-EVENTS_INLINE struct dirent_count dirent_entries(const char *path, struct dirent_count counts) {
+EVENTS_INLINE struct dirent_entry dirent_entries(const char *path, struct dirent_entry counts) {
 	counts.files = 0;
 	counts.dirs = 0;
 	recursive_entries(path, &counts);

@@ -223,6 +223,9 @@ C_API int events_remove(int wd);
 /* Check if `inotify` for any ~watch~ directory is still active/registered. */
 C_API bool events_is_watching(int inotify);
 
+/* Return `number` of directory ~watch~ `notification events` active/registered. */
+C_API int events_watch_count(int inotify);
+
 /* Check if `fd` is registered. */
 C_API bool events_is_registered(events_t *loop, fds_t sfd);
 
