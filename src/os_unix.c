@@ -831,6 +831,14 @@ EVENTS_INLINE int inotify_init1(int flags) {
 	return inotify_init();
 }
 
+EVENTS_INLINE int inotify_wd(int pseudo) {
+	return events_valid_fd(pseudo) && fdTable[pseudo].type == FD_MONITOR_ASYNC ? fdTable[pseudo].offset : pseudo;
+}
+
+EVENTS_INLINE int inotify_flags(int pseudo) {
+	return events_valid_fd(pseudo) && fdTable[pseudo].type == FD_MONITOR_SYNC ? fdTable[pseudo].flags : 0;
+}
+
 int inotify_del_monitor(int wd) {
 	if (fdTable[wd].type == FD_MONITOR_SYNC) {
 		inotify_rm_watch(fdTable[wd].offset, wd);
@@ -869,21 +877,27 @@ EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 			return wd;
 
 		newfd = events_new_fd(FD_MONITOR_SYNC, wd, wd);
-		if (fdTable[fd].inotify_wd == NULL)
-			fdTable[fd].inotify_wd = array();
-
-		$append_signed(fdTable[fd].inotify_wd, newfd);
-		fdTable[newfd].path = str_dup_ex(name);
 		fdTable[newfd].flags = mask;
 		fdTable[newfd].offset = fd;
-		fdTable[newfd].dir_count = dirent_entries(name, counts).files;// ((sys_event.num_loops > 0) ? fs_dirent_entries(name) : dirent_entries(name));
-		fdTable[fd].changes++;
 		fdTable[fd].flags = mask;
-		fdTable[fd].dir_count = fdTable[newfd].dir_count;
-		EV_SET(fdTable[fd].inotify, wd, EVFILT_VNODE, EV_ADD | EV_ENABLE, mask, 0, 0);
-		if (kevent(fdTable[fd].fd, fdTable[fd].inotify, 1, NULL, 0, NULL) == -1) {
-			os_close(newfd);
-			return TASK_ERRED;
+		fdTable[fd].offset = newfd;
+		if (!sys_event.num_loops) {
+			fdTable[newfd].process->workdir = name;
+			fdTable[newfd].dir_count = dirent_entries(name, counts).files;
+			fdTable[fd].changes++;
+			fdTable[fd].dir_count = fdTable[newfd].dir_count;
+			EV_SET(fdTable[fd].inotify, wd, EVFILT_VNODE, EV_ADD | EV_ENABLE, mask, 0, (void *)fdTable[newfd].process->workdir);
+			if (kevent(fdTable[fd].fd, fdTable[fd].inotify, 1, NULL, 0, NULL) == -1) {
+				os_close(newfd);
+				return TASK_ERRED;
+			}
+		} else if (sys_event.num_loops > 0) {
+			if (fdTable[fd].inotify_wd == NULL)
+				fdTable[fd].inotify_wd = array();
+
+			$append_signed(fdTable[fd].inotify_wd, newfd);
+			fdTable[newfd].path = str_dup_ex(name);
+			// ((sys_event.num_loops > 0) ? fs_dirent_entries(name) : dirent_entries(name));
 		}
 
 		return newfd;
@@ -893,11 +907,13 @@ EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 }
 
 EVENTS_INLINE int inotify_rm_watch(int fd, int wd) {
-	if (events_valid_fd(wd)) {
-		EV_SET(fdTable[fd].inotify, fdTable[wd].fd, EVFILT_VNODE, EV_DELETE, fdTable[wd].offset, 0, 0);
+	if (!sys_event.num_loops && events_valid_fd(wd)) {
+		EV_SET(fdTable[fd].inotify, fdTable[wd].fd, EVFILT_VNODE, EV_DELETE, fdTable[wd].flags, 0, 0);
 		kevent(fdTable[fd].fd, fdTable[fd].inotify, 1, NULL, 0, NULL);
-		fdTable[fd].offset--;
+		fdTable[fd].changes--;
 		return os_close(wd);
+	} else if (sys_event.num_loops > 0) {
+
 	}
 
 	return TASK_ERRED;

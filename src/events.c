@@ -380,13 +380,12 @@ int events_add(events_t *loop, fds_t sfd, int event, int timeout_in_secs,
 
 	if (!EVENTS_IS_INITD_AND_FD_IN_RANGE(fd)) { return -1; }
 
-#ifdef _WIN32
+#if _WIN32 || __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 	fd = (event == EVENTS_PATHWATCH) ? inotify_wd(fd) : fd;
-	target = events_target(fd);
 #else
 	fd = (event == EVENTS_PATHWATCH) ? events_get_fd(fd) : fd;
-	target = events_target(fd);
 #endif
+	target = events_target(fd);
 	if (event == EVENTS_SIGNAL) {
 		if ((sig_idx = events_add_signal(fd, callback, cb_arg)) >= 0) {
 			loop->signal_handlers = events_signals();

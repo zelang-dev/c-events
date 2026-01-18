@@ -47,24 +47,26 @@ typedef struct events_kqueue_s {
 } events_kqueue;
 
 static int apply_pending_changes(events_kqueue *loop, int apply_all) {
-#define SET(op, events)						\
+#define SET(op, events, mask)						\
   EV_SET(loop->changelist + cl_off++, loop->changed_fds,	\
-	 (((events) & EVENTS_READ) != 0 ? EVFILT_READ : 0)		\
+	 (((events) & EVENTS_PATHWATCH) != 0 ? EVFILT_VNODE : 0)	\
+	 | (((events) & EVENTS_READ) != 0 ? EVFILT_READ : 0)		\
 	 | (((events) & EVENTS_WRITE) != 0 ? EVFILT_WRITE : 0)	\
 	 | (((events) & EVENTS_CLOSED) != 0 ? EVFILT_READ : 0),		\
-	 (op), 0, 0, NULL)
+	 (op), (mask), 0, NULL)
 
 	int cl_off = 0, nevents;
 
 	while (loop->changed_fds != -1) {
 		events_fd_t *changed = events_target(loop->changed_fds);
+		int mask = inotify_flags(loop->changed_fds);
 		int old_events = BACKEND_GET_OLD_EVENTS(changed->_backend);
 		if (changed->events != old_events) {
 			if (old_events != 0) {
-				SET(EV_DISABLE, old_events);
+				SET(EV_DISABLE, old_events, mask);
 			}
 			if (changed->events != 0) {
-				SET(EV_ADD | EV_ENABLE, changed->events);
+				SET(EV_ADD | EV_ENABLE, changed->events, mask);
 			}
 			if ((size_t)cl_off + 1
 				>= sizeof(loop->changelist) / sizeof(loop->changelist[0])) {
