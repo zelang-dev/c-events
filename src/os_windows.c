@@ -320,7 +320,7 @@ EVENTS_INLINE int is_socket(int fd) {
 }
 
 EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) {
-	if (sys_event.num_loops == 0 || !events_valid_fd(s))
+	if (atomic_load(&sys_event.num_loops) == 0 || !events_valid_fd(s))
 		return connect(s, name, namelen);
 
 	return os_accept_pipe(s);
@@ -329,7 +329,7 @@ EVENTS_INLINE int os_connect(fds_t s, const struct sockaddr *name, int namelen) 
 int os_read(int fd, char *buf, size_t len) {
 	int pseudofd, ret = TASK_ERRED;
 	DWORD bytesRead;
-	if (sys_event.num_loops == 0 || fdTable[fd].type == FD_UNUSED || is_socket(fd)) {
+	if (atomic_load(&sys_event.num_loops) == 0 || fdTable[fd].type == FD_UNUSED || is_socket(fd)) {
 		if (is_socket(fd)) {
 			if ((ret = recv(fd, buf, len, 0)) == SOCKET_ERROR)
 				os_geterror();
@@ -378,7 +378,7 @@ int os_read(int fd, char *buf, size_t len) {
 int os_write(int fd, char *buf, size_t len) {
 	int ret = -1;
 	DWORD bytesWritten;
-	if (sys_event.num_loops == 0 || fdTable[fd].type == FD_UNUSED || is_socket(fd)) {
+	if (atomic_load(&sys_event.num_loops) == 0 || fdTable[fd].type == FD_UNUSED || is_socket(fd)) {
 		if (is_socket(fd)) {
 			if ((ret = send(fd, buf, len, 0)) == SOCKET_ERROR)
 				os_geterror();
@@ -410,7 +410,7 @@ int os_close(int fd) {
 	int ret = 0;
 	if (fd == -1) return 0;
 
-	if (sys_event.num_loops == 0 || !events_valid_fd(fd)) {
+	if (atomic_load(&sys_event.num_loops) == 0 || !events_valid_fd(fd)) {
 		if (is_socket(fd)) {
 			if ((ret = closesocket(fd)) == SOCKET_ERROR)
 				os_geterror();
@@ -531,7 +531,7 @@ int os_iodispatch(int ms) {
 
 static int os_accept_pipe(int fd) {
 	int ipcFd = -1;
-	if (!ConnectNamedPipe(fdTable[fd].fid.fileHandle, (sys_event.num_loops > 0 ? (LPOVERLAPPED)fdTable[fd].ovList : NULL))) {
+	if (!ConnectNamedPipe(fdTable[fd].fid.fileHandle, (atomic_load(&sys_event.num_loops) > 0 ? (LPOVERLAPPED)fdTable[fd].ovList : NULL))) {
 		switch (GetLastError()) {
 			case ERROR_PIPE_CONNECTED:
 				// A client connected after CreateNamedPipe but
@@ -1612,11 +1612,11 @@ EVENTS_INLINE int events_watch_count(int inotify) {
 
 int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	struct stat st;
-	if ((sys_event.num_loops > 0 ? !fs_stat(name, &st) : !stat(name, &st)) && (st.st_mode & S_IFMT) == S_IFDIR) {
+	if ((atomic_load(&sys_event.num_loops) > 0 ? !fs_stat(name, &st) : !stat(name, &st)) && (st.st_mode & S_IFMT) == S_IFDIR) {
 		// create a handle for a directory to look for
 		HANDLE hDir = CreateFileA(name, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
 			NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
-		if (hDir != INVALID && sys_event.num_loops > 0) {
+		if (hDir != INVALID && atomic_load(&sys_event.num_loops) > 0) {
 			int newfd = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
 			if (fdTable[fd].buffer == NULL) {
 				fdTable[fd].length = 4096;
@@ -1640,7 +1640,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				fdTable[fd]._fd = newfd;
 				return newfd;
 			}
-		} else if (hDir != INVALID && !sys_event.num_loops) {
+		} else if (hDir != INVALID && !atomic_load(&sys_event.num_loops)) {
 			int newfd = events_new_fd(FD_MONITOR_SYNC, (intptr_t)hDir, -1);
 			fdTable[newfd].flags = mask;
 			fdTable[fd].flags = mask;
@@ -1671,10 +1671,10 @@ int inotify_rm_watch(int fd, int wd) {
 	if (wd < 0)
 		return inotify_close(fd);
 
-	if (!sys_event.num_loops && events_valid_fd(wd))
+	if (!atomic_load(&sys_event.num_loops) && events_valid_fd(wd))
 		return os_close(wd);
 
-	if (sys_event.num_loops > 0 && events_valid_fd(fd)) {
+	if (atomic_load(&sys_event.num_loops) > 0 && events_valid_fd(fd)) {
 		foreach(watch in fdTable[fd].inotify) {
 			if (watch.integer == wd) {
 				$remove(fdTable[fd].inotify, iwatch);
