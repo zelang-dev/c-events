@@ -54,6 +54,7 @@ struct FD_TABLE {
 	unsigned long instance;
 	int status;
 	int flags;
+	intptr_t _fd;
 	intptr_t offset;			/* only valid for async file writes */
 	array_t inotify;	/* for watched directory handles */
 	LPDWORD offsetHighPtr;	/* pointers to offset high and low words */
@@ -190,6 +191,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 
 	if (index != -1) {
 		fdTable[index].fid.value = fd;
+		fdTable[index]._fd = 0;
 		fdTable[index].type = type;
 		fdTable[index].path = NULL;
 		fdTable[index].buffer = NULL;
@@ -448,7 +450,7 @@ int os_close(int fd) {
 }
 
 static void *inotify_task(param_t args) {
-	int fd = args[0].integer, inotifyfd = fdTable[fd].offset;
+	int fd = args[0].integer, inotifyfd = fdTable[fd]._fd;
 	events_t *loop = (events_t *)args[3].object;
 
 	inotify_handler(fd, (inotify_t *)args[1].object, (watch_cb)args[2].func, args[4].object);
@@ -506,8 +508,8 @@ int os_iodispatch(int ms) {
 					break;
 				case FD_MONITOR_ASYNC:
 				case FD_MONITOR_SYNC:
-					//inotify_handler((int)fd, (inotify_t *)fdTable[fdTable[fd].offset].buffer, (watch_cb)target->callback, target->loop);
-					async_task(inotify_task, 5, casting(fd), fdTable[fdTable[fd].offset].buffer, target->callback, target->loop, target->cb_arg);
+					//inotify_handler((int)fd, (inotify_t *)fdTable[fdTable[fd]._fd].buffer, (watch_cb)target->callback, target->loop);
+					async_task(inotify_task, 5, casting(fd), fdTable[fdTable[fd]._fd].buffer, target->callback, target->loop, target->cb_arg);
 					break;
 				default:
 					if (revents != 0 && !target->is_pathwatcher && target->is_iodispatch && target->loop_id != 0)
@@ -1592,12 +1594,12 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 }
 
 EVENTS_INLINE int inotify_wd(int pseudo) {
-	return events_valid_fd(pseudo) && fdTable[pseudo].type == FD_MONITOR_ASYNC ? fdTable[pseudo].offset : pseudo;
+	return events_valid_fd(pseudo) && fdTable[pseudo].type == FD_MONITOR_ASYNC ? fdTable[pseudo]._fd : pseudo;
 }
 
 int inotify_del_monitor(int wd) {
 	if (fdTable[wd].type == FD_MONITOR_SYNC) {
-		inotify_rm_watch(fdTable[wd].offset, wd);
+		inotify_rm_watch(fdTable[wd]._fd, wd);
 		return events_del(wd);
 	}
 
@@ -1632,10 +1634,10 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				}
 
 				fdTable[newfd].flags = mask;
-				fdTable[newfd].offset = fd;
+				fdTable[newfd]._fd = fd;
 				$append_signed(fdTable[fd].inotify, newfd);
 				fdTable[fd].flags = mask;
-				fdTable[fd].offset = newfd;
+				fdTable[fd]._fd = newfd;
 				return newfd;
 			}
 		} else if (hDir != INVALID && !sys_event.num_loops) {
@@ -1666,11 +1668,11 @@ int inotify_close(int fd) {
 }
 
 int inotify_rm_watch(int fd, int wd) {
-	if (!sys_event.num_loops && events_valid_fd(wd))
-		return os_close(wd);
-
 	if (wd < 0)
 		return inotify_close(fd);
+
+	if (!sys_event.num_loops && events_valid_fd(wd))
+		return os_close(wd);
 
 	if (sys_event.num_loops > 0 && events_valid_fd(fd)) {
 		foreach(watch in fdTable[fd].inotify) {

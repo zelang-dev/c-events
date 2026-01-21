@@ -54,6 +54,7 @@ typedef enum {
 	DATA_TCP,
 	DATA_PIPE,
 	DATA_FILE,
+	DATA_WATCH,
 	DATA_MAXCOUNTER,
 } data_types;
 

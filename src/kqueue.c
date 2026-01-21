@@ -47,13 +47,13 @@ typedef struct events_kqueue_s {
 } events_kqueue;
 
 static int apply_pending_changes(events_kqueue *loop, int apply_all) {
-#define SET(op, events, mask)						\
+#define SET(op, events, mask, data)						\
   EV_SET(loop->changelist + cl_off++, loop->changed_fds,	\
 	 (((events) & EVENTS_PATHWATCH) != 0 ? EVFILT_VNODE : 0)	\
 	 | (((events) & EVENTS_READ) != 0 ? EVFILT_READ : 0)		\
 	 | (((events) & EVENTS_WRITE) != 0 ? EVFILT_WRITE : 0)	\
 	 | (((events) & EVENTS_CLOSED) != 0 ? EVFILT_READ : 0),		\
-	 (op), (mask), 0, NULL)
+	 (op), (mask), 0, (data))
 
 	int cl_off = 0, nevents;
 
@@ -61,12 +61,13 @@ static int apply_pending_changes(events_kqueue *loop, int apply_all) {
 		events_fd_t *changed = events_target(loop->changed_fds);
 		int mask = inotify_flags(loop->changed_fds);
 		int old_events = BACKEND_GET_OLD_EVENTS(changed->_backend);
+		void *data = inotify_data(loop->changed_fds);
 		if (changed->events != old_events) {
 			if (old_events != 0) {
-				SET(EV_DISABLE, old_events, mask);
+				SET(EV_DISABLE, old_events, mask, null);
 			}
 			if (changed->events != 0) {
-				SET(EV_ADD | EV_ENABLE, changed->events, mask);
+				SET(EV_ADD | EV_ENABLE, changed->events, mask, data);
 			}
 			if ((size_t)cl_off + 1
 				>= sizeof(loop->changelist) / sizeof(loop->changelist[0])) {
@@ -186,6 +187,12 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 		events_fd_t *target = events_target(event->ident);
 		assert((event->flags & EV_ERROR) == 0); /* changelist errors are fatal */
 		if (loop->loop.loop_id == target->loop_id
+			&& (target->is_pathwatcher || event->filter == EVFILT_VNODE)) {
+			watch_dir_t *dir = (watch_dir_t *)event->udata;
+			const char *name = (const char *)dir->path;
+			inotify_update(name, dir, event);
+			inotify_handler(event->ident, (inotify_t *)event, (watch_cb)target->callback, target->cb_arg);
+		} else if (loop->loop.loop_id == target->loop_id
 			&& (event->filter & (EVFILT_READ | EVFILT_WRITE)) != 0) {
 			int revents;
 			switch (event->filter) {
@@ -204,10 +211,7 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 			if (event->flags & EV_EOF)
 				revents &= EVENTS_CLOSED;
 
-			if (target->is_pathwatcher)
-				inotify_handler(event->ident, (inotify_t *)event, (watch_cb)target->callback, target->cb_arg);
-			else
-				(*target->callback)(event->ident, revents, target->cb_arg);
+			(*target->callback)(event->ident, revents, target->cb_arg);
 		}
 	}
 

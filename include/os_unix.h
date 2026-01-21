@@ -41,6 +41,21 @@
  */
 typedef struct kevent inotify_t;
 
+typedef struct {
+	size_t bytes;	/* Size of file, in bytes. */
+	size_t mtime;	/* Time of last modification. */
+	size_t ctime;	/* Time of last status change. */
+	char filename[NAME_MAX];
+} dirent_entry;
+
+typedef struct {
+	data_types type;
+	char path[PATH_MAX];
+	int fd;
+	unsigned long dirs;
+	array_t files;
+} watch_dir_t;
+
 #if __APPLE__ && __MACH__
 #   include <sys/ucontext.h>
 #endif
@@ -113,8 +128,6 @@ extern "C" {
 
 C_API int os_open(const char *path, int flags, mode_t mode);
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
-C_API int inotify_wd(int pseudo);
-C_API int inotify_flags(int pseudo);
 C_API int inotify_init(void);
 C_API int inotify_init1(int flags);
 C_API int inotify_add_watch(int fd, const char *name, uint32_t mask);

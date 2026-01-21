@@ -524,7 +524,16 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter);
 int inotify_del_monitor(int wd);
 int inotify_close(int fd);
 
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
+int inotify_wd(int pseudo);
+int inotify_flags(int pseudo);
+void inotify_update(const char *path, watch_dir_t *dir, inotify_t *event);
+void *inotify_data(int pseudo);
+void watch_free(watch_dir_t *dir);
+#endif
+
 #ifdef _WIN32
+int inotify_wd(int pseudo);
 DWORD __stdcall spawn_io_thread(void *arg);
 #endif
 

@@ -114,15 +114,6 @@ typedef enum {
 	ASYNC_FILE,
 } async_types;
 
-struct dirent_entry {
-	unsigned long dirs;
-	unsigned long files;
-	size_t size;	/* Size of file, in bytes.  */
-	size_t mtime;	/* Time of last modification.  */
-	size_t ctime;	/* Time of last status change.  */
-	char path[NAME_MAX];
-};
-
 typedef enum {
 	WATCH_INVALID = 0,
 	WATCH_ADDED = 0x10000,
@@ -353,8 +344,6 @@ C_API int fs_events(const char *path, watch_cb moniter);
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);
 C_API bool spawn_is_finish(execinfo_t *child);
-
-C_API struct dirent_entry dirent_entries(const char *path, struct dirent_entry counts);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

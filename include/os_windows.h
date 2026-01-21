@@ -115,7 +115,6 @@ C_API ssize_t pwrite(int d, const void *buf, size_t nbytes, off_t offset);
 C_API ssize_t sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
 C_API int pipe2(int fildes[2], int flags);
 
-C_API int inotify_wd(int pseudo);
 C_API int inotify_init(void);
 C_API int inotify_init1(int flags);
 C_API int inotify_add_watch(int fd, const char *name, uint32_t mask);
