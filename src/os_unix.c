@@ -205,11 +205,12 @@ EVENTS_INLINE int os_open(const char *path, int flags, mode_t mode) {
 }
 
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
-void inotify_update(const char *path, watch_dir_t *watched, inotify_t *event) {
+void inotify_update(const char *path, watch_dir_t *watched,
+	inotify_t *event, char *subpath, size_t path_max) {
 	int fd = event->ident;
 	DIR *dir;				/* dir structure we are reading */
 	struct dirent *entry;	/* directory entry currently being processed */
-	char subpath[PATH_MAX];	/* buffer for building complete subdir and file names */
+	struct stat st;
 	size_t i, index = 0;
 	size_t index_max = $size(watched->files);
 	array_t old_files = watched->files;
@@ -223,10 +224,9 @@ void inotify_update(const char *path, watch_dir_t *watched, inotify_t *event) {
 		if (entry->d_type == DT_DIR) {
 			continue;
 		} else if (entry->d_type == DT_REG) {
-			struct stat st;
 			dirent_entry *file = (dirent_entry *)old_files[index++].object;
 			if (str_is(file->filename, entry->d_name)) {
-				snprintf(subpath, PATH_MAX, "%s%s%s", path, SYS_DIRSEP, file->filename);
+				snprintf(subpath, path_max, "%s%s%s", path, SYS_DIRSEP, file->filename);
 				if (!stat(subpath, &st)
 					&& (st.st_size != file->bytes || st.st_ctime != file->ctime || st.st_mtime != file->mtime)) {
 					file->bytes = st.st_size;
@@ -251,8 +251,8 @@ void inotify_update(const char *path, watch_dir_t *watched, inotify_t *event) {
 					}
 				}
 
-				snprintf(subpath, PATH_MAX, "%s%s%s", path, SYS_DIRSEP, file->filename);
-				if (!stat(subpath, &st)) {
+				snprintf(subpath, path_max, "%s%s%s", path, SYS_DIRSEP, file->filename);
+				if (stat(subpath, &st)) {
 					fdTable[fd].inUse = fd;
 					fdTable[fd].path = str_dup_ex((const char *)subpath);
 					events_free((void *)file);
@@ -261,7 +261,7 @@ void inotify_update(const char *path, watch_dir_t *watched, inotify_t *event) {
 				}
 
 				if (is_addably) {
-					snprintf(subpath, PATH_MAX, "%s%s%s", path, SYS_DIRSEP, entry->d_name);
+					snprintf(subpath, path_max, "%s%s%s", path, SYS_DIRSEP, entry->d_name);
 					if (!stat(subpath, &st)) {
 						file = (dirent_entry *)events_calloc(1, sizeof(dirent_entry));
 						file->bytes = st.st_size;
@@ -283,6 +283,21 @@ void inotify_update(const char *path, watch_dir_t *watched, inotify_t *event) {
 		fdTable[fd].path = null;
 	} else {
 		event->udata = (void *)fdTable[fd].process->workdir;
+		if (event->udata == null) {
+			for (i = 0; i < index_max; i++) {
+				snprintf(subpath, path_max, "%s%s%s", path, SYS_DIRSEP, ((dirent_entry *)old_files[i].object)->filename);
+				if (stat(subpath, &st)) {
+					fdTable[fd].path = str_dup_ex((const char *)subpath);
+					void *mem = old_files[i].object;
+					$remove(watched->files, i);
+					events_free(mem);
+					fdTable[fd].offset = $size(watched->files);
+					event->udata = (void *)fdTable[fd].path;
+					break;
+				}
+			}
+		}
+
 		fdTable[fd].process->workdir = NULL;
 	}
 
@@ -290,7 +305,8 @@ void inotify_update(const char *path, watch_dir_t *watched, inotify_t *event) {
 }
 
 static EVENTS_INLINE void *_inotify_update(param_t args) {
-	inotify_update(args[0].const_char_ptr,(watch_dir_t *)args[1].object, (inotify_t *)args[2].object);
+	inotify_update(args[0].const_char_ptr, (watch_dir_t *)args[1].object, (inotify_t *)args[2].object,
+		args[3].char_ptr, args[4].max_size);
 	return 0;
 }
 #endif
@@ -305,10 +321,11 @@ int os_read(int fd, char *buf, size_t len) {
 			ret = read(fdTable[fd].fd, buf, len);
 
 		if (fdTable[fd].type == FD_MONITOR_ASYNC && ret > 0) {
+			char subpath[PATH_MAX];
 			inotify_t *event = (inotify_t *)buf;
 			watch_dir_t *dir = (watch_dir_t *)event->udata;
 			const char *name = (const char *)dir->path;
-			inotify_update(name, dir, event);
+			inotify_update(name, dir, event, subpath, PATH_MAX);
 		}
 #else
 		ret = read(fdTable[fd].fd, buf, len);
@@ -331,7 +348,7 @@ EVENTS_INLINE int os_close(int fd) {
 
 	r = close(events_get_fd(fd));
 	if (can_clear) {
-		fdTable[fd].type = FD_UNUSED;
+		fdTable[fd].type = (fd_types)FD_UNUSED;
 		fdTable[fd].fd = TASK_ERRED;
 	}
 
@@ -348,7 +365,7 @@ static void clear_pseudo_events(void) {
 	for (i = 0; i < ioTableSize; ++i) {
 		if (fdTable[i].type != FD_UNUSED) {
 			events_free_fd(i);
-			fdTable[i].type = FD_UNUSED;
+			fdTable[i].type = (fd_types)FD_UNUSED;
 		}
 	}
 	release_lock(hIoCompPort);
@@ -412,7 +429,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 #endif
 		fdTable[index].inotify_wd = NULL;
 		fdTable[index].inUse = 0;
-		fdTable[index].type = type;
+		fdTable[index].type = (fd_types)type;
 		fdTable[index].process->fd = index;
 		fdTable[index].process->env = NULL;
 		fdTable[index].process->io_func = NULL;
@@ -550,7 +567,7 @@ end:
 EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 	filefd_t io_in, filefd_t io_out, filefd_t io_err) {
 #if __APPLE__ && __MACH__
-	int pseudofd = events_new_fd(FD_CHILD, hIoCompPort_token, -1);
+	int pseudofd = events_new_fd((FILE_TYPE)FD_CHILD, hIoCompPort_token, -1);
 #else
 	int pseudofd = events_new_fd(FD_CHILD, eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK), -1);
 #endif
@@ -974,10 +991,10 @@ int inotify_close(int fd) {
 	return TASK_ERRED;
 }
 
-static void inotify_recursive(int fd, const char *path, uint32_t mask, watch_dir_t *watched) {
+static void inotify_recursive(int fd, const char *path, uint32_t mask,
+	watch_dir_t *watched, char *buf, size_t buf_max) {
 	DIR *dir;				/* dir structure we are reading */
 	struct dirent *entry;	/* directory entry currently being processed */
-	char subpath[PATH_MAX];	/* buffer for building complete subdir and file names */
 	int newfd = watched->fd;
 
 	dir = opendir(path);
@@ -989,8 +1006,8 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask, watch_dir
 		if (entry->d_type == DT_DIR) {
 			if (str_is("..", entry->d_name) || str_is(".", entry->d_name)) {
 				continue;
-			} else if (snprintf(subpath, PATH_MAX, "%s%s%s", path, SYS_DIRSEP, entry->d_name)) {
-				int wd = open(subpath, O_EVTONLY);
+			} else if (snprintf(buf, buf_max, "%s%s%s", path, SYS_DIRSEP, entry->d_name)) {
+				int wd = open(buf, O_EVTONLY);
 				if (wd == -1)
 					continue;
 
@@ -1002,7 +1019,7 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask, watch_dir
 				fdTable[pseudo].dir = events_calloc(1, sizeof(watch_dir_t));
 				fdTable[pseudo].dir->fd = wd;
 				fdTable[pseudo].dir->type = DATA_WATCH;
-				snprintf(fdTable[pseudo].dir->path, PATH_MAX, "%s", subpath);
+				snprintf(fdTable[pseudo].dir->path, PATH_MAX, "%s", buf);
 				fdTable[fd].flags = mask;
 				fdTable[fd]._fd = pseudo;
 				fdTable[fd].changes++;
@@ -1016,16 +1033,16 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask, watch_dir
 					}
 				}
 
-				inotify_recursive(fd, (const char *)subpath, mask, fdTable[pseudo].dir);
+				inotify_recursive(fd, (const char *)fdTable[pseudo].dir->path, mask, fdTable[pseudo].dir, buf, buf_max);
 			}
 		} else if (entry->d_type == DT_REG) {
 			struct stat st;
 			dirent_entry *file = events_calloc(1, sizeof(dirent_entry));
-			snprintf(subpath, PATH_MAX, "%s%s%s", path, SYS_DIRSEP, entry->d_name);
+			snprintf(buf, buf_max, "%s%s%s", path, SYS_DIRSEP, entry->d_name);
 			if (watched->files == NULL)
 				watched->files = array();
 
-			if (!stat(subpath, &st)) {
+			if (!stat(buf, &st)) {
 				snprintf(file->filename, NAME_MAX, "%s", entry->d_name);
 				file->bytes = st.st_size;
 				file->ctime = st.st_ctime;
@@ -1039,12 +1056,14 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask, watch_dir
 }
 
 static EVENTS_INLINE void *_inotify_recursive(param_t args) {
-	inotify_recursive(args[0].integer, args[1].const_char_ptr, args[2].u_int, (watch_dir_t *)args[3].object);
+	inotify_recursive(args[0].integer, args[1].const_char_ptr, args[2].u_int, (watch_dir_t *)args[3].object,
+		args[4].char_ptr, args[5].max_size);
 	return 0;
 }
 
 EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	struct stat st;
+	char subpath[PATH_MAX];	/* buffer for building complete subdir and file names */
 	if (((atomic_load(&sys_event.num_loops) > 0) ? !fs_stat(name, &st) : !stat(name, &st))
 		&& (st.st_mode & S_IFMT) == S_IFDIR) {
 		int newfd, wd = open(name, O_EVTONLY);
@@ -1071,13 +1090,14 @@ EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				return TASK_ERRED;
 			}
 
-			inotify_recursive(fd, fdTable[newfd].dir->path, mask, fdTable[newfd].dir);
+			inotify_recursive(fd, fdTable[newfd].dir->path, mask, fdTable[newfd].dir, subpath, PATH_MAX);
 		} else if (atomic_load(&sys_event.num_loops) > 0) {
 			if (fdTable[fd].inotify_wd == NULL)
 				fdTable[fd].inotify_wd = array();
 
 			$append_signed(fdTable[fd].inotify_wd, newfd);
-			await_for(queue_work(events_pool(), _inotify_recursive, 3, casting(fd), fdTable[newfd].dir->path, casting(mask), fdTable[newfd].dir));
+			await_for(queue_work(events_pool(), _inotify_recursive, 6, casting(fd), fdTable[newfd].dir->path,
+				casting(mask), fdTable[newfd].dir, subpath, PATH_MAX));
 		}
 
 		return newfd;

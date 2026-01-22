@@ -527,7 +527,7 @@ int inotify_close(int fd);
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 int inotify_wd(int pseudo);
 int inotify_flags(int pseudo);
-void inotify_update(const char *path, watch_dir_t *dir, inotify_t *event);
+void inotify_update(const char *path, watch_dir_t *dir, inotify_t *event, char *subpath, size_t path_max);
 void *inotify_data(int pseudo);
 void watch_free(watch_dir_t *dir);
 #endif

@@ -31,8 +31,6 @@
 
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__ /* BSD ONLY */
 
-#define EV_QUEUE_SZ 128
-
 #define BACKEND_BUILD(next_fd, events)	\
   ((unsigned)((next_fd << 8) | (events & 0xff)))
 #define BACKEND_GET_NEXT_FD(backend) ((int)(backend) >> 8)
@@ -169,6 +167,7 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 	events_kqueue *loop = (events_kqueue *)_loop;
 	struct timespec ts;
 	int cl_off = 0, nevents, i;
+	char subpath[PATH_MAX]; /* buffer for building complete subdir and file names */
 
 	/* apply pending changes, with last changes stored to loop->changelist */
 	cl_off = apply_pending_changes(loop, 0);
@@ -190,7 +189,7 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 			&& (target->is_pathwatcher || event->filter == EVFILT_VNODE)) {
 			watch_dir_t *dir = (watch_dir_t *)event->udata;
 			const char *name = (const char *)dir->path;
-			inotify_update(name, dir, event);
+			inotify_update(name, dir, event, subpath, PATH_MAX);
 			inotify_handler(event->ident, (inotify_t *)event, (watch_cb)target->callback, target->cb_arg);
 		} else if (loop->loop.loop_id == target->loop_id
 			&& (event->filter & (EVFILT_READ | EVFILT_WRITE)) != 0) {
