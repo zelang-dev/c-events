@@ -449,7 +449,7 @@ int os_close(int fd) {
 	return ret;
 }
 
-static void *inotify_task(param_t args) {
+void *inotify_task(param_t args) {
 	int fd = args[0].integer, inotifyfd = fdTable[fd]._fd;
 	events_t *loop = (events_t *)args[3].object;
 

@@ -523,13 +523,18 @@ void deque_destroy(void);
 void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter);
 int inotify_del_monitor(int wd);
 int inotify_close(int fd);
+void *inotify_task(param_t args);
 
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 int inotify_wd(int pseudo);
 int inotify_flags(int pseudo);
 void inotify_update(const char *path, watch_dir_t *dir, inotify_t *event, char *subpath, size_t path_max);
 void *inotify_data(int pseudo);
-void watch_free(watch_dir_t *dir);
+void kqueue_watch_free(watch_dir_t *dir);
+int kqueue_add_watch(events_t *loop, int wd);
+watch_cb kqueue_watch_callback(events_t *loop);
+void *kqueue_watch_filter(events_t *loop);
+void kqueue_watch_init(events_t *loop, watch_cb handler, void *filter);
 #endif
 
 #ifdef _WIN32

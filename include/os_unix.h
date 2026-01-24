@@ -50,10 +50,11 @@ typedef struct {
 
 typedef struct {
 	data_types type;
-	char path[PATH_MAX];
 	int fd;
 	unsigned long dirs;
 	array_t files;
+	inotify_t buffer[1];
+	char path[PATH_MAX];
 } watch_dir_t;
 
 #if __APPLE__ && __MACH__

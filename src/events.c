@@ -364,9 +364,15 @@ EVENTS_INLINE int events_watch(events_t *loop, const char *name, watch_cb handle
 		if ((loop->inotify_fd = inotify_init1(IN_NONBLOCK)) < 0)
 			return -1;
 
+#if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
+	kqueue_watch_init(loop, handler, filter);
+	if (inotify_add_watch(loop->inotify_fd, name, IN_ALL_EVENTS) < 0)
+		return -1;
+#else
 	if ((inotify_add_watch(loop->inotify_fd, name, IN_ALL_EVENTS) < 0)
 		|| (events_add(loop, loop->inotify_fd, EVENTS_PATHWATCH, 0, (events_cb)handler, filter) < 0))
 		return -1;
+#endif
 
 	return loop->inotify_fd;
 }

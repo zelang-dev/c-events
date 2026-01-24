@@ -1,12 +1,12 @@
-cmake_minimum_required (VERSION 3.16.4...4.1.0)
+cmake_minimum_required (VERSION 3.14...4.1.0)
 if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
     cmake_policy(SET CMP0135 NEW)
 	cmake_policy(SET CMP0091 NEW)
 endif()
 
 project(events
-	VERSION 0.3.1
-	DESCRIPTION "A tiny, lightning fast, event loop, using either `epoll`, `kqueue`, or `wepoll` for Windows."
+	VERSION 0.4.0
+	DESCRIPTION "A tiny, lightning fast, event loop, using either `epoll`, `kqueue`, or `wepoll` and `iocp` for Windows."
     LANGUAGES C
 )
 

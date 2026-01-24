@@ -224,6 +224,9 @@ void inotify_update(const char *path, watch_dir_t *watched,
 		if (entry->d_type == DT_DIR) {
 			continue;
 		} else if (entry->d_type == DT_REG) {
+			if (index >= index_max)
+				break;
+
 			dirent_entry *file = (dirent_entry *)old_files[index++].object;
 			if (str_is(file->filename, entry->d_name)) {
 				snprintf(subpath, path_max, "%s%s%s", path, SYS_DIRSEP, file->filename);
@@ -244,7 +247,7 @@ void inotify_update(const char *path, watch_dir_t *watched,
 				bool is_addably = true;
 				fdTable[fd].inUse = 0;
 				fdTable[fd].process->workdir = (const char *)entry->d_name;
-				for (i = index; i < index_max; i++) {
+				for (i = index - 1; i < index_max; i++) {
 					if (str_is((const char *)entry->d_name, (const char *)((dirent_entry *)old_files[i].object)->filename)) {
 						is_addably = false;
 						break;
@@ -280,13 +283,13 @@ void inotify_update(const char *path, watch_dir_t *watched,
 	fdTable[fd].dir_count = index_max;
 	if (fdTable[fd].inUse) {
 		event->udata = (void *)fdTable[fd].path;
-		fdTable[fd].path = null;
 	} else {
 		event->udata = (void *)fdTable[fd].process->workdir;
 		if (event->udata == null) {
 			for (i = 0; i < index_max; i++) {
 				snprintf(subpath, path_max, "%s%s%s", path, SYS_DIRSEP, ((dirent_entry *)old_files[i].object)->filename);
 				if (stat(subpath, &st)) {
+					fdTable[fd].inUse = fd;
 					fdTable[fd].path = str_dup_ex((const char *)subpath);
 					void *mem = old_files[i].object;
 					$remove(watched->files, i);
@@ -309,6 +312,24 @@ static EVENTS_INLINE void *_inotify_update(param_t args) {
 		args[3].char_ptr, args[4].max_size);
 	return 0;
 }
+
+void *inotify_task(param_t args) {
+	int fd = args[0].integer, inotifyfd = fdTable[fd]._fd;
+	inotify_t *event = (inotify_t *)args[1].object;
+	events_t *loop = (events_t *)args[4].object;
+	const char *name = args[5].const_char_ptr;
+	watch_dir_t *watched = (watch_dir_t *)args[6].object;
+	char subpath[PATH_MAX]; /* buffer for building complete subdir and file names */
+
+	await_for(queue_work(events_pool(), _inotify_update, 5, name, watched, event, subpath, PATH_MAX));
+	inotify_handler(fd, event, (watch_cb)args[2].func, args[3].object);
+	if (fdTable[fd].path != null) {
+		events_free(fdTable[fd].path);
+		fdTable[fd].path = null;
+	}
+
+	return 0;
+}
 #endif
 
 int os_read(int fd, char *buf, size_t len) {
@@ -325,6 +346,12 @@ int os_read(int fd, char *buf, size_t len) {
 			inotify_t *event = (inotify_t *)buf;
 			watch_dir_t *dir = (watch_dir_t *)event->udata;
 			const char *name = (const char *)dir->path;
+			int wd = events_get_fd(event->ident);
+			if (fdTable[wd].path != null) {
+				events_free(fdTable[wd].path);
+				fdTable[wd].path = null;
+			}
+
 			inotify_update(name, dir, event, subpath, PATH_MAX);
 		}
 #else
@@ -930,14 +957,30 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 		action = WATCH_MODIFIED;
 
 	if (action) {
-		snprintf(subpath, PATH_MAX, "%s%s%s", fdTable[fd].dir->path, SYS_DIRSEP, (const char *)event->udata);
-		handler(fd, action | ~mask, (const char *)subpath, filter);
-		if (fdTable[fd].inUse) {
-			fdTable[fd].inUse = 0;
-			events_free(event->udata);
-		}
+		if (fdTable[fd].inUse)
+			snprintf(subpath, PATH_MAX, "%s", (const char *)event->udata);
+		else
+			snprintf(subpath, PATH_MAX, "%s%s%s", fdTable[fd].dir->path, SYS_DIRSEP, (const char *)event->udata);
 
+		handler(fd, action | ~mask, (const char *)subpath, filter);
 		event->udata = NULL;
+	}
+}
+
+EVENTS_INLINE void *kqueue_watch_filter(events_t *loop) {
+	return (events_valid_fd(loop->inotify_fd) &&
+		fdTable[loop->inotify_fd].type == FD_MONITOR_ASYNC) ? fdTable[loop->inotify_fd].data : null;
+}
+
+EVENTS_INLINE watch_cb kqueue_watch_callback(events_t *loop) {
+	return (events_valid_fd(loop->inotify_fd)
+		&& fdTable[loop->inotify_fd].type == FD_MONITOR_ASYNC) ? (watch_cb)fdTable[loop->inotify_fd].proc : null;
+}
+
+EVENTS_INLINE void kqueue_watch_init(events_t *loop, watch_cb handler, void *filter) {
+	if (events_valid_fd(loop->inotify_fd) && fdTable[loop->inotify_fd].type == FD_MONITOR_ASYNC) {
+		fdTable[loop->inotify_fd].data = filter;
+		fdTable[loop->inotify_fd].proc = (os_cb)handler;
 	}
 }
 
@@ -969,8 +1012,12 @@ EVENTS_INLINE void *inotify_data(int pseudo) {
 }
 
 int inotify_del_monitor(int wd) {
-	if (fdTable[wd].type == FD_MONITOR_SYNC) {
-		return inotify_rm_watch(fdTable[wd]._fd, wd);
+	if (events_valid_fd(wd) && fdTable[wd].type == FD_MONITOR_SYNC) {
+		inotify_rm_watch(fdTable[wd]._fd, wd);
+		if ($size(fdTable[fdTable[wd]._fd].inotify_wd) == 0)
+			return inotify_close(fdTable[wd]._fd);
+
+		return 0;
 	}
 
 	return TASK_ERRED;
@@ -992,7 +1039,7 @@ int inotify_close(int fd) {
 }
 
 static void inotify_recursive(int fd, const char *path, uint32_t mask,
-	watch_dir_t *watched, char *buf, size_t buf_max) {
+	watch_dir_t *watched, char *buf, size_t buf_max, events_t *loop) {
 	DIR *dir;				/* dir structure we are reading */
 	struct dirent *entry;	/* directory entry currently being processed */
 	int newfd = watched->fd;
@@ -1013,7 +1060,6 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask,
 
 				watched->dirs++;
 				int pseudo = events_new_fd(FD_MONITOR_SYNC, wd, wd);
-				$append_signed(fdTable[fd].inotify_wd, pseudo);
 				fdTable[pseudo]._fd = fd;
 				fdTable[pseudo].flags = mask;
 				fdTable[pseudo].dir = events_calloc(1, sizeof(watch_dir_t));
@@ -1022,8 +1068,8 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask,
 				snprintf(fdTable[pseudo].dir->path, PATH_MAX, "%s", buf);
 				fdTable[fd].flags = mask;
 				fdTable[fd]._fd = pseudo;
-				fdTable[fd].changes++;
 				if (!atomic_load(&sys_event.num_loops)) {
+					fdTable[fd].changes++;
 					EV_SET(fdTable[fd].inotify, wd, EVFILT_VNODE, EV_ADD | EV_ENABLE, mask, 0,
 						(void *)fdTable[pseudo].dir);
 					if (kevent(fdTable[fd].fd, fdTable[fd].inotify, 1, NULL, 0, NULL) == -1) {
@@ -1031,9 +1077,17 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask,
 						os_close(pseudo);
 						continue;
 					}
+				} else if (atomic_load(&sys_event.num_loops) > 0) {
+					if (kqueue_add_watch(loop, wd) == -1) {
+						os_close(pseudo);
+						continue;;
+					}
+
+					$append_signed(fdTable[fd].inotify_wd, pseudo);
 				}
 
-				inotify_recursive(fd, (const char *)fdTable[pseudo].dir->path, mask, fdTable[pseudo].dir, buf, buf_max);
+				inotify_recursive(fd, (const char *)fdTable[pseudo].dir->path, mask,
+					fdTable[pseudo].dir, buf, buf_max, loop);
 			}
 		} else if (entry->d_type == DT_REG) {
 			struct stat st;
@@ -1057,11 +1111,35 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask,
 
 static EVENTS_INLINE void *_inotify_recursive(param_t args) {
 	inotify_recursive(args[0].integer, args[1].const_char_ptr, args[2].u_int, (watch_dir_t *)args[3].object,
-		args[4].char_ptr, args[5].max_size);
+		args[4].char_ptr, args[5].max_size, (events_t *)args[6].object);
 	return 0;
 }
 
-EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
+int kqueue_add_watch(events_t *loop, int fd) {
+	if (!EVENTS_IS_INITD_AND_FD_IN_RANGE(fd)) { return -1; }
+
+	int event = EVENTS_PATHWATCH;
+	events_fd_t *target = events_target(fd);
+	target->is_pathwatcher = true;
+	target->is_iodispatch = false;
+	target->backend_used = false;
+	target->callback = (events_cb)kqueue_watch_callback(loop);
+	target->cb_arg = kqueue_watch_filter(loop);
+	target->loop = loop;
+	target->loop_id = loop->loop_id;
+	target->events = 0;
+	target->timeout_idx = EVENTS_TIMEOUT_IDX_UNUSED;
+	if (events_update_internal(loop, fd, event | EVENTS_ADD) != 0) {
+		target->loop = NULL;
+		target->loop_id = 0;
+		return -1;
+	}
+
+	loop->active_descriptors++;
+	return 0;
+}
+
+int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	struct stat st;
 	char subpath[PATH_MAX];	/* buffer for building complete subdir and file names */
 	if (((atomic_load(&sys_event.num_loops) > 0) ? !fs_stat(name, &st) : !stat(name, &st))
@@ -1076,7 +1154,10 @@ EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 		fdTable[newfd].dir = events_calloc(1, sizeof(watch_dir_t));
 		fdTable[newfd].dir->fd = wd;
 		fdTable[newfd].dir->type = DATA_WATCH;
-		snprintf(fdTable[newfd].dir->path, PATH_MAX, "%s", name);
+		int len = snprintf(fdTable[newfd].dir->path, PATH_MAX, "%s", name);
+		if (fdTable[newfd].dir->path[len - 1] == '/')
+			fdTable[newfd].dir->path[len - 1] = '\0';
+
 		fdTable[fd].flags = mask;
 		fdTable[fd]._fd = newfd;
 		if (!atomic_load(&sys_event.num_loops)) {
@@ -1090,14 +1171,20 @@ EVENTS_INLINE int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				return TASK_ERRED;
 			}
 
-			inotify_recursive(fd, fdTable[newfd].dir->path, mask, fdTable[newfd].dir, subpath, PATH_MAX);
+			inotify_recursive(fd, fdTable[newfd].dir->path, mask, fdTable[newfd].dir, subpath, PATH_MAX, null);
 		} else if (atomic_load(&sys_event.num_loops) > 0) {
+			events_t *loop = tasks_loop();
+			if (kqueue_add_watch(loop, wd) == -1) {
+				os_close(newfd);
+				return TASK_ERRED;
+			}
+
 			if (fdTable[fd].inotify_wd == NULL)
 				fdTable[fd].inotify_wd = array();
 
 			$append_signed(fdTable[fd].inotify_wd, newfd);
-			await_for(queue_work(events_pool(), _inotify_recursive, 6, casting(fd), fdTable[newfd].dir->path,
-				casting(mask), fdTable[newfd].dir, subpath, PATH_MAX));
+			await_for(queue_work(events_pool(), _inotify_recursive, 7, casting(fd), fdTable[newfd].dir->path,
+				casting(mask), fdTable[newfd].dir, subpath, PATH_MAX, loop));
 		}
 
 		return newfd;
@@ -1120,13 +1207,13 @@ EVENTS_INLINE int inotify_rm_watch(int fd, int wd) {
 			if (watch.integer == wd) {
 				events_del(fdTable[wd].fd);
 				if (fdTable[wd].dir != NULL) {
-					watch_free(fdTable[wd].dir);
+					kqueue_watch_free(fdTable[wd].dir);
 					fdTable[wd].dir = NULL;
 				}
 
 				os_close(wd);
 				$remove(fdTable[fd].inotify_wd, iwatch);
-				break;
+				return 0;
 			}
 		}
 	}
@@ -1134,7 +1221,7 @@ EVENTS_INLINE int inotify_rm_watch(int fd, int wd) {
 	return TASK_ERRED;
 }
 
-void watch_free(watch_dir_t *dir) {
+void kqueue_watch_free(watch_dir_t *dir) {
 	if (data_type(dir) == DATA_WATCH) {
 		dir->type = DATA_INVALID;
 		foreach(watch in dir->files) {
@@ -1297,7 +1384,7 @@ static EVENTS_INLINE void *_inotify_recursive(param_t args) {
 	return 0;
 }
 
-EVENTS_INLINE int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
+int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
 	int wd = inotify_add_watch(events_get_fd(fd), name, (atomic_load(&sys_event.num_loops) > 0 ? IN_ONLYDIR | mask : mask));
 	if (wd == -1)
 		return wd;

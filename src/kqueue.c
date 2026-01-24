@@ -47,10 +47,9 @@ typedef struct events_kqueue_s {
 static int apply_pending_changes(events_kqueue *loop, int apply_all) {
 #define SET(op, events, mask, data)						\
   EV_SET(loop->changelist + cl_off++, loop->changed_fds,	\
-	 (((events) & EVENTS_PATHWATCH) != 0 ? EVFILT_VNODE : 0)	\
-	 | (((events) & EVENTS_READ) != 0 ? EVFILT_READ : 0)		\
-	 | (((events) & EVENTS_WRITE) != 0 ? EVFILT_WRITE : 0)	\
-	 | (((events) & EVENTS_CLOSED) != 0 ? EVFILT_READ : 0),		\
+	 (((events) & EVENTS_PATHWATCH) != 0 ? EVFILT_VNODE : 	\
+	 ((((events) & EVENTS_READ) || ((events) & EVENTS_CLOSED)) != 0 ? EVFILT_READ : 0)	\
+	 | (((events) & EVENTS_WRITE) != 0 ? EVFILT_WRITE : 0)),		\
 	 (op), (mask), 0, (data))
 
 	int cl_off = 0, nevents;
@@ -59,13 +58,14 @@ static int apply_pending_changes(events_kqueue *loop, int apply_all) {
 		events_fd_t *changed = events_target(loop->changed_fds);
 		int mask = inotify_flags(loop->changed_fds);
 		int old_events = BACKEND_GET_OLD_EVENTS(changed->_backend);
+		int ev_code = changed->is_pathwatcher ? (EV_ADD | EV_ENABLE | EV_CLEAR) : (EV_ADD | EV_ENABLE);
 		void *data = inotify_data(loop->changed_fds);
 		if (changed->events != old_events) {
 			if (old_events != 0) {
 				SET(EV_DISABLE, old_events, mask, null);
 			}
 			if (changed->events != 0) {
-				SET(EV_ADD | EV_ENABLE, changed->events, mask, data);
+				SET(ev_code, changed->events, mask, data);
 			}
 			if ((size_t)cl_off + 1
 				>= sizeof(loop->changelist) / sizeof(loop->changelist[0])) {
@@ -167,7 +167,6 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 	events_kqueue *loop = (events_kqueue *)_loop;
 	struct timespec ts;
 	int cl_off = 0, nevents, i;
-	char subpath[PATH_MAX]; /* buffer for building complete subdir and file names */
 
 	/* apply pending changes, with last changes stored to loop->changelist */
 	cl_off = apply_pending_changes(loop, 0);
@@ -184,13 +183,20 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 	for (i = 0; i < nevents; ++i) {
 		struct kevent *event = loop->events + i;
 		events_fd_t *target = events_target(event->ident);
-		assert((event->flags & EV_ERROR) == 0); /* changelist errors are fatal */
+		/* changelist errors are fatal */
+		//assert((event->flags & EV_ERROR) == 0);
+		if ((event->flags & EV_ERROR) != 0) {
+			perror("kevent");
+			continue;
+		}
+
 		if (loop->loop.loop_id == target->loop_id
 			&& (target->is_pathwatcher || event->filter == EVFILT_VNODE)) {
 			watch_dir_t *dir = (watch_dir_t *)event->udata;
 			const char *name = (const char *)dir->path;
-			inotify_update(name, dir, event, subpath, PATH_MAX);
-			inotify_handler(event->ident, (inotify_t *)event, (watch_cb)target->callback, target->cb_arg);
+			dir->buffer[0] = event[0];
+			async_task(inotify_task, 7, casting(dir->buffer->ident), dir->buffer, target->callback,
+				target->cb_arg, target->loop, name, dir);
 		} else if (loop->loop.loop_id == target->loop_id
 			&& (event->filter & (EVFILT_READ | EVFILT_WRITE)) != 0) {
 			int revents;
