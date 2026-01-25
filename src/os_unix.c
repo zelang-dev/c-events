@@ -323,7 +323,7 @@ void *inotify_task(param_t args) {
 	watch_dir_t *watched = (watch_dir_t *)args[6].object;
 	char subpath[PATH_MAX]; /* buffer for building complete subdir and file names */
 
-	await_for(queue_work(events_pool(), _inotify_update, 5, name, watched, event, subpath, PATH_MAX));
+	await_for(queue_work(events_pool(), _inotify_update, 5, name, watched, event, subpath, sizeof(subpath)));
 	inotify_handler(fd, event, (watch_cb)args[2].func, args[3].object);
 	if (fdTable[fd].path != null) {
 		events_free(fdTable[fd].path);
@@ -354,7 +354,7 @@ int os_read(int fd, char *buf, size_t len) {
 				fdTable[wd].path = null;
 			}
 
-			inotify_update(name, dir, event, subpath, PATH_MAX);
+			inotify_update(name, dir, event, subpath, sizeof(subpath));
 		}
 #else
 		ret = read(fdTable[fd].fd, buf, len);
@@ -1178,7 +1178,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				return TASK_ERRED;
 			}
 
-			inotify_recursive(fd, fdTable[newfd].dir->path, mask, fdTable[newfd].dir, subpath, PATH_MAX, null);
+			inotify_recursive(fd, fdTable[newfd].dir->path, mask, fdTable[newfd].dir, subpath, sizeof(subpath), null);
 		} else if (atomic_load(&sys_event.num_loops) > 0) {
 			events_t *loop = tasks_loop();
 			if (kqueue_add_watch(loop, wd) == -1) {
@@ -1191,7 +1191,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 
 			$append_signed(fdTable[fd].inotify_wd, newfd);
 			await_for(queue_work(events_pool(), _inotify_recursive, 7, casting(fd), fdTable[newfd].dir->path,
-				casting(mask), fdTable[newfd].dir, subpath, PATH_MAX, loop));
+				casting(mask), fdTable[newfd].dir, subpath, sizeof(subpath), loop));
 		}
 
 		return newfd;
@@ -1278,23 +1278,33 @@ EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 	return null;
 }
 
-void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
-	char subpath[PATH_MAX] = nil, buffer[Kb(8)] = nil;
-	int len = read(fd, buffer, sizeof(buffer));
-	if (len < 0)
-		return;
+EVENTS_INLINE const char *fs_events_path(int wd) {
+	return (const char *)fdTable[wd].path;
+}
 
+void *inotify_task(param_t args) {
+	inotify_t *event = (inotify_t *)args[1].object;
+	inotify_handler(args[0].integer, event, args[2].integer, (watch_cb)args[3].func, args[4].object);
+	events_free((void *)event);
+
+	return 0;
+}
+
+void inotify_handler(int fd, inotify_t *event, int len, watch_cb handler, void *filter) {
+	char subpath[PATH_MAX] = {0};
+	char *buffer = (char *)event;
 	char *p = buffer;
+
 	while (p < buffer + len) {
 		events_monitors action = WATCH_INVALID;
 		int mask = (WATCH_MODIFIED | WATCH_REMOVED | WATCH_ADDED | WATCH_MOVED);
 		inotify_t *evt = (inotify_t *)p;
 		if (evt->len) {
-			if (evt->mask & (IN_CREATE))
+			if (evt->mask & (IN_CREATE | IN_MOVED_TO))
 				action = WATCH_ADDED;
-			else if (evt->mask & (IN_DELETE | IN_DELETE_SELF))
+			else if (evt->mask & (IN_DELETE | IN_DELETE_SELF | IN_MOVED_FROM))
 				action = WATCH_REMOVED;
-			else if (evt->mask & (IN_MOVE | IN_MOVE_SELF))
+			else if (evt->mask & (IN_MOVE_SELF))
 				action = WATCH_MOVED;
 			else if (evt->mask & (IN_MODIFY | IN_ATTRIB))
 				action = WATCH_MODIFIED;
@@ -1356,10 +1366,9 @@ int inotify_close(int fd) {
 	return TASK_ERRED;
 }
 
-static void inotify_recursive(int fd, const char *path, uint32_t mask) {
+static void inotify_recursive(int fd, const char *path, uint32_t mask, char *subpath, size_t path_max) {
 	DIR *dir;				/* dir structure we are reading */
 	struct dirent *entry;	/* directory entry currently being processed */
-	char subpath[NAME_MAX];	/* buffer for building complete subdir and file names */
 
 	dir = opendir(path);
 	if (NULL == dir)
@@ -1369,7 +1378,7 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask) {
 		if (entry->d_type == DT_DIR) {
 			if (str_is("..", entry->d_name) || str_is(".", entry->d_name)) {
 				continue;
-			} else if (snprintf(subpath, NAME_MAX, "%s%s%s", path, SYS_DIRSEP, entry->d_name)) {
+			} else if (snprintf(subpath, path_max, "%s%s%s", path, SYS_DIRSEP, entry->d_name)) {
 				int wd = inotify_add_watch(events_get_fd(fd), subpath, mask);
 				if (wd == -1)
 					continue;
@@ -1378,7 +1387,7 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask) {
 				$append_signed(fdTable[fd].inotify_wd, pseudo);
 				fdTable[pseudo]._fd = fd;
 				fdTable[pseudo].path = str_dup_ex(subpath);
-				inotify_recursive(fd, (const char *)subpath, mask);
+				inotify_recursive(fd, (const char *)fdTable[pseudo].path, mask, subpath, path_max);
 			}
 		}
 	}
@@ -1387,12 +1396,17 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask) {
 }
 
 static EVENTS_INLINE void *_inotify_recursive(param_t args) {
-	inotify_recursive(args[0].integer, args[1].const_char_ptr, args[2].u_int);
+	inotify_recursive(args[0].integer, args[1].const_char_ptr, args[2].u_int,
+		args[3].char_ptr, args[4].max_size);
 	return 0;
 }
 
 int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
-	int wd = inotify_add_watch(events_get_fd(fd), name, (atomic_load(&sys_event.num_loops) > 0 ? IN_ONLYDIR | mask : mask));
+	char subpath[PATH_MAX];	/* buffer for building complete subdir and file names */
+	mask = (atomic_load(&sys_event.num_loops) > 0
+		? (IN_ONLYDIR | IN_ACCESS | IN_MODIFY | IN_ATTRIB | IN_MOVE | IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF)
+		: mask);
+	int wd = inotify_add_watch(events_get_fd(fd), name, mask);
 	if (wd == -1)
 		return wd;
 
@@ -1405,7 +1419,7 @@ int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
 		fdTable[pseudo]._fd = fd;
 		fdTable[pseudo].changes = 1;
 		fdTable[pseudo].path = str_dup_ex(name);
-		await_for(queue_work(events_pool(), _inotify_recursive, 3, casting(fd), fdTable[pseudo].path, casting(mask)));
+		await_for(queue_work(events_pool(), _inotify_recursive, 5, casting(fd), fdTable[pseudo].path, casting(mask), subpath, sizeof(subpath)));
 	}
 
 	return pseudo;

@@ -508,7 +508,6 @@ int os_iodispatch(int ms) {
 					break;
 				case FD_MONITOR_ASYNC:
 				case FD_MONITOR_SYNC:
-					//inotify_handler((int)fd, (inotify_t *)fdTable[fdTable[fd]._fd].buffer, (watch_cb)target->callback, target->loop);
 					async_task(inotify_task, 5, casting(fd), fdTable[fdTable[fd]._fd].buffer, target->callback, target->loop, target->cb_arg);
 					break;
 				default:

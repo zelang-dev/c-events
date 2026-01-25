@@ -523,13 +523,19 @@ void deque_push(events_deque_t *q, tasks_t *w);
 void deque_free(events_deque_t *q);
 void deque_destroy(void);
 
-void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter);
 int inotify_del_monitor(int wd);
 int inotify_close(int fd);
 void *inotify_task(param_t args);
 
+#ifdef _WIN32
+int inotify_wd(int pseudo);
+void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter);
+DWORD __stdcall spawn_io_thread(void *arg);
+#endif
+
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 int inotify_wd(int pseudo);
+void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter);
 int inotify_flags(int pseudo);
 void inotify_update(const char *path, watch_dir_t *dir, inotify_t *event, char *subpath, size_t path_max);
 void *inotify_data(int pseudo);
@@ -538,15 +544,12 @@ int kqueue_add_watch(events_t *loop, int wd);
 watch_cb kqueue_watch_callback(events_t *loop);
 void *kqueue_watch_filter(events_t *loop);
 void kqueue_watch_init(events_t *loop, watch_cb handler, void *filter);
+#elif __linux__
+void inotify_handler(int fd, inotify_t *event, int len, watch_cb handler, void *filter);
 #endif
 
 int fsevents_init(const char *name, watch_cb handler, void *filter);
 int fsevents_stop(uint32_t rid);
-
-#ifdef _WIN32
-int inotify_wd(int pseudo);
-DWORD __stdcall spawn_io_thread(void *arg);
-#endif
 
 #ifdef __cplusplus
 }

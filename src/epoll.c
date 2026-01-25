@@ -28,6 +28,7 @@
  */
 
 #include "events_internal.h"
+#undef read
 
 #if defined __linux__ || defined _WIN32
 
@@ -100,8 +101,10 @@ int events_update_internal(events_t *_loop, int fd, int event) {
 		return 0;
 	}
 
-	ev.events = ((event & EVENTS_READ || event == EVENTS_PATHWATCH) != 0 ? EPOLLIN : 0)
-		| ((event & EVENTS_WRITE) != 0 ? EPOLLOUT : 0);
+	ev.events = ((event & EVENTS_PATHWATCH) != 0
+		? (EPOLLIN | EPOLLET)
+		: (((event & EVENTS_READ) != 0 ? EPOLLIN : 0)
+			| ((event & EVENTS_WRITE) != 0 ? EPOLLOUT : 0)));
 	ev.data.fd = fd;
 
 #define SET(op, check_error) do {		    \
@@ -161,7 +164,12 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 				| ((event->events & EPOLLOUT) != 0 ? EVENTS_WRITE : 0)
 				| ((event->events & EPOLLHUP) != 0 ? EVENTS_CLOSED : 0);
 			if (target->is_pathwatcher) {
-				inotify_handler(event->data.fd, (inotify_t *)null, (watch_cb)target->callback, target->cb_arg);
+				char *buffer = events_malloc(Kb(8));
+				int len = read(event->data.fd, buffer, Kb(8) + sizeof(inotify_t));
+				if (len < 0)
+					return -1;
+
+				async_task(inotify_task, 5, casting(event->data.fd), buffer, casting(len), target->callback, target->cb_arg);
 			} else if (revents != 0) {
 				(*target->callback)(event->data.fd, revents, target->cb_arg);
 			}
