@@ -67,6 +67,7 @@ enum EPOLL_EVENTS {
 #define EPOLLMSG     (1U << 10)
 #define EPOLLRDHUP   (1U << 13)
 #define EPOLLONESHOT (1U << 31)
+#define EPOLLET 0
 
 #define EPOLL_CTL_ADD 1
 #define EPOLL_CTL_MOD 2

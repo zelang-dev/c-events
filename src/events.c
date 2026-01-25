@@ -1613,7 +1613,7 @@ EVENTS_INLINE uint32_t task_id(void) {
 	return active_task()->rid;
 }
 
-EVENTS_INLINE int results_tid(uint32_t rid) {
+int results_tid(uint32_t rid) {
 	return task_result_get(rid)->tid;
 }
 

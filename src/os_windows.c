@@ -1592,7 +1592,11 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 	}
 }
 
-EVENTS_INLINE int inotify_wd(int pseudo) {
+EVENTS_INLINE const char *fs_events_path(int wd) {
+	return (const char *)fdTable[wd].path;
+}
+
+int inotify_wd(int pseudo) {
 	return events_valid_fd(pseudo) && fdTable[pseudo].type == FD_MONITOR_ASYNC ? fdTable[pseudo]._fd : pseudo;
 }
 
