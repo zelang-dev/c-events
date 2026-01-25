@@ -162,6 +162,12 @@ C_API bool defer_free(void *data);
 #define $reserve(arr, cap)				data_reserve((array_t)arr, (size_t)cap)
 #endif
 
+#ifndef is_empty
+#	define is_empty(ptr)					((void *)(ptr) == null)
+#endif
+
+C_API char *trim(char *str);
+C_API bool str_is_empty(const char *str);
 C_API bool str_is(const char *str, const char *str2);
 C_API bool str_has(const char *text, char *pattern);
 C_API int str_pos(const char *text, char *pattern);

@@ -422,6 +422,22 @@ char **str_slice(const char *s, const char *delim, int *count) {
 	return data;
 }
 
+static EVENTS_INLINE char *ltrim(char *s) {
+	while (isspace(*s)) s++;
+	return s;
+}
+
+static EVENTS_INLINE char *rtrim(char *s) {
+	char *back = s + strlen(s);
+	while (isspace(*--back));
+	*(back + 1) = '\0';
+	return s;
+}
+
+EVENTS_INLINE char *trim(char *s) {
+	return rtrim(ltrim(s));
+}
+
 int str_pos(const char *text, char *pattern) {
 	size_t c, d, e, text_length, pattern_length, position = -1;
 	if (pattern == NULL || (void *)text == NULL)
@@ -454,6 +470,10 @@ EVENTS_INLINE bool str_has(const char *text, char *pattern) {
 
 EVENTS_INLINE bool str_is(const char *str, const char *str2) {
 	return (str != NULL && str2 != NULL) && (strcmp(str, str2) == 0);
+}
+
+EVENTS_INLINE bool str_is_empty(const char *str) {
+	return is_empty(str) || strlen(str) == 0;
 }
 
 #include "getopt.c"

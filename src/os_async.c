@@ -315,6 +315,14 @@ static EVENTS_INLINE void *_os_unlink(param_t args) {
 	return casting(unlink(args[0].const_char_ptr));
 }
 
+static EVENTS_INLINE void *_os_rmdir(param_t args) {
+	return casting(rmdir(args[0].const_char_ptr));
+}
+
+static EVENTS_INLINE void *_os_mkdir(param_t args) {
+	return casting(mkdir(args[0].const_char_ptr, args[1].u_short));
+}
+
 EVENTS_INLINE int async_fs_open(os_worker_t *thrd, const char *path, int flag, int mode) {
 	thrd->last_fd = TASK_DEAD;
 	return await_for(queue_work(thrd, _os_open, 3, path, casting(flag), casting(mode))).integer;
@@ -373,6 +381,22 @@ EVENTS_INLINE int fs_unlink(const char *path) {
 	return async_fs_unlink(events_pool(), path);
 }
 
+EVENTS_INLINE int async_fs_rmdir(os_worker_t *thrd, const char *path) {
+	return await_for(queue_work(thrd, _os_rmdir, 1, path)).integer;
+}
+
+EVENTS_INLINE int fs_rmdir(const char *path) {
+	return async_fs_rmdir(events_pool(), path);
+}
+
+EVENTS_INLINE int async_fs_mkdir(os_worker_t *thrd, const char *path, mode_t mode) {
+	return await_for(queue_work(thrd, _os_mkdir, 2, path, casting(mode))).integer;
+}
+
+EVENTS_INLINE int fs_mkdir(const char *path, mode_t mode) {
+	return async_fs_mkdir(events_pool(), path, mode);
+}
+
 EVENTS_INLINE int async_fs_stat(os_worker_t *thrd, const char *path, struct stat *st) {
 	return await_for(queue_work(thrd, _os_stat, 2, path, st)).integer;
 }
@@ -414,8 +438,26 @@ int fs_writefile(const char *path, char *text) {
 	return task_err_code();
 }
 
-int fs_events(const char *path, watch_cb moniter) {
-	return TASK_ERRED;
+int fs_events(const char *path, watch_cb handler, void *filter) {
+	int i, rid = TASK_ERRED;
+	if (!is_data(sys_event.cpu_index) || $size(sys_event.cpu_index) == 0) {
+		if (events_tasks_pool(events_create(60)) < 0) {
+			perror("events_tasks_pool");
+			return rid;
+		}
+	}
+
+	if ((rid = fsevents_init(path, handler, filter)) > 0) {
+		events_deque_t *q = sys_event.local[results_tid(rid)];
+		atomic_flag_test_and_set(&q->started);
+		yield_task();
+	}
+
+	return rid;
+}
+
+EVENTS_INLINE int fs_events_cancel(uint32_t rid) {
+	return fsevents_stop(rid);
 }
 
 static void spawn_io(fds_t fd, int events, void *arg) {

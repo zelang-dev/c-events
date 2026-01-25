@@ -56,7 +56,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**. This includes additional functions `inotify_mask()`, `inotify_length()`, `inotify_name()`, `inotify_added()`, `inotify_removed()`, `inotify_modified()`, `inotify_next()` for simplified cross-platform access.
 * [x] Complete implementation of `inotify_add_watch()` for **macOS** aka **BSD** *platforms*.
 * [x] Implement *event* `EVENTS_PATHWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
-* [ ] Implement `fs_events()` function, for fully automatic *setup* and *execution* for directory monitoring of **inotify** interface.
+* [x] Implement `fs_events()` function, for fully recursive automatic *setup* and *execution* for **filesystem monitoring**.
 * [ ] Completion of ALL OS *file system* function routines with matching **thread** ~async_fs_~ *version*.
 
 ## Design
@@ -356,6 +356,9 @@ C_API bool task_is_ready(uint32_t id);
 /* Check for `task` termination/return. */
 C_API bool task_is_terminated(tasks_t *);
 
+/* Check `task` for ~cancel~ request. */
+C_API bool task_is_canceled(void);
+
 /* Print `task` internal data state, only active in `debug` builds. */
 C_API void tasks_info(tasks_t *t, int pos);
 
@@ -517,6 +520,12 @@ C_API int fs_close(int fd);
 C_API int async_fs_unlink(os_worker_t *thrd, const char *path);
 C_API int fs_unlink(const char *path);
 
+C_API int async_fs_mkdir(os_worker_t *thrd, const char *path, mode_t mode);
+C_API int fs_mkdir(const char *path, mode_t mode);
+
+C_API int async_fs_rmdir(os_worker_t *thrd, const char *path);
+C_API int fs_rmdir(const char *path);
+
 C_API int async_fs_stat(os_worker_t *thrd, const char *path, struct stat *st);
 C_API int fs_stat(const char *path, struct stat *st);
 
@@ -525,6 +534,17 @@ C_API int fs_access(const char *path, int mode);
 
 C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
+C_API int fs_writefile(const char *path, char *text);
+
+/* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
+- This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.
+- WILL only STOP on `watch directory` removal, or `task` ~canceled~ by calling `fs_events_cancel()`.
+- Call `fs_events_path()` inside `handler` to get directory name.
+
+Returns ~task~ `result id`. */
+C_API int fs_events(const char *path, watch_cb handler, void *filter);
+C_API int fs_events_cancel(uint32_t rid);
+C_API const char *fs_events_path(int wd);
 
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);
@@ -835,7 +855,7 @@ find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
         URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.4.0.zip
-        URL_MD5 158ade606e3de708f804a9c8c94010ca
+        URL_MD5 3e2c7e01328ba14de5f8b054218929e6
     )
     FetchContent_MakeAvailable(events)
 endif()

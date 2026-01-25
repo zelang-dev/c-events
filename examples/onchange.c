@@ -1,9 +1,12 @@
+/* sames as https://github.com/zelang-dev/c-asio/tree/main/examples/onchange.c, but actually working correctly,
+a much simpler version of libuv https://github.com/libuv/libuv/blob/master/docs/code/onchange/main.c */
+
 #include <events.h>
 
 const char *command;
 
-void run_command(filefd_t fd, events_monitors events, const char *filename) {
-	fprintf(stderr, "Change detected in %s: ", fs_watch_path());
+void run_command(int wd, events_monitors events, const char *filename, void *filter) {
+	fprintf(stderr, "Change detected in: %s ", fs_events_path(wd));
 
 	if (events & WATCH_ADDED || events & WATCH_REMOVED)
         fprintf(stderr, "renamed");
@@ -21,10 +24,10 @@ void *main_main(param_t args) {
 	command = argv[1];
 	while (argc-- > 2) {
         fprintf(stderr, "Adding watch on %s\n", argv[argc]);
-        fs_events(argv[argc], run_command);
+        fs_events(argv[argc], run_command, null);
     }
 
-    return ((int)sleep_task(100000) < 0 ? task_err_code(): 0);
+    return 0;
 }
 
 int main(int argc, char **argv) {

@@ -43,7 +43,7 @@ typedef struct {
 	int changes;
 	int inUse;
 	char *buf;
-	size_t dir_count;
+	size_t file_count;
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 	inotify_t inotify[1]; /* for watched directory handles */
 	watch_dir_t *dir; /* for watched directory entries */
@@ -216,8 +216,10 @@ void inotify_update(const char *path, watch_dir_t *watched,
 	array_t old_files = watched->files;
 
 	dir = opendir((const char *)watched->path);
-	if (NULL == dir)
+	if (NULL == dir) {
+		event->udata = (void *)path;
 		return;
+	}
 
 	errno = 0;
 	while ((entry = readdir(dir))) {
@@ -280,7 +282,7 @@ void inotify_update(const char *path, watch_dir_t *watched,
 	}
 
 	fdTable[fd].offset = $size(watched->files);
-	fdTable[fd].dir_count = index_max;
+	fdTable[fd].file_count = index_max;
 	if (fdTable[fd].inUse) {
 		event->udata = (void *)fdTable[fd].path;
 	} else {
@@ -450,7 +452,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].buf = NULL;
 		fdTable[index].path = NULL;
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
-		fdTable[index].dir_count = 0;
+		fdTable[index].file_count = 0;
 		fdTable[index].dir = NULL;
 		memset(fdTable[index].inotify, 0, sizeof(inotify_t));
 #endif
@@ -915,12 +917,12 @@ EVENTS_INLINE uint32_t inotify_mask(inotify_t *event) {
 
 EVENTS_INLINE bool inotify_added(inotify_t *event) {
 	return (event->fflags & IN_CREATE)
-		&& (fdTable[event->ident].dir_count < fdTable[event->ident].offset);
+		&& (fdTable[event->ident].file_count < fdTable[event->ident].offset);
 }
 
 EVENTS_INLINE bool inotify_removed(inotify_t *event) {
 	return (event->fflags & IN_DELETE)
-		|| (fdTable[event->ident].dir_count > fdTable[event->ident].offset);
+		|| (fdTable[event->ident].file_count > fdTable[event->ident].offset);
 }
 
 EVENTS_INLINE bool inotify_modified(inotify_t *event) {
@@ -946,10 +948,10 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 	int mask = (WATCH_MODIFIED | WATCH_REMOVED | WATCH_ADDED | WATCH_MOVED);
 
 	if ((event->fflags & IN_CREATE)
-		&& (fdTable[event->ident].dir_count < fdTable[event->ident].offset))
+		&& (fdTable[event->ident].file_count < fdTable[event->ident].offset))
 		action = WATCH_ADDED;
 	else if ((event->fflags & IN_DELETE)
-		|| (fdTable[event->ident].dir_count > fdTable[event->ident].offset))
+		|| (fdTable[event->ident].file_count > fdTable[event->ident].offset))
 		action = WATCH_REMOVED;
 	else if ((event->fflags & IN_MOVE))
 		action = WATCH_MOVED;
@@ -962,7 +964,7 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 		else
 			snprintf(subpath, PATH_MAX, "%s%s%s", fdTable[fd].dir->path, SYS_DIRSEP, (const char *)event->udata);
 
-		handler(fd, action | ~mask, (const char *)subpath, filter);
+		handler(fd, action | ~mask, (const char *)trim(subpath), filter);
 		event->udata = NULL;
 	}
 }
@@ -1023,6 +1025,10 @@ int inotify_del_monitor(int wd) {
 	return TASK_ERRED;
 }
 
+EVENTS_INLINE const char *fs_events_path(int wd) {
+	return (const char *)fdTable[wd].dir->path;
+}
+
 int inotify_close(int fd) {
 	if (events_valid_fd(fd)) {
 		foreach(watch in fdTable[fd].inotify_wd) {
@@ -1044,6 +1050,7 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask,
 	struct dirent *entry;	/* directory entry currently being processed */
 	int newfd = watched->fd;
 
+	fdTable[newfd].file_count = $size(watched->files);
 	dir = opendir(path);
 	if (NULL == dir)
 		return;
@@ -1105,7 +1112,7 @@ static void inotify_recursive(int fd, const char *path, uint32_t mask,
 			}
 		}
 	}
-	fdTable[newfd].dir_count = $size(watched->files);
+	fdTable[newfd].file_count = $size(watched->files);
 	closedir(dir);
 }
 
@@ -1162,7 +1169,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 		fdTable[fd]._fd = newfd;
 		if (!atomic_load(&sys_event.num_loops)) {
 			fdTable[fd].changes++;
-			fdTable[fd].dir_count = fdTable[newfd].dir_count;
+			fdTable[fd].file_count = fdTable[newfd].file_count;
 			EV_SET(fdTable[fd].inotify, wd, EVFILT_VNODE, EV_ADD | EV_ENABLE, mask, 0,
 				(void *)fdTable[newfd].dir);
 			if (kevent(fdTable[fd].fd, fdTable[fd].inotify, 1, NULL, 0, NULL) == -1) {

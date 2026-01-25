@@ -28,7 +28,8 @@
 static volatile bool events_startup_set = false;
 static volatile bool events_shutdown_set = false;
 static volatile bool events_tasks_started = false;
-static int events_execute(events_t *loop, int max_wait);
+static array_t events_fsevents_tasks = null;
+static int events_execute(events_t * loop, int max_wait);
 sys_events_t sys_event = {0};
 
 typedef struct {
@@ -287,6 +288,11 @@ EVENTS_INLINE void events_deinit(void) {
 		events_free((void *)r);
 	}
 
+	if (events_fsevents_tasks != null) {
+		$delete(events_fsevents_tasks);
+		events_fsevents_tasks = null;
+	}
+
 	os_shutdown();
 #ifdef _WIN32
 	WSACleanup();
@@ -357,6 +363,54 @@ EVENTS_INLINE int events_del_watch(events_t *loop) {
 
 EVENTS_INLINE bool events_is_watching(int inotify) {
 	return events_watch_count(inotify) > 0;
+}
+
+static void *fsevents_task(param_t args) {
+	events_t *loop = tasks_loop();
+	int fd = events_watch(loop, args[0].const_char_ptr, (watch_cb)args[1].func, args[2].object);
+	while (events_is_watching(fd) && !task_is_canceled()) {
+		tasks_info(active_task(), 1);
+		yield_task();
+	}
+
+	(void)events_del_watch(loop);
+	return 0;
+}
+
+int fsevents_init(const char *name, watch_cb handler, void *filter) {
+	int rid = go(fsevents_task, 3, name, handler, filter);
+	if (rid > 0) {
+		if (events_fsevents_tasks == null)
+			events_fsevents_tasks = array();
+
+		atomic_lock($lock(events_fsevents_tasks));
+		$append_signed(events_fsevents_tasks, rid);
+		atomic_unlock($lock(events_fsevents_tasks));
+		__thrd()->task_count++;
+	}
+
+	return rid;
+}
+
+int fsevents_stop(uint32_t rid) {
+	int found = TASK_ERRED;
+	if (rid > 0 && is_data(events_fsevents_tasks) && $size(events_fsevents_tasks) > 0) {
+		atomic_lock($lock(events_fsevents_tasks));
+		foreach(watch in events_fsevents_tasks) {
+			if (watch.integer == rid) {
+				$remove(events_fsevents_tasks, iwatch);
+				results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
+				results[rid]->is_canceled = true;
+				atomic_store_explicit(&sys_event.results, results, memory_order_release);
+				__thrd()->task_count--;
+				found = 0;
+				break;
+			}
+		}
+		atomic_unlock($lock(events_fsevents_tasks));
+	}
+
+	return found;
 }
 
 EVENTS_INLINE int events_watch(events_t *loop, const char *name, watch_cb handler, void *filter) {
@@ -1423,6 +1477,7 @@ static results_data_t tasks_create_result(void) {
 
 	result->is_ready = false;
 	result->is_terminated = false;
+	result->is_canceled = false;
 	result->id = id;
 	result->result.object = NULL;
 	result->type = DATA_PTR;
@@ -1521,6 +1576,9 @@ uint32_t task_push(tasks_t *t) {
 			enqueue(l, t);
 		} else if (!is_group) {
 			t->tid = sys_event.cpu_index[(atomic_fetch_add(&sys_event.thrd_id_count, 1) % $size(sys_event.cpu_index))].u_int;
+			results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
+			results[t->rid]->tid = t->tid;
+			atomic_store_explicit(&sys_event.results, results, memory_order_release);
 			enqueue_tasks(t);
 		}
 	}
@@ -1536,6 +1594,10 @@ EVENTS_INLINE bool task_is_terminated(tasks_t *co) {
 	return is_ptr_usable(co) ? co->halt : true;
 }
 
+EVENTS_INLINE bool task_is_canceled(void) {
+	return task_result_get(task_id())->is_canceled;
+}
+
 EVENTS_INLINE values_t await_for(uint32_t id) {
 	while (!task_result_get(id)->is_terminated)
 		yield_task();
@@ -1549,6 +1611,10 @@ EVENTS_INLINE bool task_is_ready(uint32_t id) {
 
 EVENTS_INLINE uint32_t task_id(void) {
 	return active_task()->rid;
+}
+
+EVENTS_INLINE int results_tid(uint32_t rid) {
+	return task_result_get(rid)->tid;
 }
 
 EVENTS_INLINE values_t results_for(uint32_t id) {

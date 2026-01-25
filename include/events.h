@@ -353,6 +353,9 @@ C_API bool task_is_ready(uint32_t id);
 /* Check for `task` termination/return. */
 C_API bool task_is_terminated(tasks_t *);
 
+/* Check `task` for ~cancel~ request. */
+C_API bool task_is_canceled(void);
+
 /* Print `task` internal data state, only active in `debug` builds. */
 C_API void tasks_info(tasks_t *t, int pos);
 

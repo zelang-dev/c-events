@@ -21,6 +21,7 @@ set(TARGET_LIST
  	waitgroup
 	inotify
 	events_watch
+	onchange
 )
 
 foreach (TARGET ${TARGET_LIST})

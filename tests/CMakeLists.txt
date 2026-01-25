@@ -13,6 +13,7 @@ set(TARGET_LIST
  test-spawn
  test-fs
  test-waitgroup
+ test-fs_events
 )
 
 add_executable(test-getopts test-getopts.c)

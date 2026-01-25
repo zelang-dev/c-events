@@ -203,6 +203,8 @@ struct sys_signal_s {
 typedef struct results_data {
 	data_types type;
 	int id;
+	int tid;
+	bool is_canceled;
 	bool is_ready;
 	bool is_terminated;
 	values_t result;
@@ -510,6 +512,7 @@ uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, .
 void thread_result_set(os_request_t *p, void *res);
 uint32_t task_push(tasks_t *t);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread);
+int results_tid(uint32_t rid);
 
 void deque_init(events_deque_t *q, int size_hint);
 void deque_resize(events_deque_t *q);
@@ -536,6 +539,9 @@ watch_cb kqueue_watch_callback(events_t *loop);
 void *kqueue_watch_filter(events_t *loop);
 void kqueue_watch_init(events_t *loop, watch_cb handler, void *filter);
 #endif
+
+int fsevents_init(const char *name, watch_cb handler, void *filter);
+int fsevents_stop(uint32_t rid);
 
 #ifdef _WIN32
 int inotify_wd(int pseudo);

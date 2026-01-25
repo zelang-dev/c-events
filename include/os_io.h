@@ -330,6 +330,12 @@ C_API int fs_close(int fd);
 C_API int async_fs_unlink(os_worker_t *thrd, const char *path);
 C_API int fs_unlink(const char *path);
 
+C_API int async_fs_mkdir(os_worker_t *thrd, const char *path, mode_t mode);
+C_API int fs_mkdir(const char *path, mode_t mode);
+
+C_API int async_fs_rmdir(os_worker_t *thrd, const char *path);
+C_API int fs_rmdir(const char *path);
+
 C_API int async_fs_stat(os_worker_t *thrd, const char *path, struct stat *st);
 C_API int fs_stat(const char *path, struct stat *st);
 
@@ -339,7 +345,16 @@ C_API int fs_access(const char *path, int mode);
 C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
 C_API int fs_writefile(const char *path, char *text);
-C_API int fs_events(const char *path, watch_cb moniter);
+
+/* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
+- This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.
+- WILL only STOP on `watch directory` removal, or `task` ~canceled~ by calling `fs_events_cancel()`.
+- Call `fs_events_path()` inside `handler` to get directory name.
+
+Returns ~task~ `result id`. */
+C_API int fs_events(const char *path, watch_cb handler, void *filter);
+C_API int fs_events_cancel(uint32_t rid);
+C_API const char *fs_events_path(int wd);
 
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);

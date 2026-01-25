@@ -12,41 +12,50 @@ void *worker_misc(param_t args) {
     return "fs_events";
 }
 
-int watch_handler(filefd_t fd, int events, const char *filename) {
-    ASSERT_STR("watchdir", fs_events_path());
-    watch_count++;
+int watch_handler(int wd, int events, const char *filename, void *filter) {
+    ASSERT_STR("watchdir", fs_events_path(wd));
+	watch_count++;
 
-	if (events & WATCH_ADDED || events & WATCH_REMOVED) {
-		ASSERT_TRUE((str_is("file1.txt", filename) || str_is("watchdir", filename) || str_is(filename, "")));
-    }
+	if (events & WATCH_ADDED) {
+		ASSERT_TASK((str_has(filename, "file1.txt")));
+	}
 
-	if (events & WATCH_MODIFIED) {
-		ASSERT_TRUE((str_is("file1.txt", filename) || str_is("watchdir", filename) || str_is(filename, "")));
-    }
+	if (events & WATCH_REMOVED)
+		ASSERT_TASK((str_has(filename, "file1.txt") || str_has(filename, "watchdir")));
+
+	if (events & WATCH_MODIFIED)
+		ASSERT_TASK((str_has(filename, "file1.txt")));
+
+	return 0;
 }
 
 TEST(fs_events) {
-    char filepath[ARRAY_SIZE] = NULL;
+    char filepath[ARRAY_SIZE] = {0};
     int i = 0;
-    uint32_t res = go(worker_misc, 2, 1000, "event");
-    ASSERT_EQ(0, fs_mkdir(watch_path, 0));
+	uint32_t res = async_task(worker_misc, 2, 1000, "event");
+	ASSERT_EQ(0, fs_mkdir(watch_path, 0700));
 	ASSERT_FALSE(task_is_ready(res));
 
-    fs_events(watch_path, watch_handler);
+	int rid = fs_events(watch_path, (watch_cb)watch_handler, null);
 	ASSERT_FALSE(task_is_ready(res));
 
-    snprintf(filepath, ARRAY_SIZE, "%s/file%d.txt", watch_path, 1);
-    ASSERT_EQ(5, fs_writefile(filepath, "hello"));
-    ASSERT_EQ(0, fs_unlink(filepath));
+	sleep_task(1);
+	snprintf(filepath, ARRAY_SIZE, "%s/file%d.txt", watch_path, 1);
+	ASSERT_EQ(5, fs_writefile(filepath, "hello"));
 
-    sleep_task(10);
-    ASSERT_EQ(0, fs_rmdir(watch_path));
+	sleep_task(200);
+	ASSERT_EQ(0, fs_unlink(filepath));
+
+	sleep_task(500);
+	ASSERT_EQ(0, fs_rmdir(watch_path));
+
 	while (!task_is_ready(res))
         yield_task();
 
+	ASSERT_EQ(0, fs_events_cancel(rid));
     ASSERT_TRUE(task_is_ready(res));
     ASSERT_STR(results_for(res).char_ptr, "fs_events");
-    ASSERT_EQ(2, watch_count);
+    ASSERT_EQ(3, watch_count);
 
     return 0;
 }
