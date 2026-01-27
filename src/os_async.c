@@ -438,6 +438,20 @@ int fs_writefile(const char *path, char *text) {
 	return task_err_code();
 }
 
+char *fs_readfile(const char *path) {
+	char *buffer = null;
+	int fd = 0;
+	size_t len = fs_filesize(path);
+	if (len > 0 && (fd = fs_open(path, O_RDONLY, 0)) > 0) {
+		if (defer_free(buffer = events_calloc(1, len + 1))) {
+			fs_read(fd, buffer, len);
+			fs_close(fd);
+		}
+	}
+
+	return buffer;
+}
+
 int fs_events(const char *path, watch_cb handler, void *filter) {
 	int i, rid = TASK_ERRED;
 	if (!is_data(sys_event.cpu_index) || $size(sys_event.cpu_index) == 0) {

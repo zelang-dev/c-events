@@ -5,6 +5,11 @@
 #undef close
 #undef open
 #undef connect
+#define SLASH '\\'
+#define DIR_SEP	';'
+#define IS_SLASH(c)	((c) == '/' || (c) == '\\')
+#define IS_SLASH_P(c)	(*(c) == '/' || \
+        (*(c) == '\\' && !IsDBCSLeadByte(*(c-1))))
 
 #if defined(_WIN32) || defined(_WIN64) /* WINDOWS ONLY */
 static CRITICAL_SECTION events_siglock;
@@ -56,7 +61,7 @@ struct FD_TABLE {
 	int flags;
 	intptr_t _fd;
 	intptr_t offset;			/* only valid for async file writes */
-	array_t inotify;	/* for watched directory handles */
+	array_t inotify_wd;		/* for watched directory handles */
 	LPDWORD offsetHighPtr;	/* pointers to offset high and low words */
 	LPDWORD offsetLowPtr;	/* only valid for async file writes (logs) */
 	struct OVERLAPPED_REQUEST ovList[1];	/* List of associated OVERLAPPED_REQUESTs */
@@ -123,12 +128,12 @@ static void clear_pseudo_events(void) {
 		if (fdTable[i].type != FD_UNUSED) {
 			fdTable[i].status = -1;
 			PostQueuedCompletionStatus(hIoCompPort, -1, i, &fdTable[i].ovList->overlapped);
-			if (fdTable[i].inotify != NULL) {
-				foreach(watch in fdTable[i].inotify) {
+			if (fdTable[i].inotify_wd != NULL) {
+				foreach(watch in fdTable[i].inotify_wd) {
 					os_close(watch.integer);
 				}
-				$delete(fdTable[i].inotify);
-				fdTable[i].inotify = NULL;
+				$delete(fdTable[i].inotify_wd);
+				fdTable[i].inotify_wd = NULL;
 			}
 			fdTable[i].type = FD_UNUSED;
 		}
@@ -200,7 +205,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].flags = 0;
 		fdTable[index].offset = DATA_INVALID;
 		fdTable[index].offsetHighPtr = fdTable[index].offsetLowPtr = NULL;
-		fdTable[index].inotify = NULL;
+		fdTable[index].inotify_wd = NULL;
 		fdTable[index].ovList->overlapped.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
 		fdTable[index].ovList->length = 0;
 		fdTable[index].process->fd = TASK_ERRED;
@@ -216,7 +221,7 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].process->context = NULL;
 		fdTable[index].process->ps = INVALID_HANDLE_VALUE;
 		if (type == FD_MONITOR_ASYNC)
-			fdTable[index].inotify = array();
+			fdTable[index].inotify_wd = array();
 	}
 
 	LeaveCriticalSection(&fdTableCritical);
@@ -1560,7 +1565,8 @@ EVENTS_INLINE inotify_t *inotify_next(inotify_t *event) {
 }
 
 void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
-	char filename[(ARRAY_SIZE * 2) + 1] = nil;
+	char filename[NAME_MAX + 1] = {0};
+	char dir[NAME_MAX] = {0};
 	events_monitors action = WATCH_INVALID;
 	int mask = (WATCH_MODIFIED | WATCH_REMOVED | WATCH_ADDED | WATCH_MOVED);
 	switch (event->Action) {
@@ -1585,15 +1591,22 @@ void inotify_handler(int fd, inotify_t *event, watch_cb handler, void *filter) {
 			event->FileName,
 			(event->FileNameLength / 2),
 			filename,
-			(ARRAY_SIZE * 2),
+			NAME_MAX,
 			NULL,
 			NULL);
+
+		snprintf(dir, NAME_MAX, "%s", filename);
+		fdTable[fd].process->workdir = (const char *)dirname(dir);
+		if (str_is(fdTable[fd].process->workdir, "."))
+			fdTable[fd].process->workdir = fdTable[fdTable[fd]._fd].process->workdir;
+
 		handler(fd, action | ~mask, (const char *)filename, filter);
+		fdTable[fd].process->workdir = null;
 	}
 }
 
 EVENTS_INLINE const char *fs_events_path(int wd) {
-	return (const char *)fdTable[wd].path;
+	return fdTable[wd].process->workdir;
 }
 
 int inotify_wd(int pseudo) {
@@ -1601,16 +1614,54 @@ int inotify_wd(int pseudo) {
 }
 
 int inotify_del_monitor(int wd) {
-	if (fdTable[wd].type == FD_MONITOR_SYNC) {
-		inotify_rm_watch(fdTable[wd]._fd, wd);
-		return events_del(wd);
+	if (events_valid_fd(wd)) {
+		if (is_empty(fdTable[wd].process->workdir)) {
+			events_del(fdTable[wd]._fd);
+			return inotify_close(fdTable[wd]._fd);
+		} else if (fdTable[wd].type == FD_MONITOR_SYNC) {
+			inotify_rm_watch(fdTable[wd]._fd, wd);
+			if ($size(fdTable[fdTable[wd]._fd].inotify_wd) == 0)
+				return events_del(fdTable[wd]._fd);
+
+			return 0;
+		}
 	}
 
 	return TASK_ERRED;
 }
 
 EVENTS_INLINE int events_watch_count(int inotify) {
-	return is_data(fdTable[inotify].inotify) ? $size(fdTable[inotify].inotify) : 0;
+	return is_data(fdTable[inotify].inotify_wd) ? $size(fdTable[inotify].inotify_wd) : 0;
+}
+
+static void inotify_directories(int fd, const char *path) {
+	DIR *dir;				/* dir structure we are reading */
+	struct dirent *entry;	/* directory entry currently being processed */
+
+	dir = opendir(path);
+	if (NULL == dir)
+		return;
+
+	while ((entry = readdir(dir))) {
+		if (entry->d_type == DT_DIR) {
+			if (str_is("..", entry->d_name) || str_is(".", entry->d_name)) {
+				continue;
+			} else {
+				dirent_entry *folder = events_calloc(1, sizeof(dirent_entry));
+				folder->pseudo = fdTable[fd]._fd;
+				snprintf(folder->filename, NAME_MAX, "%s%s%s", path, SYS_DIRSEP, entry->d_name);
+				$append(fdTable[fd].inotify_wd, folder);
+				inotify_directories(fd, (const char *)folder->filename);
+			}
+		}
+	}
+
+	closedir(dir);
+}
+
+static EVENTS_INLINE void *_inotify_directories(param_t args) {
+	inotify_directories(args[0].integer, args[1].const_char_ptr);
+	return 0;
 }
 
 int inotify_add_watch(int fd, const char *name, uint32_t mask) {
@@ -1638,9 +1689,16 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 
 				fdTable[newfd].flags = mask;
 				fdTable[newfd]._fd = fd;
-				$append_signed(fdTable[fd].inotify, newfd);
 				fdTable[fd].flags = mask;
 				fdTable[fd]._fd = newfd;
+				fdTable[fd].fid.fileHandle = hDir;
+				dirent_entry *folder = events_calloc(1, sizeof(dirent_entry));
+				folder->pseudo = newfd;
+				snprintf(folder->filename, NAME_MAX, "%s", name);
+				$append(fdTable[fd].inotify_wd, folder);
+
+				fdTable[fd].process->workdir = (const char *)folder->filename;
+				await_for(queue_work(events_pool(), _inotify_directories, 2, casting(fd), folder->filename));
 				return newfd;
 			}
 		} else if (hDir != INVALID && !atomic_load(&sys_event.num_loops)) {
@@ -1659,12 +1717,12 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 
 int inotify_close(int fd) {
 	if (events_valid_fd(fd)) {
-		foreach(watch in fdTable[fd].inotify) {
-			os_close(watch.integer);
+		foreach(watch in fdTable[fd].inotify_wd) {
+			events_free(watch.object);
 		}
-
-		events_free_fd(fd);
-		return 0;
+		$delete(fdTable[fd].inotify_wd);
+		fdTable[fd].inotify_wd = null;
+		return os_close(fd);
 	}
 
 	return TASK_ERRED;
@@ -1677,15 +1735,143 @@ int inotify_rm_watch(int fd, int wd) {
 	if (!atomic_load(&sys_event.num_loops) && events_valid_fd(wd))
 		return os_close(wd);
 
-	if (atomic_load(&sys_event.num_loops) > 0 && events_valid_fd(fd)) {
-		foreach(watch in fdTable[fd].inotify) {
-			if (watch.integer == wd) {
-				$remove(fdTable[fd].inotify, iwatch);
-				return os_close(wd);
+	if (atomic_load(&sys_event.num_loops) > 0 && events_valid_fd(wd)) {
+		const char *dir = fdTable[wd].process->workdir;
+		foreach(watch in fdTable[fd].inotify_wd) {
+			dirent_entry *folder = (dirent_entry *)watch.object;
+			if (str_is(dir, (const char *)folder->filename)) {
+				events_free(watch.object);
+				$remove(fdTable[fd].inotify_wd, iwatch);
+				return 0;
 			}
 		}
 	}
 
 	return TASK_ERRED;
+}
+
+char *basename(const char *s) {
+	char *c;
+	const char *comp, *cend;
+	size_t inc_len, cnt;
+	size_t len = strlen(s);
+	int state;
+
+	comp = cend = c = (char *)s;
+	cnt = len;
+	state = 0;
+	while (cnt > 0) {
+		inc_len = (*c == '\0' ? 1 : mblen(c, cnt));
+		switch (inc_len) {
+			case -2:
+			case -1:
+				inc_len = 1;
+				break;
+			case 0:
+				goto quit_loop;
+			case 1:
+				if (*c == '/' || *c == '\\') {
+					if (state == 1) {
+						state = 0;
+						cend = c;
+					}
+					/* Catch relative paths in c:file.txt style. They're not to confuse
+					   with the NTFS streams. This part ensures also, that no drive
+					   letter traversing happens. */
+				} else if ((*c == ':' && (c - comp == 1))) {
+					if (state == 0) {
+						comp = c;
+						state = 1;
+					} else {
+						cend = c;
+						state = 0;
+					}
+				} else {
+					if (state == 0) {
+						comp = c;
+						state = 1;
+					}
+				}
+				break;
+			default:
+				if (state == 0) {
+					comp = c;
+					state = 1;
+				}
+				break;
+		}
+		c += inc_len;
+		cnt -= inc_len;
+	}
+
+quit_loop:
+	if (state == 1) {
+		cend = c;
+	}
+
+	len = cend - comp;
+	return str_trim(comp, len);
+}
+
+char *dirname(char *path) {
+	size_t len = strlen(path);
+	char *end = path + len - 1;
+	unsigned int len_adjust = 0;
+
+	/* Note that on Win32 CWD is per drive (heritage from CP/M).
+	 * This means dirname("c:foo") maps to "c:." or "c:" - which means CWD on C: drive.
+	 */
+	if ((2 <= len) && isalpha((int)((unsigned char *)path)[0]) && (':' == path[1])) {
+		/* Skip over the drive spec (if any) so as not to change */
+		path += 2;
+		len_adjust += 2;
+		if (2 == len) {
+			/* Return "c:" on Win32 for dirname("c:").
+			 * It would be more consistent to return "c:."
+			 * but that would require making the string *longer*.
+			 */
+			return path;
+		}
+	}
+
+	if (len == 0) {
+		/* Illegal use of this function */
+		return null;
+	}
+
+	/* Strip trailing slashes */
+	while (end >= path && IS_SLASH_P(end)) {
+		end--;
+	}
+	if (end < path) {
+		/* The path only contained slashes */
+		path[0] = SLASH;
+		path[1] = '\0';
+		return path;
+	}
+
+	/* Strip filename */
+	while (end >= path && !IS_SLASH_P(end)) {
+		end--;
+	}
+	if (end < path) {
+		/* No slash found, therefore return '.' */
+		path[0] = '.';
+		path[1] = '\0';
+		return path;
+	}
+
+	/* Strip slashes which came before the file name */
+	while (end >= path && IS_SLASH_P(end)) {
+		end--;
+	}
+	if (end < path) {
+		path[0] = SLASH;
+		path[1] = '\0';
+		return path;
+	}
+	*(end + 1) = '\0';
+
+	return path;
 }
 #endif /* WINDOWS ONLY */

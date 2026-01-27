@@ -47,6 +47,8 @@ typedef enum {
 	DATA_PTR,
 	DATA_FUNC,
 	DATA_ARRAY,
+	DATA_TUPLE,
+	DATA_DEFER,
 	DATA_TASKGROUP,
 	DATA_DEQUE,
 	DATA_GENERATOR,
@@ -54,9 +56,17 @@ typedef enum {
 	DATA_TCP,
 	DATA_PIPE,
 	DATA_FILE,
+	DATA_TLS,
 	DATA_WATCH,
+	DATA_FILEINFO,
 	DATA_MAXCOUNTER,
 } data_types;
+
+typedef enum {
+	STR_PAD_LEFT = DATA_MAXCOUNTER + 1,
+	STR_PAD_RIGHT,
+	STR_PAD_BOTH
+} str_pad_type;
 
 /* Generic simple union storage types. */
 typedef union {
@@ -86,7 +96,7 @@ typedef union {
 	intptr_t **array_int;
 	uintptr_t **array_uint;
 	data_func_t func;
-} values_t, *param_t, *array_t;
+} values_t, *tuple_t, *param_t, *array_t;
 
 typedef struct {
 	data_types type;
@@ -105,6 +115,35 @@ typedef struct {
 	dtor_func_t dtor;
 } data_object_t;
 
+typedef struct {
+	data_types type;
+	intptr_t value;
+	void (*func)(void *);
+	void *data;
+} defer_t;
+
+typedef struct fileinfo_s {
+	data_types type;
+	const char *dirname;
+	const char *base;
+	const char *extension;
+	const char *filename;
+} fileinfo_t;
+
+typedef struct uri_s {
+	data_types type;
+	bool is_rejected;
+	bool is_autofreeable;
+	unsigned short port;
+	char *scheme;
+	char *user;
+	char *pass;
+	char *host;
+	char *path;
+	char *query;
+	char *fragment;
+} uri_t;
+
 C_API const data_values_t data_values_empty[1];
 
 /* Returns ~empty~ data `array`. */
@@ -118,7 +157,7 @@ C_API array_t array(void);
 * @param count numbers of parameters, `0` will create ~empty~ `array`.
 * @param arguments indexed in given order.
 */
-C_API array_t data_of(size_t, ...);
+C_API array_t array_of(size_t, ...);
 C_API array_t data_ex(size_t, va_list);
 C_API array_t data_copy(array_t des, array_t src);
 C_API void data_append(array_t, void *);
@@ -180,6 +219,46 @@ C_API char *str_cat(int num_args, ...);
 C_API char **str_slice(const char *s, const char *delim, int *count);
 C_API char *str_swap(const char *haystack, const char *needle, const char *swap);
 C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
+
+/*
+Pad a string to a certain length with another string, returns the `padded` string.
+
+Modifed C code from PHP userland function
+see https://www.php.net/manual/en/function.str-pad.php
+*/
+C_API char *str_pad(char *str, int length, char *pad, str_pad_type pad_type);
+
+/*
+Returns `str` repeated times `times`.
+
+Modifed C code from PHP userland function
+see https://www.php.net/manual/en/function.str-repeat.php
+*/
+C_API char *str_repeat(char *str, int times);
+
+/* Returns an `array_t` of strings created by `delim`
+
+Modifed C code from PHP userland function
+see https://www.php.net/manual/en/function.explode.php
+*/
+C_API array_t str_explode(const char *s, const char *delim);
+
+/*
+Parse a ~string~ `url` and return its components, returns `NULL` for malformed URLs.
+
+Modifed C code from PHP userland function
+see https://php.net/manual/en/function.parse-url.php
+*/
+C_API uri_t *parse_uri(const char *url);
+
+/*
+Same as `parse_uri()` except:
+- MUST call `uri_free()` to release allocated memory, each `field` is separately allocated.
+- And must `NULL` assign if field ~modified~ and ~freed~.
+*/
+C_API uri_t *parse_uri_ex(const char *str);
+C_API void uri_free(uri_t *uri);
+C_API fileinfo_t *pathinfo(char *filepath);
 
 /*
 * Returns `argv[index]` or next `argv[]`, from matching `getopt_has()`.

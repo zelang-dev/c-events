@@ -40,14 +40,6 @@
  * such as IN_CREATE, IN_DELETE, IN_OPEN, IN_CLOSE, ..., relative to the wd.
  */
 typedef struct kevent inotify_t;
-
-typedef struct {
-	size_t bytes;	/* Size of file, in bytes. */
-	size_t mtime;	/* Time of last modification. */
-	size_t ctime;	/* Time of last status change. */
-	char filename[NAME_MAX];
-} dirent_entry;
-
 typedef struct {
 	data_types type;
 	int fd;

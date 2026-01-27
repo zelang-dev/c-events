@@ -6,14 +6,14 @@ a much simpler version of libuv https://github.com/libuv/libuv/blob/master/docs/
 const char *command;
 
 void run_command(int wd, events_monitors events, const char *filename, void *filter) {
-	fprintf(stderr, "Change detected in: %s ", fs_events_path(wd));
+	fprintf(stderr, CLR"Change detected in: %s ", fs_events_path(wd));
 
 	if (events & WATCH_ADDED || events & WATCH_REMOVED)
         fprintf(stderr, "renamed");
 	if (events & WATCH_MODIFIED)
         fprintf(stderr, "changed");
 
-	fprintf(stderr, " %s\n", filename ? filename : "");
+	fprintf(stderr, " %s"CLR_LN, filename ? filename : "");
     system(command);
 }
 

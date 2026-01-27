@@ -111,6 +111,12 @@ struct DIR {
 };
 typedef struct DIR DIR;
 
+/* Returns the filename component of the path */
+char *basename(const char *s);
+
+/* Returns directory name component of path */
+char *dirname(char *path);
+
 static DIR *opendir(const char *dirname);
 static struct dirent *readdir(DIR *dirp);
 static int closedir(DIR *dirp);

@@ -535,6 +535,7 @@ C_API int fs_access(const char *path, int mode);
 C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
 C_API int fs_writefile(const char *path, char *text);
+C_API char *fs_readfile(const char *path);
 
 /* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
 - This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.
@@ -854,7 +855,7 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.4.1.zip
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.0.zip
         URL_MD5 3e2c7e01328ba14de5f8b054218929e6
     )
     FetchContent_MakeAvailable(events)

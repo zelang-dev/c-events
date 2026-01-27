@@ -1,5 +1,5 @@
 #ifndef _UNISTD_H
-#define _UNISTD_H    1
+#define _UNISTD_H
 
 /* This is intended as a drop-in replacement for unistd.h on Windows.
  * Please add functionality as needed.
@@ -88,4 +88,4 @@ typedef unsigned __int64  uint64_t;
 #endif
 #endif
 
-#endif /* unistd.h  */
+#endif /* _UNISTD_H */

@@ -2161,11 +2161,11 @@ static void enqueue_tasks(tasks_t *t) {
 	atomic_fetch_add(&queue->available, 1);
 }
 
-static void *__worker_tasks_main(param_t args) {
+static void *__tasks_pool_main(param_t args) {
 	events_deque_t *queue = args[0].object;
 	events_t *loop = args[1].object;
 	__thrd()->started = true;
-	task_name("worker_tasks_main #%d", (int)__thrd()->thrd_id);
+	task_name("tasks_pool_main #%d", (int)__thrd()->thrd_id);
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
 		tasks_info(active_task(), 1);
@@ -2182,7 +2182,7 @@ static void *__worker_tasks_main(param_t args) {
 	return 0;
 }
 
-static int __worker_tasks_wrapper(void *arg) {
+static int __tasks_pool_wrapper(void *arg) {
 	os_tasks_t *work = (os_tasks_t *)arg;
 	events_deque_t *queue = work->queue;
 	events_t *loop = queue->loop;
@@ -2193,7 +2193,7 @@ static int __worker_tasks_wrapper(void *arg) {
 		;
 
 	__thrd()->loop = loop;
-	if ((int)async_task_ex(Kb(32), __worker_tasks_main, 2, queue, loop) > 0) {
+	if ((int)async_task_ex(Kb(32), __tasks_pool_main, 2, queue, loop) > 0) {
 		__thrd()->pool = work->pool;
 		res = 0;
 		do {
@@ -2248,7 +2248,7 @@ int events_tasks_pool(events_t *loop) {
 				t_work->queue->loop = loop;
 				t_work->pool = __thrd()->pool;
 				t_work->type = DATA_PTR;
-				local[index]->thread = os_create(__worker_tasks_wrapper, (void *)t_work);
+				local[index]->thread = os_create(__tasks_pool_wrapper, (void *)t_work);
 				if (local[index]->thread != OS_NULL) {
 					if (sys_event.cpu_index == NULL)
 						sys_event.cpu_index = array();

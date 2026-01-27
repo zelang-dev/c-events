@@ -122,6 +122,14 @@ typedef enum {
 	WATCH_MOVED = 0x400
 } events_monitors;
 
+typedef struct {
+	int pseudo;
+	size_t bytes;	/* Size of file, in bytes. */
+	size_t mtime;	/* Time of last modification. */
+	size_t ctime;	/* Time of last status change. */
+	char filename[NAME_MAX];
+} dirent_entry;
+
 typedef struct coro_events_s coroutine_t;
 typedef struct events_task_s tasks_t;
 typedef struct execinfo_s execinfo_t;
@@ -345,6 +353,7 @@ C_API int fs_access(const char *path, int mode);
 C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
 C_API int fs_writefile(const char *path, char *text);
+C_API char *fs_readfile(const char *path);
 
 /* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
 - This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.
