@@ -17,6 +17,9 @@ Some **Libevent** [examples](https://github.com/libevent/libevent/tree/master/sa
   * [TODO's](#todos)
 * [Design](#design)
 * [Synopsis](#synopsis)
+* [Automatic Memory Safety](#automatic-memory-safety)
+  * [RAII: fence()](#raii-fence-defer-guard)
+  * [RAII: Synopsis](#raii-synopsis)
 * [Usage](#usage)
 * [Comparisons](#comparisons)
 * [Installation](#installation)
@@ -57,6 +60,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Complete implementation of `inotify_add_watch()` for **macOS** aka **BSD** *platforms*.
 * [x] Implement *event* `EVENTS_PATHWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
 * [x] Implement `fs_events()` function, for fully recursive automatic *setup* and *execution* for **filesystem monitoring**.
+* [x] Merge the **core** [c-raii](https://github.com/zelang-dev/c-raii) memory safety into `fence()` function, and *exception* handling implementation `try...catch`.
 * [ ] Completion of ALL OS *file system* function routines with matching **thread** ~async_fs_~ *version*.
 
 ## Design
@@ -306,6 +310,10 @@ C_API tasks_t *active_task(void);
 NOTE: This switches to thread ~schedular~ `run queue` to `execute` next `task`. */
 C_API void yield_task(void);
 
+/* Creates an `task` of given function with arguments,
+and immediately execute. */
+C_API void launch_task(launch_func_t fn, uint32_t num_of_args, ...);
+
 /* Suspends the execution of current `task`, and switch to the ~scheduler~. */
 C_API void suspend_task(void);
 
@@ -550,6 +558,257 @@ C_API const char *fs_events_path(int wd);
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);
 C_API bool spawn_is_finish(execinfo_t *child);
+```
+
+## Automatic Memory Safety
+
+**What is memory safety?**
+
+> It's not the *language* with the problem.
+
+*Safety* has to be the **user** aka **programmer**. This is where the problem start, someone *believe/think* they the same as **developer**, by the way some speak, as if interchangeable.
+
+In reality, they are worlds apart, a totally different responsibility level, a lot of trial and error, a lot of actual science, ever changing/always changing. In fact, **the process**, the *need* to go down **rabbit holes**. At some point, you need to so call *pause*, that *pause* represent a **product**.
+
+In order for the *government* to issue [Memory Safe Languages: Reducing Vulnerabilities in Modern Software Development](https://www.cisa.gov/resources-tools/resources/memory-safe-languages-reducing-vulnerabilities-modern-software-development). The *languages* cited as **safe**, needs an environment setup for that to be **created**. They seem not to realize the **origin story** of any of them, one **produced** the *other*.
+
+There is **a process** to **safety** that these *languages* produce/expect for **users** to *follow* and they **enforce** otherwise.
+
+* In short, you shouldn't use **C**, because it can be represented as a **raw** *base* level **product** for **developers**.
+
+### RAII: fence, defer, guard
+
+This library has brought in multiple parts of <https://github.com/zelang-dev/c-raii> and revealing many things needs redoing. The main execution model was fully automatic, the system provided it's own `main()` entry point, not customizable, everything force automatic.
+
+* This system does not have that automatic behavior, you must provide `main()` entry point, then call and possibly customize required routines.
+* The actual RAII part is customizable here using `fence()`, `defer()`, and `guard/guarded` blocks aka `try/catch_if/finally` manually. Where **fence()** encapsulate an **C++** feature called [unique_ptr)](https://en.cppreference.com/w/cpp/memory/unique_ptr). A call to **defer()** guarantees LIFO execution cleanup pattern when *guard*, *coroutine*, or *thread* scope **exit/return/panic/throw**. For handling `Platform/O.S. Exceptions`, these calls MUST be *between* `guard/guarded` blocks.
+* The memory safety process also encompass every `struct` presented, have a **enum** `type` first field. There are various processes paranoid checking, but if pointer is freed, that field will not be as expected, *offset* at `0`. No additional actions taken, there are really no bare freeing on any objects.
+
+The below `try...catch` *example* is the **recommended pattern** for complete cross platform usage. This system uses *native* [Windows SEH](https://learn.microsoft.com/en-us/cpp/cpp/try-except-statement), where *multiple* `catch()` blocks not possible. See [examples/exceptions](https://github.com/zelang-dev/c-events/tree/main/examples/exceptions) folder for general `try/catch(e)/catch_any/catch_if/finally` usage.
+
+> NOTE: Only in **debug builds** *uncaught exceptions* **backtrace** info is auto displayed.
+
+```c++
+#include <except.h>
+
+static void pfree(void *p) {
+    printf("freeing protected memory pointed by '%s'\n", (char *)p);
+    free(p);
+}
+
+int main(int argc, char **argv) {
+    try {
+        int a = 1;
+        int b = 0.00000;
+        char *p = 0;
+        p = fence(malloc(3), pfree);
+        strcpy(p, "p");
+
+        *(int *)0 = 0;
+        printf("never reached\n");
+        printf("%d\n", (a / b));
+        raise(SIGINT);
+    } catch_if {
+        if (caught(bad_alloc))
+            printf("catch: exception %s (%s:%d) caught\n", err.name, err.file, err.line);
+        else if (caught(division_by_zero))
+            printf("catch: exception %s (%s:%d) caught\n", err.name, err.file, err.line);
+        else if (caught(sig_fpe))
+            printf("catch: exception %s (%s:%d) caught\n", err.name, err.file, err.line);
+        else if (caught(sig_ill))
+            printf("catch: exception %s (%s:%d) caught\n", err.name, err.file, err.line);
+        else if (caught(sig_int))
+            printf("catch: exception %s (%s:%d) caught\n", err.name, err.file, err.line);
+        else if (caught(sig_segv))
+            printf("catch: exception %s (%s:%d) caught\n", err.name, err.file, err.line);
+    } finally {
+        if (err.is_caught) {
+            printf("finally: try failed, but succeeded to catch -> %s (%s:%d)\n", err.name, err.file, err.line);
+        } else {
+            printf("finally: try failed to `catch()`\n");
+            ex_backtrace(err.backtrace);
+        }
+    }
+
+    return 0;
+}
+```
+
+The example below show basic *coroutine/task* usage, if `guard/guarded` removed, no execution possible, just **segmentation fault/hang/abort**. If you remove `defer(func, arg);`, system will catch exception, but output **Exiting with uncaught exception:** with *error* message.
+
+```c
+#include <except.h>
+
+int div_err(int x, int y) {
+    return x / y;
+}
+
+int mul(int x, int y) {
+    return x * y;
+}
+
+void func(void *arg) {
+    if (try_caught(guard_message()))
+  printf("panic occurred: %s\n", try_message());
+}
+
+void divByZero(param_t arg) {
+ guard {
+  defer(func, arg);
+  printf("%d", div_err(1, 0));
+ } guarded;
+}
+
+void *main_main(param_t args) {
+    launch_task(divByZero, 0);
+    printf("Although panicked. We recovered. We call mul() func\n");
+    printf("mul func result: %d\n", mul(5, 10));
+    return 0;
+}
+
+int main(int argc, char **argv) {
+ events_init(1024);
+ events_t *loop = events_create(1);
+ async_task(main_main, 0);
+ async_run(loop);
+ events_destroy(loop);
+
+ return 0;
+}
+
+/*
+panic occurred: divide_by_zero
+Although panicked. We recovered. We call mul() func
+mul func result: 50
+*/
+```
+
+### RAII: Synopsis
+
+```c
+/* Returns an ~protected~ memory pointer from ~current~ `scoped` context, aka `RAII`.
+
+- Creates a lifetime smart handle, an `scoped` object, that binds any additional requests to it's lifetime.
+- `Defer` execution of `func`, WILL be `LIFO` executed on `panic/throw/return/exit`.
+- To handle/unwind `Platform/O.S. Exceptions` this function MUST be inside `guard` aka `try...catch` blocks.
+- Returns `NULL` if `ptr` is NULL, ~example~ `fence(malloc(sizeof(struct)), free);`
+
+Uses either `guard` section, `try/catch` block, or `thread`,
+if not an active ~coroutine~ `Events API` environment, as `context`. */
+C_API void *fence(void *ptr, func_t func);
+
+/* Creates an scoped `guard` section. */
+#define guard
+
+/* Ends an scoped `guard` section, on scope exit will begin executing deferred functions. */
+#define guarded
+
+/* Defer execution of `free()`, LIFO on `data` pointer.
+- WILL return `true` if `data` not `NULL`. */
+C_API bool defer_free(void *data);
+
+/* Defer execution `LIFO` of given function with argument, indicating is it pointer,
+to when current `scope` exits/returns.
+- Use: macro `defer()` for pointer handling.
+- Use: macro `deferring()` for `int` handling, aka `close()`.
+- Use: `defer_free()` for general allocation memory clean up.
+- WILL return `-1`, if `func` is `NULL` or internal allocation failure. */
+C_API int deferred(func_t func, void *data, bool is_ptr);
+
+/* Defer execution `LIFO` of given function with `pointer` argument.
+Execution begins when current `guard` scope exits or panic/throw. */
+#define defer(func, ptr)
+
+/* Defer execution `LIFO` of given function with `int` argument.
+Execution begins when current `guard` scope exits or panic/throw. */
+#define deferring(func, res)
+
+/* Compare `e` to current error condition in `scope`,
+will mark exception handled, if `true`. */
+#define caught(e)
+
+/* An macro that stops the ordinary flow of control and begins panicking,
+throws an exception of given `message`. */
+#define ex_panic(message)
+
+/* An macro that stops the ordinary flow of control and begins panicking,
+throws an `E` defined O.S. exception as:
+- invalid_type
+- range_error
+- divide_by_zero
+- logic_error
+- future_error
+- system_error
+- domain_error
+- length_error
+- out_of_range
+- invalid_argument
+- division_by_zero
+- out_of_memory
+- sig_int
+- sig_abrt
+- sig_alrm
+- sig_bus
+- sig_fpe
+- sig_ill
+- sig_quit
+- sig_segv
+- sig_term
+- sig_trap
+- sig_hup
+- sig_break
+- sig_winch
+- sig_info
+- access_violation
+- array_bounds_exceeded
+- breakpoint
+- datatype_misalignment
+- flt_denormal_operand
+- flt_divide_by_zero
+- flt_inexact_result
+- flt_invalid_operation
+- flt_overflow
+- flt_stack_check
+- flt_underflow
+- illegal_instruction
+- in_page_error
+- int_divide_by_zero
+- int_overflow
+- invalid_disposition
+- priv_instruction
+- single_step
+- stack_overflow
+- invalid_handle
+- bad_alloc */
+#define throw(E)
+
+/* Compare `E` to current error condition in `scope`,
+will mark exception handled, if `true`.
+- `E` can be defined like exception macro `throw(E)`. */
+#define caught(E)
+
+/* Get current `guard` ~scope~ error condition string. */
+C_API const char *guard_message(void);
+
+/* Compare `err` to current error condition in `scope`,
+will mark exception handled, if `true`. */
+C_API bool try_caught(const char *err);
+
+/* Get current ~scope~ error condition string. */
+C_API const char *try_message(void);
+
+/* Protects dynamically allocated memory against exceptions.
+If the object pointed by `ptr` changes before `unprotected()`,
+the new object will be automatically protected.
+
+If `ptr` is not null, `func(ptr)` will be invoked during stack unwinding. */
+#define protected(ptr, func)
+
+/* Remove memory pointer protection, does not free the memory. */
+#define unprotected(p)
+
+/* Prints stack trace based on context record */
+C_API void ex_backtrace(ex_backtrace_t *ex);
 ```
 
 ## Usage
@@ -857,7 +1116,7 @@ find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
         URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.0.zip
-        URL_MD5 3e2c7e01328ba14de5f8b054218929e6
+        URL_MD5 a5683c02e5a21bef11bfccd6b1bac803
     )
     FetchContent_MakeAvailable(events)
 endif()

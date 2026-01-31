@@ -145,6 +145,13 @@ typedef struct sys_signal_s sys_signal_t;
 typedef struct _request_worker os_request_t;
 typedef struct task_group_s task_group_t;
 typedef struct generator_s *generator_t;
+typedef struct ex_memory_s ex_memory_t;
+typedef struct ex_ptr_s ex_ptr_t;
+typedef struct ex_context_s ex_context_t;
+typedef struct ex_backtrace_s ex_backtrace_t;
+typedef void (*ex_setup_func)(ex_context_t *, const char *, const char *);
+typedef void (*ex_terminate_func)(void);
+typedef void (*ex_unwind_func)(void *);
 typedef void *(*malloc_func)(size_t);
 typedef void *(*realloc_func)(void *, size_t);
 typedef void *(*calloc_func)(size_t, size_t);
@@ -156,10 +163,30 @@ typedef void *(*param_func_t)(param_t);
 typedef events_cb sig_cb;
 typedef task_group_t *waitgroup_t;
 
+/* stack of protected pointer */
+struct ex_ptr_s {
+	int type;
+	ex_ptr_t *next;
+	ex_unwind_func func;
+	void **ptr;
+};
+
+struct ex_memory_s {
+	void *arena;
+	data_types status;
+	bool is_recovered;
+	bool is_protected;
+	ex_ptr_t protector[1];
+	ex_backtrace_t *backtrace;
+	array_t volatile defer_arr;
+	void *volatile err;
+	const char *volatile panic;
+};
+
 C_API sys_events_t sys_event;
 C_API volatile sig_atomic_t events_got_signal;
 
-#define panic(message)	events_abort(message, __FILE__, __LINE__, __FUNCTION__)
+#define panicking(message)	events_abort(message, __FILE__, __LINE__, __FUNCTION__)
 
 C_API bool events_is_destroy(void);
 C_API bool events_is_shutdown(void);
@@ -303,6 +330,10 @@ C_API tasks_t *active_task(void);
 NOTE: This switches to thread ~schedular~ `run queue` to `execute` next `task`. */
 C_API void yield_task(void);
 
+/* Creates an `task` of given function with arguments,
+and immediately execute. */
+C_API void launch_task(launch_func_t fn, uint32_t num_of_args, ...);
+
 /* Suspends the execution of current `task`, and switch to the ~scheduler~. */
 C_API void suspend_task(void);
 
@@ -362,6 +393,9 @@ C_API void tasks_info(tasks_t *t, int pos);
 /* Return `current` task ~user_data~. */
 C_API void *task_data(void);
 C_API int task_err_code(void);
+C_API void task_exception_set(void *);
+C_API void task_scope_set(ex_memory_t *);
+C_API ex_memory_t *task_scope(void);
 C_API ptrdiff_t task_code(void);
 
 /* Set tasks `user_data`, a ~per~ `task` storage place,

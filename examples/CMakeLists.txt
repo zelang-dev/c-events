@@ -13,6 +13,7 @@ set(TARGET_LIST
 	generator
 	task_multi-args
 	task_sleep
+	task_guarded
 	dns_ip
 	dns
 	tcp_proxy

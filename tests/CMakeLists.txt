@@ -15,6 +15,8 @@ set(TARGET_LIST
  test-waitgroup
  test-fs_events
  test-parse_uri
+ test-defer
+ test-exceptions
 )
 
 add_executable(test-getopts test-getopts.c)

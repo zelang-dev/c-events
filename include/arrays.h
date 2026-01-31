@@ -20,6 +20,10 @@ extern "C" {
 typedef void (*dtor_func_t)(void *);
 typedef void *(*data_func_t)(void *);
 typedef intptr_t(*intptr_func_t)(intptr_t);
+typedef void(*defer_cb)(void *);
+typedef void(*defer_func)(intptr_t);
+typedef defer_cb func_t;
+
 typedef enum {
 	DATA_INVALID = -1,
 	DATA_NULL,
@@ -45,6 +49,7 @@ typedef enum {
 	DATA_STRING,
 	DATA_OBJ,
 	DATA_PTR,
+	DATA_RAII,
 	DATA_FUNC,
 	DATA_ARRAY,
 	DATA_TUPLE,
@@ -59,6 +64,10 @@ typedef enum {
 	DATA_TLS,
 	DATA_WATCH,
 	DATA_FILEINFO,
+	DATA_GUARDED_STATUS,
+	DATA_UNGUARDED_STATUS,
+	DATA_EXCEPT_CONTEXT,
+	DATA_EXCEPT_PROTECTED,
 	DATA_MAXCOUNTER,
 } data_types;
 
@@ -97,6 +106,7 @@ typedef union {
 	uintptr_t **array_uint;
 	data_func_t func;
 } values_t, *tuple_t, *param_t, *array_t;
+typedef void (*launch_func_t)(param_t);
 
 typedef struct {
 	data_types type;
@@ -110,6 +120,10 @@ typedef struct {
 } data_values_t;
 
 typedef struct {
+	values_t value;
+} data_values_ex;
+
+typedef struct {
 	data_types type;
 	void *value;
 	dtor_func_t dtor;
@@ -117,9 +131,11 @@ typedef struct {
 
 typedef struct {
 	data_types type;
+	bool is_ptr;
 	intptr_t value;
-	void (*func)(void *);
 	void *data;
+	defer_cb func;
+	defer_func _func;
 } defer_t;
 
 typedef struct fileinfo_s {
@@ -173,11 +189,11 @@ C_API void data_reserve(array_t, size_t);
 C_API atomic_spinlock *data_lock(array_t);
 C_API size_t data_queue_size(void);
 C_API data_types data_type(void *self);
+C_API values_t data_value(void *data);
 C_API bool is_data(void *);
 C_API bool is_taskgroup(void *);
 C_API bool is_waitgroup(void *);
 C_API bool is_ptr_usable(void *self);
-C_API bool defer_free(void *data);
 
 #ifndef $append
 #define $append(arr, value) 			data_append((array_t)arr, (void *)value)
@@ -351,6 +367,28 @@ C_API void getopt_arguments_set(int argc, char **argv);
 #ifndef CRLF
 #	define CRLF	"\r\n"
 #endif
+
+/* Defer execution of `free()`, LIFO on `data` pointer.
+- WILL return `true` if `data` not `NULL`. */
+C_API bool defer_free(void *data);
+
+/* Defer execution `LIFO` of given function with argument, indicating is it pointer,
+to when current `scope` exits/returns.
+- Use: macro `defer()` for pointer handling.
+- Use: macro `deferring()` for `int` handling, aka `close()`.
+- Use: `defer_free()` for general allocation memory clean up.
+- WILL return `-1`, if `func` is `NULL` or internal allocation failure. */
+C_API int deferred(func_t func, void *data, bool is_ptr);
+
+/* Defer execution `LIFO` of given function with `pointer` argument.
+Execution begins when current `guard` scope exits or panic/throw.
+*/
+#define defer(func, ptr) deferred((func_t)func, (void *)(ptr), true)
+
+/* Defer execution `LIFO` of given function with `int` argument.
+Execution begins when current `guard` scope exits or panic/throw.
+*/
+#define deferring(func, res) deferred((func_t)func, casting(res), false)
 
 #ifdef __cplusplus
 }

@@ -2,6 +2,7 @@
 #define _EVENTS_INTERNAL_H
 
 #include <events.h>
+#include <except.h>
 
 #ifndef USE_ASSEMBLY
 /** Coroutines uses the C standard library's `setjump`/`longjmp` API.
@@ -433,6 +434,7 @@ struct events_task_s {
 	tasks_t *sleeping;
 	generator_t generator;
 	task_group_t *task_group;
+	ex_memory_t *scope;
 	array_t garbage;
 	data_func_t func;
 	void *args;
@@ -512,6 +514,7 @@ uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, .
 void thread_result_set(os_request_t *p, void *res);
 uint32_t task_push(tasks_t *t);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread);
+bool tasks_is_active(void);
 int results_tid(uint32_t rid);
 
 void deque_init(events_deque_t *q, int size_hint);

@@ -34,6 +34,7 @@ set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
 
 set(ev_sources
 	${CMAKE_CURRENT_SOURCE_DIR}/src/events.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/except.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/os_async.c)
 if(WIN32)
@@ -179,6 +180,7 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
 
     if(BUILD_EXAMPLES)
         add_subdirectory(examples)
+        add_subdirectory(examples/exceptions)
     endif()
 
     if(BUILD_TESTS)

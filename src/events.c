@@ -993,21 +993,28 @@ static void task_delete(tasks_t *co) {
 	}
 }
 
-static EVENTS_INLINE void defer_cleanup(tasks_t *t) {
-	if (t->garbage != NULL) {
-		foreach_back(arr in t->garbage) {
+static void deferred_unwind(array_t garbage) {
+	if (is_data(garbage)) {
+		foreach_back(arr in garbage) {
 			if (is_ptr_usable(arr.object)) {
-				if (is_data(arr.object))
+				if (is_data(arr.object)) {
 					$delete(arr.object);
-				else if (data_type(arr.object) == DATA_OBJ)
+				} else if (data_type(arr.object) == DATA_DEFER) {
+					defer_t *clean = (defer_t *)arr.object;
+					clean->type = DATA_INVALID;
+					if (clean->is_ptr)
+						clean->func(clean->data);
+					else
+						clean->_func(clean->value);
+					events_free(clean);
+				} else if (data_type(arr.object) == DATA_OBJ) {
 					((data_object_t *)arr.object)->dtor(arr.object);
-				else if (arr.object != NULL)
+				} else if (!is_empty(arr.object)) {
 					events_free(arr.object);
+				}
 			}
 		}
-
-		$delete(t->garbage);
-		t->garbage = NULL;
+		$delete(garbage);
 	}
 }
 
@@ -1039,7 +1046,8 @@ static void task_awaitable(void) {
 	param_t args = (param_t)co->args;
 	tasks_result_set(co, co->func(args));
 	data_delete(args);
-	defer_cleanup(co);
+	deferred_unwind(co->garbage);
+	co->garbage = null;
 }
 
 static EVENTS_INLINE void task_func(void) {
@@ -1078,6 +1086,19 @@ EVENTS_INLINE int task_err_code(void) {
 	return active_task()->err_code;
 }
 
+EVENTS_INLINE void task_exception_set(void *err) {
+	if (!is_empty(active_task()->scope) && is_ptr_usable(active_task()->scope))
+		active_task()->scope->err = err;
+}
+
+EVENTS_INLINE void task_scope_set(ex_memory_t *scope) {
+	active_task()->scope = scope;
+}
+
+EVENTS_INLINE ex_memory_t *task_scope(void) {
+	return active_task()->scope;
+}
+
 EVENTS_INLINE ptrdiff_t task_code(void) {
 	return (ptrdiff_t)active_task()->err_code;
 }
@@ -1092,6 +1113,10 @@ EVENTS_INLINE void task_data_set(tasks_t *t, void *data) {
 
 EVENTS_INLINE void *task_data_get(tasks_t *t) {
 	return t->user_data;
+}
+
+EVENTS_INLINE bool tasks_is_active(void) {
+	return !is___thrd_null();
 }
 
 EVENTS_INLINE void tasks_info(tasks_t *t, int pos) {
@@ -1427,7 +1452,7 @@ generator_t generator(param_func_t fn, size_t num_of, ...) {
 void yielding(void *data) {
 	tasks_t *co = active_task();
 	if (!co->is_generator)
-		panic("Current `task` not a generator!\n");
+		panicking("Current `task` not a generator!\n");
 
 	while (co->generator->is_ready) {
 		yield_task();
@@ -1545,6 +1570,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	co->context = NULL;
 	co->sleeping = NULL;
 	co->task_group = NULL;
+	co->scope = NULL;
 	co->garbage = NULL;
 	co->generator = NULL;
 	co->stack_size = heapsize + sizeof(_results_data_t);
@@ -1630,16 +1656,70 @@ bool defer_free(void *data) {
 	if (data == NULL)
 		return false;
 
-	if (__thrd()->running != NULL)
-		t = __thrd()->running;
-	else
-		t = active_task();
+	if (tasks_is_active()) {
+		if (!is_empty(__thrd()->running))
+			t = __thrd()->running;
+		else
+			t = active_task();
 
-	if (t->garbage == NULL)
-		t->garbage = array();
+		if (is_empty(t->garbage))
+			t->garbage = array();
 
-	$append(t->garbage, data);
+		$append(t->garbage, data);
+		return true;
+	}
+
+	$append(get_scope()->defer_arr, data);
 	return true;
+}
+
+static int _defer_init(void *ptr) {
+	if (is_empty(ptr))
+		return TASK_ERRED;
+
+	if (tasks_is_active()) {
+		tasks_t *t = null;
+		if (!is_empty(__thrd()->running))
+			t = __thrd()->running;
+		else
+			t = active_task();
+
+		if (is_data(t->scope->defer_arr)) {
+			$append(t->scope->defer_arr, ptr);
+			return $size(t->scope->defer_arr);
+		}
+
+		if (is_empty(t->garbage))
+			t->garbage = array();
+
+		$append(t->garbage, ptr);
+		return $size(t->garbage);
+	}
+
+	$append(get_scope()->defer_arr, ptr);
+	return $size(get_scope()->defer_arr);
+}
+
+int deferred(func_t func, void *data, bool is_ptr) {
+	if (is_empty(func))
+		return TASK_ERRED;
+
+	defer_t *deferred = (defer_t *)events_malloc(sizeof(defer_t));
+	int index = TASK_ERRED;
+	if ((index = _defer_init(deferred)) > 0) {
+		deferred->is_ptr = is_ptr;
+		if (is_ptr) {
+			deferred->func = func;
+			deferred->data = data;
+		} else {
+			deferred->_func = (defer_func)func;
+			deferred->value = (intptr_t)data;
+		}
+
+		deferred->type = DATA_DEFER;
+	}
+
+	return index;
 }
 
 EVENTS_INLINE tasks_t *active_task(void) {
@@ -1672,6 +1752,17 @@ uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
 	va_end(ap);
 
 	return task_push(create_task(Kb(18), (data_func_t)fn, params, false));
+}
+
+void launch_task(launch_func_t fn, uint32_t num_of_args, ...) {
+	va_list ap;
+
+	va_start(ap, num_of_args);
+	param_t params = data_ex(num_of_args, ap);
+	va_end(ap);
+
+	task_push(create_task(Kb(18), (data_func_t)fn, params, false));
+	yield_task();
 }
 
 static EVENTS_INLINE task_group_t *create_task_group(void) {
@@ -1735,7 +1826,7 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 #endif
 	}
 
-	panic("MUST call `events_tasks_pool()` first!");
+	panicking("MUST call `events_tasks_pool()` first!");
 	return TASK_ERRED;
 }
 

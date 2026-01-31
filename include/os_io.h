@@ -53,7 +53,8 @@
 #	define Statement(s) do {	\
 			s	\
 		}	while (0)
-#	define trace Statement(printf(CLR_LN"%s:%d Trace ", __FILE__, __LINE__);)
+#	define trace 		Statement(printf(CLR_LN"%s:%d Trace ", __FILE__, __LINE__);)
+#	define unreachable 	Statement(printf(CLR_LN"How did we get here? In %s on line %d\n", __FILE__, __LINE__);)
 #endif
 
 #include <stdlib.h>
