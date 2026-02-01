@@ -2,6 +2,14 @@
 
 #define EVENTS_ARGS_LENGTH 32768
 
+#ifndef max
+# define max(a, b) (((a) > (b)) ? (a) : (b))
+#endif
+
+#ifndef min
+# define min(a, b) (((a) < (b)) ? (a) : (b))
+#endif
+
 typedef struct array_metadata_s {
 	data_types type;
 	size_t size;

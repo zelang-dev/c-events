@@ -94,6 +94,18 @@ void ex_trace_set(ex_context_t *ex, void *ctx);
 ex_error_t *try_updating_err(ex_error_t *, ex_context_t *);
 void try_finish(ex_context_t *);
 
+static void scope_delete(ex_memory_t *ptr) {
+	if (ptr == NULL)
+		return;
+
+	scope_unwind(ptr);
+	memset(ptr, 0, sizeof(ex_memory_t));
+}
+
+static EVENTS_INLINE void scope_destroy(void) {
+	scope_delete(scope_local());
+}
+
 enum {
     max_ex_sig = 32
 };
@@ -380,7 +392,10 @@ int ex_uncaught_exception(void) {
 }
 
 void ex_terminate(void) {
-    if (ex_uncaught_exception() || got_uncaught_exception)
+	if (ex_local()->is_scoped)
+		scope_destroy();
+
+	if (ex_uncaught_exception() || got_uncaught_exception)
         ex_print(ex_local(), "\nException during stack unwinding leading to an undefined behavior");
     else
         ex_print(ex_local(), "\nExiting with uncaught exception");
@@ -890,18 +905,6 @@ EVENTS_INLINE const char *try_message(void) {
 	ex_memory_t *scope = get_scope();
 	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
 	return exception == NULL ? ex_local()->ex : exception;
-}
-
-static void scope_delete(ex_memory_t *ptr) {
-	if (ptr == NULL)
-		return;
-
-	scope_unwind(ptr);
-	memset(ptr, 0, sizeof(ex_memory_t));
-}
-
-static EVENTS_INLINE void scope_destroy(void) {
-	scope_delete(scope_local());
 }
 
 EVENTS_INLINE ex_memory_t *scope_local(void) {
