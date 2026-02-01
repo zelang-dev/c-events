@@ -1009,6 +1009,25 @@ static void scope_deferred(ex_memory_t *scope, func_t func, void *data) {
 	}
 }
 
+void scope_request_erred(os_request_t *p, ex_context_t err) {
+	atomic_lock(&p->mutex);
+	p->scope->err = (void *)err.ex;
+	p->scope->panic = err.panic;
+	p->scope->backtrace = err.backtrace;
+	atomic_unlock(&p->mutex);
+	atomic_flag_test_and_set(&p->done);
+}
+
+void scope_request_rethrow(os_request_t *p) {
+	if (data_type(p) == DATA_JOBS) {
+		p->type = DATA_INVALID;
+		atomic_flag_clear(&p->mutex);
+		atomic_flag_clear(&p->done);
+		if (!is_empty(p->scope->err))
+			ex_throw(p->scope->err, "unknown", 0, "__threads_wrapper", p->scope->panic, p->scope->backtrace);
+	}
+}
+
 void *fence(void *ptr, func_t func) {
 	if (is_empty(ptr))
 		return null;

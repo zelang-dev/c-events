@@ -189,6 +189,7 @@ struct _request_worker {
 	param_t args;
 	param_func_t func;
 	data_values_t result[1];
+	ex_memory_t *scope;
 	atomic_spinlock mutex;
 	atomic_flag done;
 };

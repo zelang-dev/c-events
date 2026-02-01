@@ -208,6 +208,7 @@ uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...) {
 	os_request_t *f = (os_request_t*)events_calloc(1, sizeof(os_request_t));
 	f->args = args;
 	f->func = fn;
+	f->type = DATA_JOBS;
 	atomic_flag_clear(&f->mutex);
 	atomic_flag_clear(&f->done);
 	uint32_t id = async_loop(thrd->queue->loop, Kb(64), queue_work_handler, 2, thrd, f);

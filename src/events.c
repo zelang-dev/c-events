@@ -1505,7 +1505,7 @@ static results_data_t tasks_create_result(void) {
 	result->is_canceled = false;
 	result->id = id;
 	result->result.object = NULL;
-	result->type = DATA_PTR;
+	result->type = DATA_RESULT;
 	results[id] = result;
 	atomic_store_explicit(&sys_event.results, results, memory_order_release);
 	return result;
@@ -2338,7 +2338,7 @@ int events_tasks_pool(events_t *loop) {
 				t_work->queue->jobs = array();
 				t_work->queue->loop = loop;
 				t_work->pool = __thrd()->pool;
-				t_work->type = DATA_PTR;
+				t_work->type = DATA_POOL;
 				local[index]->thread = os_create(__tasks_pool_wrapper, (void *)t_work);
 				if (local[index]->thread != OS_NULL) {
 					if (sys_event.cpu_index == NULL)
@@ -2403,7 +2403,7 @@ os_worker_t *events_add_pool(events_t *loop) {
 				f_work->queue->jobs = array();
 				f_work->queue->loop = loop;
 				f_work->last_fd = TASK_ERRED;
-				f_work->type = DATA_PTR;
+				f_work->type = DATA_THREAD;
 				local[index]->thread = os_create(__threads_wrapper, (void *)f_work);
 				if (local[index]->thread == OS_NULL) {
 					events_free(f_work);

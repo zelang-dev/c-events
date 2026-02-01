@@ -350,6 +350,19 @@ will mark exception handled, if `true`.
     }											\
 }
 
+/* Will catch and set `error`, this is for future `queue_work` thread usage. */
+#define guarded_exception(error)                \
+        } while (false);                        \
+        scope_unwind((_g_scope));				\
+    } catch_if {                             	\
+        scope_unwind((_g_scope));				\
+        if (!(_g_scope)->is_recovered && try_caught(try_message())) \
+            scope_request_erred(error, ex_err);	\
+    } finally {                                 \
+		guard_reset(_g_arena, _g_set, _g_unwind);	\
+    }                                     		\
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -382,6 +395,7 @@ C_API ex_memory_t *get_scope(void);
 C_API ex_memory_t *scope_init(void);
 C_API void *scope_arena(void);
 C_API void scope_unwind(ex_memory_t *scope);
+C_API void scope_request_erred(os_request_t *p, ex_context_t err);
 
 /* Returns an ~protected~ memory pointer from ~current~ `scoped` context, aka `RAII`.
 
