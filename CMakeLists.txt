@@ -5,7 +5,7 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
 endif()
 
 project(events
-	VERSION 0.5.0
+	VERSION 0.5.1
 	DESCRIPTION "A tiny, lightning fast, event loop, using either `epoll`, `kqueue`, or `wepoll` and `iocp` for Windows."
     LANGUAGES C
 )
@@ -55,12 +55,12 @@ endif()
 
 if(UNIX)
     if(APPLE)
-        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -D USE_DEBUG ")
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -D USE_DEBUG -D ENABLE_ASSERTS ")
     else()
         set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -rdynamic -D USE_DEBUG")
     endif()
 else()
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /D USE_DEBUG ")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /D USE_DEBUG /D ENABLE_ASSERTS ")
     if($ENV{Platform} MATCHES x86)
         message("Building Windows x86-32bit")
         add_definitions(-D_WIN32_PLATFORM_X86=1)

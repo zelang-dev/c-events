@@ -790,6 +790,10 @@ will mark exception handled, if `true`.
 /* Get current `guard` ~scope~ error condition string. */
 C_API const char *guard_message(void);
 
+/* Compare `err` to `guard` ~scope~ error condition,
+will mark exception handled, if `true`. */
+C_API bool guard_caught(const char *err);
+
 /* Compare `err` to current error condition in `scope`,
 will mark exception handled, if `true`. */
 C_API bool try_caught(const char *err);
@@ -1114,7 +1118,7 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.0.zip
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.1.zip
         URL_MD5 a5683c02e5a21bef11bfccd6b1bac803
     )
     FetchContent_MakeAvailable(events)

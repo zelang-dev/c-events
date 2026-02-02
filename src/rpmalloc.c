@@ -1,7 +1,9 @@
 /* rpmalloc.c  -  Memory allocator  -  Public Domain  -  2016-2020 Mattias Jansson
  *
- * This library provides a cross-platform lock free thread caching malloc implementation in C11.
+ * This library provides a cross-platform lock free thread caching malloc implementation in C89.
  * The latest source code is always available at
+ *
+ * Modified fork from https://github.com/zelang-dev/rpmalloc
  *
  * https://github.com/mjansson/rpmalloc
  *
@@ -31,6 +33,10 @@
 
 #if !defined(__has_builtin)
 #define __has_builtin(b) 0
+#endif
+
+#if !defined(__APPLE__) || !defined(__MACH__)
+#	define _DEFAULT_SOURCE
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)

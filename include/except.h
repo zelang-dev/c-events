@@ -415,6 +415,10 @@ C_API void guard_reset(void *scope, ex_setup_func set, ex_unwind_func unwind);
 /* Get current `guard` ~scope~ error condition string. */
 C_API const char *guard_message(void);
 
+/* Compare `err` to `guard` ~scope~ error condition,
+will mark exception handled, if `true`. */
+C_API bool guard_caught(const char *err);
+
 /* extern declaration
 */
 

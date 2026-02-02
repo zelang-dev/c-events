@@ -1065,9 +1065,17 @@ ex_memory_t *guard_init(ex_memory_t *scope) {
 }
 
 EVENTS_INLINE const char *guard_message(void) {
-	ex_memory_t *scope = scope_local();
-	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
-	return exception == NULL ? ex_local()->ex : exception;
+	ex_memory_t *scope = scope_local()->arena;
+	return (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+}
+
+EVENTS_INLINE bool guard_caught(const char *err) {
+	ex_memory_t *scope = scope_local()->arena;
+    const char *exception = (const char *)(!is_empty((void *)scope->panic) ? scope->panic : scope->err);
+    if ((scope->is_recovered = str_is(err, exception)))
+        ex_local()->state = ex_catch_st;
+
+    return scope->is_recovered;
 }
 
 void guard_set(ex_context_t *ctx, const char *ex, const char *message) {
