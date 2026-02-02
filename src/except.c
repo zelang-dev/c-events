@@ -1065,13 +1065,28 @@ ex_memory_t *guard_init(ex_memory_t *scope) {
 }
 
 EVENTS_INLINE const char *guard_message(void) {
+#ifdef _WIN32
+	ex_memory_t *scope = scope_local();
+	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+	return exception == NULL ? ex_local()->ex : exception;
+#else
 	ex_memory_t *scope = scope_local()->arena;
 	return (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+#endif
 }
 
 EVENTS_INLINE bool guard_caught(const char *err) {
+#ifdef _WIN32
+	ex_memory_t *scope = scope_local();
+	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+	if (is_empty(exception) && str_is(err, ex_local()->ex)) {
+		ex_local()->state = ex_catch_st;
+		return true;
+	}
+#else
 	ex_memory_t *scope = scope_local()->arena;
     const char *exception = (const char *)(!is_empty((void *)scope->panic) ? scope->panic : scope->err);
+#endif
     if ((scope->is_recovered = str_is(err, exception)))
         ex_local()->state = ex_catch_st;
 
