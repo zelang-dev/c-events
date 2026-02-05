@@ -1,4 +1,53 @@
-#include <except.h>
+/*
+
+This test converted from [source](https://gitlab.inria.fr/gustedt/defer/-/blob/master/defer4.c?ref_type=heads), outlined in [C Standard WG14 meeting](http://www.open-std.org/jtc1/sc22/wg14/www/docs/n2542.pdf)
+
+```c
+#include <stdio.h>
+#include <stddef.h>
+#include <threads.h>
+#include "stddefer.h"
+
+void g(int i) {
+  if (i > 3) {
+	puts("Panicking!");
+	panic(i);
+  }
+  guard {
+	defer {
+	  printf("Defer in g = %d.\n", i);
+	}
+	printf("Printing in g = %d.\n", i);
+	g(i+1);
+  }
+}
+
+void f() {
+  guard {
+	defer {
+		puts("In defer in f");
+		fflush(stdout);
+	  int err = recover();
+	  if (err != 0) {
+		printf("Recovered in f = %d\n", err);
+		fflush(stdout);
+	  }
+	}
+	puts("Calling g.");
+	g(0);
+	puts("Returned normally from g.");
+  }
+}
+
+int main(int argc, char* argv[static argc+1]) {
+  f();
+  puts("Returned normally from f.");
+  return EXIT_SUCCESS;
+}
+```
+*/
+
+#define USE_RPMALLOC 1
 #include "assertions.h"
 
 char number[20];
@@ -28,8 +77,7 @@ int f_print(void *args) {
 void g(int i) {
     if (i > 3) {
         puts("Panicking!\n");
-        snprintf(number, 20, "%d", i);
-        ex_panic(number);
+        panic(str_itoa(i));
     }
 
     guard {
@@ -63,5 +111,6 @@ TEST(list) {
 }
 
 int main(int argc, char **argv) {
-	TEST_TASK(list());
+	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
+	TEST_FUNC(list());
 }

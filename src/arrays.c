@@ -1050,4 +1050,61 @@ uri_t *parse_uri(const char *url) {
 	return uri;
 }
 
+static EVENTS_INLINE uint16_t utoa2p(uint64_t x) {
+	static const uint8_t pairs[50] = { // 0..49, little endian
+		0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90,
+		0x01, 0x11, 0x21, 0x31, 0x41, 0x51, 0x61, 0x71, 0x81, 0x91,
+		0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x82, 0x92,
+		0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73, 0x83, 0x93,
+		0x04, 0x14, 0x24, 0x34, 0x44, 0x54, 0x64, 0x74, 0x84, 0x94,
+	};
+
+	uint32_t b50 = -(uint32_t)(x >= 50); // x >= 50 ? ~0 : 0;
+	uint32_t x2 = x - (50u & b50);       // x2 = x % 50;
+	uint16_t t = pairs[x2] + (b50 & 5);  // t = pairs[x % 50] + 5 in low nibble if x > 50
+
+	// move upper nibble to next byte and add '00'
+	return ((t | (t << 4)) & 0x0f0f) | 0x3030;
+}
+
+static EVENTS_INLINE void utoa2p_ex(uint64_t x, char *s) {
+	uint16_t t = utoa2p(x);
+	memcpy(s, &t, sizeof(uint16_t));
+}
+
+char *str_itoa(int64_t x) {
+	char *buf = scope_local()->scrape;
+	// Handle negatives
+	bool neg = x < 0;
+	*buf = '-'; // Always write
+	buf += neg; // But advance only if negative
+
+#if defined(__APPLE__) || defined(__MACH__)
+	x = llabs(x);
+#else
+	x = abs(x);
+#endif
+
+	char tmp[20];
+	char *p = tmp + 20;
+
+	while (x >= 100) {
+		p -= 2;
+		utoa2p_ex(x % 100, p);
+		x /= 100;
+	}
+
+	p -= 2;
+	utoa2p_ex(x, p);
+
+	p += x < 10;
+
+	uint32_t len = tmp + 20 - p;
+
+	memcpy(buf, p, 20);
+	buf[len] = '\0';
+
+	return buf;
+}
+
 #include "getopt.c"

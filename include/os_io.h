@@ -57,7 +57,6 @@
 #	define unreachable 	Statement(printf(CLR_LN"How did we get here? In %s on line %d\n", __FILE__, __LINE__);)
 #endif
 
-#include <stdlib.h>
 #include <arrays.h>
 #ifdef _WIN32
 #	include <os_windows.h>

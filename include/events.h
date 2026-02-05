@@ -89,6 +89,12 @@ typedef unsigned long __sigset_t;
 #	endif
 #endif
 
+#if defined(USE_RPMALLOC)
+#	include <rpmalloc.h>
+#elif !defined(RP_MALLOC_H) && !defined(USE_RPMALLOC)
+#	include <stdlib.h>
+#endif
+
 #include <threaded.h>
 
 #define EVENTS_READ 	1
@@ -146,6 +152,7 @@ typedef struct _request_worker os_request_t;
 typedef struct task_group_s task_group_t;
 typedef struct generator_s *generator_t;
 typedef struct ex_memory_s ex_memory_t;
+typedef struct ex_guard_s ex_guard_t;
 typedef struct ex_ptr_s ex_ptr_t;
 typedef struct ex_context_s ex_context_t;
 typedef struct ex_backtrace_s ex_backtrace_t;
@@ -169,18 +176,6 @@ struct ex_ptr_s {
 	ex_ptr_t *next;
 	ex_unwind_func func;
 	void **ptr;
-};
-
-struct ex_memory_s {
-	void *arena;
-	data_types status;
-	bool is_recovered;
-	bool is_protected;
-	ex_ptr_t protector[1];
-	ex_backtrace_t *backtrace;
-	array_t volatile defer_arr;
-	void *volatile err;
-	const char *volatile panic;
 };
 
 C_API sys_events_t sys_event;

@@ -490,6 +490,24 @@ typedef struct tasklist_s {
 	tasks_t *tail;
 } tasklist_t;
 
+struct ex_memory_s {
+	void *arena;
+	data_types status;
+	bool is_recovered;
+	bool is_protected;
+	ex_ptr_t protector[1];
+	ex_backtrace_t backtrace[1];
+	array_t defer_arr;
+	void *volatile err;
+	const char *volatile _panic;
+	char scrape[ARRAY_SIZE];
+};
+
+struct ex_guard_s {
+	data_types type;
+	ex_memory_t scope[1];
+};
+
 void events_set_destroy(void);
 int events_add_signal(int sig, sig_cb proc, void *data);
 void events_del_signal(int sig, int i);
@@ -554,6 +572,9 @@ void inotify_handler(int fd, inotify_t *event, int len, watch_cb handler, void *
 
 int fsevents_init(const char *name, watch_cb handler, void *filter);
 int fsevents_stop(uint32_t rid);
+
+bool scope_is_guarded(void);
+int scope_deferred(ex_memory_t *scope, func_t func, void *data);
 
 #ifdef __cplusplus
 }

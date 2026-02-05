@@ -33,6 +33,7 @@ message("Generated with config types: ${CMAKE_CONFIGURATION_TYPES}")
 set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
 
 set(ev_sources
+	${CMAKE_CURRENT_SOURCE_DIR}/src/rpmalloc.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/events.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/except.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c
@@ -55,9 +56,9 @@ endif()
 
 if(UNIX)
     if(APPLE)
-        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -D USE_DEBUG -D ENABLE_ASSERTS ")
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wno-format -D USE_DEBUG -D ENABLE_ASSERTS ")
     else()
-        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -rdynamic -D USE_DEBUG")
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -rdynamic -Wno-format -D USE_DEBUG -D ENABLE_ASSERTS ")
     endif()
 else()
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /D USE_DEBUG /D ENABLE_ASSERTS ")
@@ -179,7 +180,11 @@ install(
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION lib)
-install(FILES include/*.h DESTINATION include)
+if(WIN32)
+    install(DIRECTORY include/ DESTINATION include )
+else()
+	install(FILES include/*.h DESTINATION include)
+endif()
 include(CPack)
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)

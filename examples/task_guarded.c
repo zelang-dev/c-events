@@ -42,8 +42,9 @@ int mul(int x, int y) {
 }
 
 void func(void *arg) {
-    if (try_caught(guard_message()))
-		printf("panic occurred: %s\n", try_message());
+	const char *err = guard_message();
+	if (guard_caught(err))
+		printf("panic occurred: %s\n", err);
 }
 
 void divByZero(param_t arg) {

@@ -1704,6 +1704,10 @@ int deferred(func_t func, void *data, bool is_ptr) {
 	if (is_empty(func))
 		return TASK_ERRED;
 
+	if (scope_is_guarded()) {
+		return scope_deferred(scope_local()->arena, func, data);
+	}
+
 	defer_t *deferred = (defer_t *)events_malloc(sizeof(defer_t));
 	int index = TASK_ERRED;
 	if ((index = _defer_init(deferred)) > 0) {

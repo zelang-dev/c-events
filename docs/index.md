@@ -60,7 +60,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Complete implementation of `inotify_add_watch()` for **macOS** aka **BSD** *platforms*.
 * [x] Implement *event* `EVENTS_PATHWATCH` *file descriptor* condition, for handling `inotify_add_watch()`.
 * [x] Implement `fs_events()` function, for fully recursive automatic *setup* and *execution* for **filesystem monitoring**.
-* [x] Merge the **core** [c-raii](https://github.com/zelang-dev/c-raii) memory safety into `fence()` function, and *exception* handling implementation `try...catch`.
+* [x] Merge the **core** [c-raii](https://github.com/zelang-dev/c-raii) memory safety into `fence()` function, `defer()`, `guard/guarded` and *exception* handling implementation `try...catch`.
 * [ ] Completion of ALL OS *file system* function routines with matching **thread** ~async_fs_~ *version*.
 
 ## Design
@@ -626,7 +626,7 @@ int main(int argc, char **argv) {
             printf("finally: try failed, but succeeded to catch -> %s (%s:%d)\n", err.name, err.file, err.line);
         } else {
             printf("finally: try failed to `catch()`\n");
-            ex_backtrace(err.backtrace);
+            try_backtrace(err.backtrace);
         }
     }
 
@@ -812,7 +812,7 @@ If `ptr` is not null, `func(ptr)` will be invoked during stack unwinding. */
 #define unprotected(p)
 
 /* Prints stack trace based on context record */
-C_API void ex_backtrace(ex_backtrace_t *ex);
+C_API void try_backtrace(ex_backtrace_t *ex);
 ```
 
 ## Usage

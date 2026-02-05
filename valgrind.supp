@@ -1,0 +1,11 @@
+{
+   Invalid read of size
+   Memcheck:Addr4
+   fun:str_is_empty
+}
+
+{
+   Invalid read of size
+   Memcheck:Addr4
+   fun:data_type
+}

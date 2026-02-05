@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
             printf("finally: try failed, but succeeded to catch -> %s (%s:%d)\n", err.name, err.file, err.line);
         } else {
             printf("finally: try failed to `catch()`\n");
-            ex_backtrace(err.backtrace);
+            try_backtrace(err.backtrace);
         }
     }
 

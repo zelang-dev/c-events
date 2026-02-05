@@ -54,6 +54,7 @@ typedef enum {
 	DATA_THREAD,
 	DATA_JOBS,
 	DATA_RAII,
+	DATA_GUARD,
 	DATA_FUNC,
 	DATA_ARRAY,
 	DATA_TUPLE,
@@ -226,6 +227,7 @@ C_API bool is_ptr_usable(void *self);
 #endif
 
 C_API char *trim(char *str);
+C_API char *str_itoa(int64_t x);
 C_API bool str_is_empty(const char *str);
 C_API bool str_is(const char *str, const char *str2);
 C_API bool str_has(const char *text, char *pattern);

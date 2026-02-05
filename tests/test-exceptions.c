@@ -1,4 +1,3 @@
-#include <except.h>
 #include "assertions.h"
 
 /* Basic try.. catch */
@@ -211,5 +210,5 @@ TEST(list) {
 }
 
 int main(int argc, char **argv) {
-	TEST_TASK(list());
+	TEST_FUNC(list());
 }

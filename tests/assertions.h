@@ -1,9 +1,7 @@
 #ifndef TEST_ASSERT_H_
 #define TEST_ASSERT_H_
 
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <except.h>
 #include <assert.h>
 
 inline void assert_expected(long res, long expected, const char *file, unsigned int line, const char *expr, const char *expected_str) {

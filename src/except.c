@@ -16,7 +16,7 @@ EX_EXCEPTION(out_of_range);
 EX_EXCEPTION(invalid_argument);
 EX_EXCEPTION(division_by_zero);
 EX_EXCEPTION(out_of_memory);
-EX_EXCEPTION(panic);
+EX_EXCEPTION(_panic);
 
 EX_EXCEPTION(_if);
 
@@ -64,6 +64,10 @@ static volatile sig_atomic_t got_signal = false;
 static volatile sig_atomic_t got_uncaught_exception = false;
 static volatile sig_atomic_t got_ctrl_c = false;
 static volatile sig_atomic_t can_terminate = true;
+static char uncaught_message[ARRAY_SIZE] = {0};
+static char uncaught_infunction[ARRAY_SIZE/6] = {0};
+static char uncaught_infile[ARRAY_SIZE/2] = {0};
+static char uncaught_inline[ARRAY_SIZE/10] = {0};
 
 ex_setup_func exception_setup_func = null;
 ex_unwind_func exception_unwind_func = null;
@@ -94,16 +98,13 @@ void ex_trace_set(ex_context_t *ex, void *ctx);
 ex_error_t *try_updating_err(ex_error_t *, ex_context_t *);
 void try_finish(ex_context_t *);
 
-static void scope_delete(ex_memory_t *ptr) {
-	if (ptr == NULL)
+static EVENTS_INLINE void scope_destroy(void) {
+	ex_memory_t *scope = scope_local();
+	if (is_empty(scope))
 		return;
 
-	scope_unwind(ptr);
-	memset(ptr, 0, sizeof(ex_memory_t));
-}
-
-static EVENTS_INLINE void scope_destroy(void) {
-	scope_delete(scope_local());
+	scope_unwind(scope);
+	memset(scope, 0, sizeof(ex_memory_t));
 }
 
 enum {
@@ -157,10 +158,8 @@ static void ex_unwind_stack(ex_context_t *ctx) {
 		scope_unwind(ctx->data);
     } else {
 		while (p && p->type == DATA_EXCEPT_PROTECTED) {
-            if ((got_uncaught_exception = (temp == *p->ptr) || !is_ptr_usable(*p->ptr))) {
-                //atomic_flag_clear(&gq_result.is_errorless);
+            if ((got_uncaught_exception = (temp == *p->ptr) || !is_ptr_usable(*p->ptr)))
                 break;
-            }
 
             if (*p->ptr) {
 				p->type = DATA_INVALID;
@@ -176,18 +175,17 @@ static void ex_unwind_stack(ex_context_t *ctx) {
     ctx->stack = 0;
 }
 
-static void ex_print(ex_context_t *exception, const char *message) {
+static void ex_print(const char *message) {
     fflush(stdout);
 #ifndef USE_DEBUG
-    fprintf(stderr, "\nFatal Error: %s in function(%s)\n\n",
-                  ((void *)exception->panic != NULL ? exception->panic : exception->ex), exception->function);
+	fprintf(stderr, "\nFatal Error: %s in function(%s)\n\n", uncaught_message, uncaught_infunction);
 #else
-    fprintf(stderr, "\n%s: %s\n", message, (exception->panic != NULL ? exception->panic : exception->ex));
-    if (exception->file != NULL) {
-        if (exception->function != NULL) {
-            fprintf(stderr, "    thrown in %s at (%s:%d)\n\n", exception->function, exception->file, exception->line);
+	fprintf(stderr, "\n%s: %s\n", message, uncaught_message);
+	if (uncaught_infile != NULL) {
+		if (uncaught_infunction != NULL) {
+			fprintf(stderr, "    thrown in %s at (%s:%s)\n\n", uncaught_infunction, uncaught_infile, uncaught_inline);
         } else {
-            fprintf(stderr, "    thrown at %s:%d\n\n", exception->file, exception->line);
+			fprintf(stderr, "    thrown at %s:%s\n\n", uncaught_infile, uncaught_inline);
         }
     }
 #endif
@@ -205,12 +203,13 @@ void ex_trace_set(ex_context_t *ex, void *ctx) {
     ex->backtrace->process = GetCurrentProcess();
     ex->backtrace->thread = GetCurrentThread();
 #else
-    ex->backtrace->size = backtrace(ex->backtrace->ctx, EX_MAX_NAME_LEN);
+	if (!got_signal)
+		ex->backtrace->size = backtrace(ex->backtrace->ctx, EX_MAX_NAME_LEN);
 #endif
 #endif
 }
 
-void ex_backtrace(ex_backtrace_t *ex) {
+void try_backtrace(ex_backtrace_t *ex) {
 #if defined(USE_DEBUG)
 #if defined(_WIN32)
     CONTEXT             ctx, *c_ctx = (CONTEXT *)ex->ctx;
@@ -352,7 +351,7 @@ void ex_flags_reset(void) {
 static void scope_unwind_set(ex_context_t *ctx, const char *ex, const char *message) {
 	ex_memory_t *scope = scope_init();
 	scope->err = (void *)ex;
-	scope->panic = message;
+	scope->_panic = message;
 	ex_swap_set(ctx, (void *)scope);
 	ex_unwind_set(ctx, scope->is_protected);
 }
@@ -378,7 +377,7 @@ ex_context_t *ex_init(void) {
         context->is_rethrown = false;
         context->is_guarded = false;
         context->ex = NULL;
-        context->panic = NULL;
+        context->_panic = NULL;
         memset(context->backtrace->ctx, 0, sizeof(context->backtrace->ctx));
         context->caught = DATA_INVALID;
 		context->type = DATA_EXCEPT_CONTEXT;
@@ -392,13 +391,13 @@ int ex_uncaught_exception(void) {
 }
 
 void ex_terminate(void) {
+	if (ex_uncaught_exception() || got_uncaught_exception)
+        ex_print("\nException during stack unwinding leading to an undefined behavior");
+    else
+        ex_print("\nExiting with uncaught exception");
+
 	if (ex_local()->is_scoped)
 		scope_destroy();
-
-	if (ex_uncaught_exception() || got_uncaught_exception)
-        ex_print(ex_local(), "\nException during stack unwinding leading to an undefined behavior");
-    else
-        ex_print(ex_local(), "\nExiting with uncaught exception");
 
 	if (got_ctrl_c) {
 		got_ctrl_c = false;
@@ -416,10 +415,7 @@ void ex_terminate(void) {
 			exception_terminate_func();
     }
 
-    if (got_signal)
-        _Exit(EXIT_FAILURE);
-    else
-        exit(EXIT_FAILURE);
+    exit(EXIT_FAILURE);
 }
 
 void ex_throw(const char *ex, const char *file, int line, const char *function, const char *message, ex_backtrace_t *dump) {
@@ -437,20 +433,25 @@ void ex_throw(const char *ex, const char *file, int line, const char *function, 
     ctx->line = line;
     ctx->is_unwind = false;
     ctx->function = function;
-	ctx->panic = message;
+	ctx->_panic = message;
 
 	if (guard_setup_func)
-		guard_setup_func(ctx, ctx->ex, ctx->panic);
+		guard_setup_func(ctx, ctx->ex, ctx->_panic);
 	else if (exception_setup_func)
-		exception_setup_func(ctx, ctx->ex, ctx->panic);
+		exception_setup_func(ctx, ctx->ex, ctx->_panic);
 	else if (ctx->is_scoped)
-		scope_unwind_set(ctx, ctx->ex, ctx->panic);
+		scope_unwind_set(ctx, ctx->ex, ctx->_panic);
 
     ex_unwind_stack(ctx);
     ex_signal_unblock(all);
 
-    if (is_except_root(ctx))
+	if (is_except_root(ctx)) {
+		snprintf(uncaught_message, ARRAY_SIZE, "%s", (str_is(ex, "_panic") ? message : ex));
+		snprintf(uncaught_infile, ARRAY_SIZE / 2, "%s", file);
+		snprintf(uncaught_infunction, ARRAY_SIZE / 6, "%s", function);
+		snprintf(uncaught_inline, ARRAY_SIZE / 10, "%d", line);
         ex_terminate();
+	}
 
 #ifdef _WIN32
     RaiseException(EXCEPTION_PANIC, 0, 0, NULL);
@@ -467,10 +468,10 @@ int catch_seh(const char *exception, DWORD code, struct _EXCEPTION_POINTERS *ep)
 
     ex_trace_set(ctx, (void *)ep->ContextRecord);
     ctx->state = ex_throw_st;
-    if (!str_is(ctx->ex, exception) && is_empty(ctx->panic))
+    if (!str_is(ctx->ex, exception) && is_empty(ctx->_panic))
         return EXCEPTION_EXECUTE_HANDLER;
     else if (is_empty(ctx->ex) && signaled) {
-        ctx->panic = NULL;
+        ctx->_panic = NULL;
         for (i = 0; i < max_ex_sig; i++) {
             if (ex_sig[i].seh == code) {
                 found = true;
@@ -481,7 +482,7 @@ int catch_seh(const char *exception, DWORD code, struct _EXCEPTION_POINTERS *ep)
 
         if (!found)
             return EXCEPTION_EXECUTE_HANDLER;
-    } else if (!str_is(ctx->panic, exception) && !str_is(ctx->ex, exception)) {
+    } else if (!str_is(ctx->_panic, exception) && !str_is(ctx->ex, exception)) {
         return EXCEPTION_EXECUTE_HANDLER;
     }
 
@@ -500,11 +501,11 @@ int catch_seh(const char *exception, DWORD code, struct _EXCEPTION_POINTERS *ep)
             }
 
 			if (guard_setup_func)
-				guard_setup_func(ctx, ctx->ex, ctx->panic);
+				guard_setup_func(ctx, ctx->ex, ctx->_panic);
 			else if (exception_setup_func)
-				exception_setup_func(ctx, ctx->ex, ctx->panic);
+				exception_setup_func(ctx, ctx->ex, ctx->_panic);
 			else if (ctx->is_scoped)
-				scope_unwind_set(ctx, ctx->ex, ctx->panic);
+				scope_unwind_set(ctx, ctx->ex, ctx->_panic);
             return EXCEPTION_EXECUTE_HANDLER;
         }
     }
@@ -528,17 +529,17 @@ int catch_filter_seh(DWORD code, struct _EXCEPTION_POINTERS *ep) {
             ctx->state = ex_throw_st;
             ctx->is_rethrown = true;
             ctx->ex = ex_sig[i].ex;
-            ctx->panic = NULL;
+            ctx->_panic = NULL;
             ctx->file = "unknown";
             ctx->line = 0;
             ctx->function = NULL;
 
             if (guard_setup_func)
-                guard_setup_func(ctx, ctx->ex, ctx->panic);
+                guard_setup_func(ctx, ctx->ex, ctx->_panic);
             else if (exception_setup_func)
-				exception_setup_func(ctx, ctx->ex, ctx->panic);
+				exception_setup_func(ctx, ctx->ex, ctx->_panic);
 			else if (ctx->is_scoped)
-				scope_unwind_set(ctx, ctx->ex, ctx->panic);
+				scope_unwind_set(ctx, ctx->ex, ctx->_panic);
 
 			if (!ctx->is_guarded || ctx->is_scoped)
                 ex_unwind_stack(ctx);
@@ -666,7 +667,7 @@ void ex_signal_setup(void) {
     ex_signal_seh(EXCEPTION_INT_OVERFLOW, EX_NAME(int_overflow));
     ex_signal_seh(EXCEPTION_STACK_OVERFLOW, EX_NAME(stack_overflow));
     ex_signal_seh(EXCEPTION_INVALID_HANDLE, EX_NAME(invalid_handle));
-    ex_signal_seh(EXCEPTION_PANIC, EX_NAME(panic));
+    ex_signal_seh(EXCEPTION_PANIC, EX_NAME(_panic));
     ex_signal_seh(CONTROL_C_EXIT, EX_NAME(sig_int));
 #endif
 #ifdef SIGSEGV
@@ -784,7 +785,7 @@ void ex_signal_default(void) {
 
 EVENTS_INLINE ex_error_t *try_updating_err(ex_error_t *err, ex_context_t *ex_err) {
 #ifdef _WIN32
-    err->name = (!is_empty(ex_err->panic)) ? ex_err->panic : ex_err->ex;
+    err->name = (!is_empty(ex_err->_panic)) ? ex_err->_panic : ex_err->ex;
 #else
     err->name = ex_err->ex;
 #endif
@@ -809,9 +810,9 @@ EVENTS_INLINE void try_rethrow(ex_context_t *ex_err) {
 #endif
 
     if (!is_empty(ex_err->backtrace) && is_except_root(ex_err->next))
-        ex_backtrace(ex_err->backtrace);
+        try_backtrace(ex_err->backtrace);
 
-    ex_throw(ex_err->ex, ex_err->file, ex_err->line, ex_err->function, ex_err->panic, ex_err->backtrace);
+    ex_throw(ex_err->ex, ex_err->file, ex_err->line, ex_err->function, ex_err->_panic, ex_err->backtrace);
 }
 
 ex_jmp_buf *try_start(ex_stage acquire, ex_error_t *err, ex_context_t *ex_err) {
@@ -888,7 +889,7 @@ EVENTS_INLINE bool try_finallying(ex_error_t *err, ex_context_t *ex_err) {
 
 bool try_caught(const char *err) {
 	ex_memory_t *scope = scope_local();
-	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+	const char *exception = (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
 
 	if (is_empty(exception) && str_is(err, ex_local()->ex)) {
 		ex_local()->state = ex_catch_st;
@@ -903,7 +904,7 @@ bool try_caught(const char *err) {
 
 EVENTS_INLINE const char *try_message(void) {
 	ex_memory_t *scope = get_scope();
-	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+	const char *exception = (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
 	return exception == NULL ? ex_local()->ex : exception;
 }
 
@@ -920,11 +921,11 @@ ex_memory_t *scope_init(void) {
 	if (is_empty(scope = scope_local())) {
 		scope = __scope();
 		scope->arena = null;
-		scope->panic = null;
+		scope->_panic = null;
 		scope->err = null;
 		scope->is_protected = false;
 		scope->is_recovered = false;
-		scope->defer_arr = array();
+		//scope->defer_arr = array();
 		memset(scope->protector, 0, sizeof(ex_ptr_t));
 		scope->status = DATA_RAII;
 
@@ -951,6 +952,10 @@ EVENTS_INLINE ex_memory_t *get_scope(void) {
 	}
 
 	return scope;
+}
+
+EVENTS_INLINE bool scope_is_guarded(void) {
+	return get_scope()->status == DATA_GUARDED_STATUS;
 }
 
 void scope_unwind(ex_memory_t *scope) {
@@ -983,7 +988,7 @@ void scope_unwind(ex_memory_t *scope) {
 				}
 			}
 		}
-		$delete(array);
+		$delete(scope->defer_arr);
 	}
 
 	if (scope->is_protected && !is_empty(scope->protector) && !is_empty(scope->err)) {
@@ -1001,7 +1006,7 @@ void scope_unwind(ex_memory_t *scope) {
 	}
 }
 
-static void scope_deferred(ex_memory_t *scope, func_t func, void *data) {
+int scope_deferred(ex_memory_t *scope, func_t func, void *data) {
 	defer_t *deferred = (defer_t *)events_malloc(sizeof(defer_t));
 	if (deferred) {
 		deferred->is_ptr = true;
@@ -1009,14 +1014,17 @@ static void scope_deferred(ex_memory_t *scope, func_t func, void *data) {
 		deferred->data = data;
 		deferred->type = DATA_DEFER;
 		$append(scope->defer_arr, deferred);
+		return $size(scope->defer_arr);
 	}
+
+	return TASK_ERRED;
 }
 
 void scope_request_erred(os_request_t *p, ex_context_t err) {
 	atomic_lock(&p->mutex);
 	p->scope->err = (void *)err.ex;
-	p->scope->panic = err.panic;
-	p->scope->backtrace = err.backtrace;
+	p->scope->_panic = err._panic;
+	p->scope->backtrace[0] = err.backtrace[0];
 	atomic_unlock(&p->mutex);
 	atomic_flag_test_and_set(&p->done);
 }
@@ -1027,7 +1035,7 @@ void scope_request_rethrow(os_request_t *p) {
 		atomic_flag_clear(&p->mutex);
 		atomic_flag_clear(&p->done);
 		if (!is_empty(p->scope->err))
-			ex_throw(p->scope->err, "unknown", 0, "__threads_wrapper", p->scope->panic, p->scope->backtrace);
+			ex_throw(p->scope->err, "unknown", 0, "__threads_wrapper", p->scope->_panic, p->scope->backtrace);
 	}
 }
 
@@ -1043,49 +1051,45 @@ void *fence(void *ptr, func_t func) {
 	return ptr;
 }
 
-ex_memory_t *guard_init(ex_memory_t *scope) {
-	scope->arena = null;
-	scope->panic = null;
-	scope->err = null;
-	scope->is_protected = false;
-	scope->is_recovered = false;
-	scope->defer_arr = array();
-	memset(scope->protector, 0, sizeof(ex_ptr_t));
-	scope->status = DATA_GUARDED_STATUS;
+ex_guard_t *guard_init(void) {
+	ex_guard_t *gd = (ex_guard_t *)events_calloc(1, sizeof(ex_guard_t));
+	gd->scope->defer_arr = array();
+	gd->scope->status = DATA_GUARDED_STATUS;
 
 	ex_context_t *ctx = ex_init();
-	ctx->data = (void *)scope;
-	ctx->prev = (void *)scope;
+	ctx->data = (void *)gd->scope;
+	ctx->prev = (void *)gd->scope;
 	if (tasks_is_active())
-		task_scope_set(scope);
+		task_scope_set(gd->scope);
 
-	scope_local()->arena = scope;
-	scope_local()->status = scope->status;
-	return scope;
+	scope_local()->arena = gd->scope;
+	scope_local()->status = gd->scope->status;
+	gd->type = DATA_GUARD;
+	return gd;
 }
 
 EVENTS_INLINE const char *guard_message(void) {
 #ifdef _WIN32
 	ex_memory_t *scope = scope_local();
-	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+	const char *exception = (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
 	return exception == NULL ? ex_local()->ex : exception;
 #else
 	ex_memory_t *scope = scope_local()->arena;
-	return (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+	return (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
 #endif
 }
 
 EVENTS_INLINE bool guard_caught(const char *err) {
 #ifdef _WIN32
 	ex_memory_t *scope = scope_local();
-	const char *exception = (const char *)(!is_empty(scope->panic) ? scope->panic : scope->err);
+	const char *exception = (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
 	if (is_empty(exception) && str_is(err, ex_local()->ex)) {
 		ex_local()->state = ex_catch_st;
 		return true;
 	}
 #else
 	ex_memory_t *scope = scope_local()->arena;
-    const char *exception = (const char *)(!is_empty((void *)scope->panic) ? scope->panic : scope->err);
+    const char *exception = (const char *)(!is_empty((void *)scope->_panic) ? scope->_panic : scope->err);
 #endif
     if ((scope->is_recovered = str_is(err, exception)))
         ex_local()->state = ex_catch_st;
@@ -1096,23 +1100,29 @@ EVENTS_INLINE bool guard_caught(const char *err) {
 void guard_set(ex_context_t *ctx, const char *ex, const char *message) {
 	ex_memory_t *scope = (ex_memory_t *)scope_local()->arena;
 	scope->err = (void *)ex;
-	scope->panic = message;
+	scope->_panic = message;
 	ctx->is_guarded = true;
 	ex_swap_set(ctx, (void *)scope);
 	ex_unwind_set(ctx, scope->is_protected);
 }
 
-void guard_reset(void *scope, ex_setup_func set, ex_unwind_func unwind) {
-	if (is_empty(scope))
-		scope_local()->status = DATA_UNGUARDED_STATUS;
+void guard_reset(ex_guard_t *block, void *scope, ex_setup_func set, ex_unwind_func unwind) {
+	if (!is_empty(block) && data_type(block) == DATA_GUARD) {
+		block->type = DATA_INVALID;
+		scope_unwind(block->scope);
+		if (is_empty(scope))
+			scope_local()->status = DATA_UNGUARDED_STATUS;
 
-	scope_local()->arena = scope;
-	ex_swap_reset(ex_local());
-	ex_local()->is_guarded = false;
-	guard_setup_func = set;
-	guard_unwind_func = unwind;
-	if (tasks_is_active())
-		task_scope_set(null);
+		scope_local()->arena = scope;
+		ex_swap_reset(ex_local());
+		ex_local()->is_guarded = false;
+		guard_setup_func = set;
+		guard_unwind_func = unwind;
+		if (tasks_is_active())
+			task_scope_set(null);
+
+		events_free(block);
+	}
 }
 
 /* General error handling for any condition, passing callbacks.

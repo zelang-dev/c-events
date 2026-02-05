@@ -64,10 +64,10 @@ typedef enum {
 
 /* An macro that stops the ordinary flow of control and begins panicking,
 throws an exception of given message. */
-#define ex_panic(message)					\
-    do {                        			\
-        C_API const char EX_NAME(panic)[];  \
-        ex_throw(EX_NAME(panic), __FILE__, __LINE__, __FUNCTION__, (message), NULL);    \
+#define panic(message)					\
+    do {								\
+        C_API const char EX_NAME(_panic)[];  \
+        ex_throw(EX_NAME(_panic), __FILE__, __LINE__, __FUNCTION__, (message), NULL);    \
     } while (0)
 
 #ifdef _WIN32
@@ -250,7 +250,7 @@ struct ex_context_s {
     ex_ptr_t *stack;
 
     /** The panic error message thrown */
-    const char *volatile panic;
+    const char *volatile _panic;
 
     /** The function from which the exception was thrown */
     const char *volatile function;
@@ -270,8 +270,8 @@ struct ex_context_s {
 #ifdef _WIN32
 #define ex_try				\
     /* local context */     \
-    ex_context_t ex_err;    \
-    ex_error_t err;         \
+    ex_context_t ex_err = {0};    \
+    ex_error_t err = {0};         \
     for (ex_err.state = ex_setjmp(*try_start(ex_start_st, &err, &ex_err)); try_next(&err, &ex_err);)   \
         if (ex_err.state == ex_try_st && err.stage == ex_try_st)    \
             __try
@@ -296,8 +296,8 @@ struct ex_context_s {
 #else
 #define ex_try				\
     /* local context */     \
-    ex_context_t ex_err;    \
-    ex_error_t err;         \
+    ex_context_t ex_err = {0};    \
+    ex_error_t err = {0};         \
     for (ex_err.state = ex_setjmp(*try_start(ex_start_st, &err, &ex_err)); try_next(&err, &ex_err);)   \
         if (ex_err.state == ex_try_st && err.stage == ex_try_st)
 
@@ -334,32 +334,29 @@ will mark exception handled, if `true`.
     ex_unwind_func _g_unwind = guard_unwind_func; \
     guard_unwind_func = (ex_unwind_func)scope_unwind; \
     guard_setup_func = guard_set;               \
-    ex_memory_t _g_scope[1];					\
-    guard_init(_g_scope);						\
+    ex_guard_t *_g_scope = guard_init();		\
     try {										\
         do {
 
 /* Ends an ~scoped~ `guard` section, on scope exit will begin executing deferred functions. */
 #define guarded									\
         } while (false);						\
-        scope_unwind((_g_scope));				\
+        guard_reset(_g_scope, _g_arena, _g_set, _g_unwind);	\
     } catch_if {								\
-        scope_unwind((_g_scope));				\
-    } finally {									\
-        guard_reset(_g_arena, _g_set, _g_unwind);	\
-    }											\
+        guard_reset(_g_scope, _g_arena, _g_set, _g_unwind);	\
+    }									\
 }
 
 /* Will catch and set `error`, this is for future `queue_work` thread usage. */
 #define guarded_exception(error)                \
         } while (false);                        \
-        scope_unwind((_g_scope));				\
+        scope_unwind((_g_scope)->scope);				\
     } catch_if {                             	\
-        scope_unwind((_g_scope));				\
-        if (!(_g_scope)->is_recovered && try_caught(try_message())) \
+        scope_unwind((_g_scope)->scope);				\
+        if (!(_g_scope)->scope->is_recovered && try_caught(try_message())) \
             scope_request_erred(error, ex_err);	\
     } finally {                                 \
-		guard_reset(_g_arena, _g_set, _g_unwind);	\
+		guard_reset(_g_scope, _g_arena, _g_set, _g_unwind);	\
     }                                     		\
 }
 
@@ -375,7 +372,7 @@ C_API void ex_throw(const char *ex, const char *file, int, const char *function,
 	const char *message, ex_backtrace_t *dump);
 
 /* Prints stack trace based on context record */
-C_API void ex_backtrace(ex_backtrace_t *ex);
+C_API void try_backtrace(ex_backtrace_t *ex);
 
 /* Convert signals into exceptions */
 C_API void ex_signal_setup(void);
@@ -408,9 +405,9 @@ Uses either `guard` section, `try/catch` block, or `thread`,
 if not an active ~coroutine~ `Events API` environment, as `context`. */
 C_API void *fence(void *ptr, func_t func);
 
-C_API ex_memory_t *guard_init(ex_memory_t *scope);
+C_API ex_guard_t *guard_init(void);
 C_API void guard_set(ex_context_t *ctx, const char *ex, const char *message);
-C_API void guard_reset(void *scope, ex_setup_func set, ex_unwind_func unwind);
+C_API void guard_reset(ex_guard_t *block, void *scope, ex_setup_func set, ex_unwind_func unwind);
 
 /* Get current `guard` ~scope~ error condition string. */
 C_API const char *guard_message(void);
