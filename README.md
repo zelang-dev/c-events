@@ -658,12 +658,10 @@ void func(void *arg) {
   printf("panic occurred: %s\n", err);
 }
 
-void divByZero(param_t arg) {
- guard {
-  defer(func, arg);
-  printf("%d", div_err(1, 0));
- } guarded;
-}
+void divByZero(param_t arg) guard {
+ defer(func, arg);
+ printf("%d", div_err(1, 0));
+} guarded;
 
 void *main_main(param_t args) {
     launch(divByZero, 0);
@@ -774,7 +772,7 @@ will mark exception handled, if `true`. */
 
 /* An macro that stops the ordinary flow of control and begins panicking,
 throws an exception of given `message`. */
-#define ex_panic(message)
+#define panic(message)
 
 /* An macro that stops the ordinary flow of control and begins panicking,
 throws an `E` defined O.S. exception as:
@@ -1164,7 +1162,7 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.3.zip
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.4.zip
         URL_MD5 a5683c02e5a21bef11bfccd6b1bac803
     )
     FetchContent_MakeAvailable(events)

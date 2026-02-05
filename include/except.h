@@ -122,7 +122,7 @@ throws an `E` defined O.S. exception as:
 - invalid_handle
 - bad_alloc
  */
-#define throw(E)    ex_panic(EX_STR(E))
+#define throw(E)    panic(EX_STR(E))
 #define ex_signal_block(ctrl)   \
     CRITICAL_SECTION ctrl##__FUNCTION__;    \
     InitializeCriticalSection(&ctrl##__FUNCTION__); \

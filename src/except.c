@@ -954,7 +954,7 @@ EVENTS_INLINE ex_memory_t *get_scope(void) {
 	return scope;
 }
 
-EVENTS_INLINE bool scope_is_guarded(void) {
+bool scope_is_guarded(void) {
 	return get_scope()->status == DATA_GUARDED_STATUS;
 }
 

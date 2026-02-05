@@ -47,13 +47,11 @@ void func(void *arg) {
 		printf("panic occurred: %s\n", err);
 }
 
-void divByZero(param_t arg) {
-	guard {
-		defer(func, arg);
-		printf("%d", div_err(1, 0));
-		unreachable;
-	} guarded;
-}
+void divByZero(param_t arg) guard {
+	defer(func, arg);
+	printf("%d", div_err(1, 0));
+	unreachable;
+} guarded;
 
 void *main_main(param_t args) {
     launch(divByZero, 0);

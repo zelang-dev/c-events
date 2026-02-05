@@ -5,7 +5,7 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
 endif()
 
 project(events
-	VERSION 0.5.3
+	VERSION 0.5.4
 	DESCRIPTION "A tiny, lightning fast, event loop, using either `epoll`, `kqueue`, or `wepoll` and `iocp` for Windows."
     LANGUAGES C
 )
