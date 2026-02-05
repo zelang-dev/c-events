@@ -18,7 +18,7 @@ Some **Libevent** [examples](https://github.com/libevent/libevent/tree/master/sa
 * [Design](#design)
 * [Synopsis](#synopsis)
 * [Automatic Memory Safety](#automatic-memory-safety)
-  * [RAII: fence()](#raii-fence-defer-guard)
+  * [RAII: fence, defer, guard](#raii-fence-defer-guard)
   * [RAII: Synopsis](#raii-synopsis)
 * [Usage](#usage)
 * [Comparisons](#comparisons)
@@ -583,6 +583,7 @@ This library has brought in multiple parts of <https://github.com/zelang-dev/c-r
 * This system does not have that automatic behavior, you must provide `main()` entry point, then call and possibly customize required routines.
 * The actual RAII part is customizable here using `fence()`, `defer()`, and `guard/guarded` blocks aka `try/catch_if/finally` manually. Where **fence()** encapsulate an **C++** feature called [unique_ptr)](https://en.cppreference.com/w/cpp/memory/unique_ptr). A call to **defer()** guarantees LIFO execution cleanup pattern when *guard*, *coroutine*, or *thread* scope **exit/return/panic/throw**. For handling `Platform/O.S. Exceptions`, these calls MUST be *between* `guard/guarded` blocks.
 * The memory safety process also encompass every `struct` presented, have a **enum** `type` first field. There are various processes paranoid checking, but if pointer is freed, that field will not be as expected, *offset* at `0`. No additional actions taken, there are really no bare freeing on any objects.
+* The **defer()** handling is as some **"C Standard WG14 meeting"** outlined in [defer reference implementation for C](https://gustedt.gitlabpages.inria.fr/defer/).
 
 The below `try...catch` *example* is the **recommended pattern** for complete cross platform usage. This system uses *native* [Windows SEH](https://learn.microsoft.com/en-us/cpp/cpp/try-except-statement), where *multiple* `catch()` blocks not possible. See [examples/exceptions](https://github.com/zelang-dev/c-events/tree/main/examples/exceptions) folder for general `try/catch(e)/catch_any/catch_if/finally` usage.
 
@@ -634,10 +635,14 @@ int main(int argc, char **argv) {
 }
 ```
 
-The example below show basic *coroutine/task* usage, if `guard/guarded` removed, no execution possible, just **segmentation fault/hang/abort**. If you remove `defer(func, arg);`, system will catch exception, but output **Exiting with uncaught exception:** with *error* message.
+The example below show basic *coroutine/task* usage, if `guard/guarded` removed, no execution possible, just **segmentation fault/hang/abort**. If you remove `defer(func, arg);`, system will catch exception, but output **Exiting with uncaught exception:** with *error* message. This is the same as **c-raii** - [example](https://github.com/zelang-dev/c-raii/tree/main/examples/go_panic.c), mimicking the **GoLang** version.
 
-```c
-#include "except.h"
+<table>
+<tr>
+
+<td>
+<pre><code>
+#include <except.h>
 
 int div_err(int x, int y) {
     return x / y;
@@ -648,8 +653,9 @@ int mul(int x, int y) {
 }
 
 void func(void *arg) {
-    if (try_caught(guard_message()))
-  printf("panic occurred: %s\n", try_message());
+ const char*err = guard_message();
+ if (guard_caught(err))
+  printf("panic occurred: %s\n", err);
 }
 
 void divByZero(param_t arg) {
@@ -675,12 +681,50 @@ int main(int argc, char **argv) {
 
  return 0;
 }
+</code></pre>
+</td>
 
-/*
-panic occurred: divide_by_zero
+<td>
+<pre><code>
+package main
+
+import (
+ "fmt"
+ "log"
+)
+
+func main() {
+ divByZero()
+ fmt.Println("Although panicked. We recovered. We call mul() func")
+ fmt.Println("mul func result: ", mul(5, 10))
+}
+
+func div(x, y int) int {
+ return x / y
+}
+
+func mul(x, y int) int {
+ return x * y
+}
+
+func divByZero() {
+ defer func() {
+  if err := recover(); err != nil {
+   log.Println("panic occurred:", err)
+  }
+ }()
+ fmt.Println(div(1, 0))
+}
+</code></pre>
+</td>
+
+</tr>
+</table>
+
+```text
+panic occurred: divide_by_zero/sig_fpe
 Although panicked. We recovered. We call mul() func
 mul func result: 50
-*/
 ```
 
 ### RAII: Synopsis
@@ -1118,7 +1162,7 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.2.zip
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.5.3.zip
         URL_MD5 a5683c02e5a21bef11bfccd6b1bac803
     )
     FetchContent_MakeAvailable(events)
