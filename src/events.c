@@ -1758,7 +1758,7 @@ uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
 	return task_push(create_task(Kb(18), (data_func_t)fn, params, false));
 }
 
-void launch_task(launch_func_t fn, uint32_t num_of_args, ...) {
+void launch(launch_func_t fn, uint32_t num_of_args, ...) {
 	va_list ap;
 
 	va_start(ap, num_of_args);

@@ -1,4 +1,4 @@
-#include "events.h"
+#define USE_RPMALLOC 1
 #include "assertions.h"
 
 
@@ -56,5 +56,6 @@ TEST(list) {
 }
 
 int main(int argc, char **argv) {
+	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
 	TEST_FUNC(list());
 }

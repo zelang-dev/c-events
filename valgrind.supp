@@ -9,3 +9,9 @@
    Memcheck:Addr4
    fun:data_type
 }
+
+{
+   Invalid read of size
+   Memcheck:Addr8
+   fun:_spring_board
+}

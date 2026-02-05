@@ -56,7 +56,7 @@ void divByZero(param_t arg) {
 }
 
 void *main_main(param_t args) {
-    launch_task(divByZero, 0);
+    launch(divByZero, 0);
     printf("Although panicked. We recovered. We call mul() func\n");
     printf("mul func result: %d\n", mul(5, 10));
     return 0;

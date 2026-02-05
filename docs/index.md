@@ -312,7 +312,7 @@ C_API void yield_task(void);
 
 /* Creates an `task` of given function with arguments,
 and immediately execute. */
-C_API void launch_task(launch_func_t fn, uint32_t num_of_args, ...);
+C_API void launch(launch_func_t fn, uint32_t num_of_args, ...);
 
 /* Suspends the execution of current `task`, and switch to the ~scheduler~. */
 C_API void suspend_task(void);
@@ -666,7 +666,7 @@ void divByZero(param_t arg) {
 }
 
 void *main_main(param_t args) {
-    launch_task(divByZero, 0);
+    launch(divByZero, 0);
     printf("Although panicked. We recovered. We call mul() func\n");
     printf("mul func result: %d\n", mul(5, 10));
     return 0;

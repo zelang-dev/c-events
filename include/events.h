@@ -327,7 +327,7 @@ C_API void yield_task(void);
 
 /* Creates an `task` of given function with arguments,
 and immediately execute. */
-C_API void launch_task(launch_func_t fn, uint32_t num_of_args, ...);
+C_API void launch(launch_func_t fn, uint32_t num_of_args, ...);
 
 /* Suspends the execution of current `task`, and switch to the ~scheduler~. */
 C_API void suspend_task(void);

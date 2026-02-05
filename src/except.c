@@ -925,7 +925,7 @@ ex_memory_t *scope_init(void) {
 		scope->err = null;
 		scope->is_protected = false;
 		scope->is_recovered = false;
-		//scope->defer_arr = array();
+		scope->defer_arr = array();
 		memset(scope->protector, 0, sizeof(ex_ptr_t));
 		scope->status = DATA_RAII;
 
