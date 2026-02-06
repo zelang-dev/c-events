@@ -6,8 +6,8 @@ int some_func(int args) {
 	return args * 2;
 }
 
-TEST(array_of) {
-	array_t d = array_of(8, "hello", "world", 32,
+TEST(arrays) {
+	array_t d = arrays(8, "hello", "world", 32,
 		"hello world", 123, some_func,
 		"four", 600);
 	ASSERT_TRUE(is_data(d));
@@ -50,7 +50,7 @@ TEST(array_of) {
 TEST(list) {
 	int result = 0;
 
-	EXEC_TEST(array_of);
+	EXEC_TEST(arrays);
 
 	return result;
 }

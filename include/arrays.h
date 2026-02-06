@@ -178,7 +178,7 @@ C_API array_t array(void);
 * @param count numbers of parameters, `0` will create ~empty~ `array`.
 * @param arguments indexed in given order.
 */
-C_API array_t array_of(size_t, ...);
+C_API array_t arrays(size_t, ...);
 C_API array_t data_ex(size_t, va_list);
 C_API array_t data_copy(array_t des, array_t src);
 C_API void data_append(array_t, void *);

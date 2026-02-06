@@ -230,7 +230,7 @@ array_t data_ex(size_t num_of, va_list ap_copy) {
 	array_t params = NULL;
 	if (num_of > 0) {
 		va_copy(ap, ap_copy);
-		params = array_of(0);
+		params = arrays(0);
 		for (i = 0; i < num_of; i++)
 			$append(params, va_arg(ap, void *));
 		va_end(ap);
@@ -239,7 +239,7 @@ array_t data_ex(size_t num_of, va_list ap_copy) {
 	return params;
 }
 
-array_t array_of(size_t count, ...) {
+array_t arrays(size_t count, ...) {
 	va_list ap;
 	array_t params = NULL;
 	size_t i, size = count ? count + 1 : data_queue_size();
@@ -258,7 +258,7 @@ array_t array_of(size_t count, ...) {
 }
 
 EVENTS_INLINE array_t array(void) {
-	return array_of(0);
+	return arrays(0);
 }
 
 EVENTS_INLINE values_t data_value(void *data) {
