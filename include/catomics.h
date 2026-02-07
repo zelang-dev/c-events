@@ -821,7 +821,7 @@ static ATOMICS_INLINE llong __stdcall __atomic_exchange_explicit_64(atomic_llong
 #   define __ATOMIC_PAD_LINE 32
 #elif defined(__m68k__)
 #   define __ATOMIC_PAD_LINE 16
-#elif defined(__x86_64) || defined(__x86_64__) || defined(__amd64) || defined(__ppc__) || defined(__ppc) || defined(__powerpc__) || defined(_M_MPPC) || defined(_M_PPC) ||  defined(__aarch64__)  || defined(__ppc64__) || defined(__powerpc64__) || defined(__arc__)
+#elif defined(__ppc__) || defined(__ppc) || defined(__powerpc__) || defined(_M_MPPC) || defined(_M_PPC) ||  defined(__aarch64__)  || defined(__ppc64__) || defined(__powerpc64__) || defined(__arc__)
 #   define __ATOMIC_PAD_LINE 128
 #elif defined(__s390__) || defined(__s390x__)
 #   define __ATOMIC_PAD_LINE 256

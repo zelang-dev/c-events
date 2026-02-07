@@ -101,7 +101,7 @@ typedef unsigned long __sigset_t;
 #define EVENTS_WRITE 	2
 #define EVENTS_TIMEOUT 	4
 #define EVENTS_CLOSED 	5
-#define EVENTS_PATHWATCH 	13
+#define EVENTS_PATHWATCH 	0x8000
 #define EVENTS_SIGNAL 	255
 #define EVENTS_ADD		0x40000000
 #define EVENTS_DEL 		0x20000000

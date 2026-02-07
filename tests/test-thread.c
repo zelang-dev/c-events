@@ -10,7 +10,7 @@ static int thdfunc(void *param) {
 
 TEST(os_create) {
 	os_thread_t th = os_create(&thdfunc, (void *)0x12345);
-	ASSERT_NOTNULL(th);
+	ASSERT_TRUE((th != OS_NULL));
 
 	os_cpumask cs = {0};
 	os_cpumask_set(&cs, 0);
@@ -23,15 +23,14 @@ TEST(os_create) {
 
 	os_detach(th); // noop
 
-	ASSERT_NOTNULL((th = os_create(&thdfunc, (void*)0x12345)));
+	ASSERT_TRUE(((th = os_create(&thdfunc, (void *)0x12345)) != OS_NULL));
 	puts("\nwaiting for thread...");
 
 #if defined __APPLE__ && defined __MACH__
 	ASSERT_TRUE(0 == os_join(th, 0, &code));
 	ASSERT_EQ(1234, code);
 
-	ASSERT_NOTNULL((th = os_create(&thdfunc, (void *)0x12345)));
-
+	ASSERT_TRUE(((th = os_create(&thdfunc, (void *)0x12345)) != OS_NULL));
 #else
 	ASSERT_TRUE(0 != os_join(th, 0, &code));
 	ASSERT_EQ(ETIMEDOUT, os_geterror());
