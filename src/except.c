@@ -203,7 +203,9 @@ void ex_trace_set(ex_context_t *ex, void *ctx) {
     ex->backtrace->process = GetCurrentProcess();
     ex->backtrace->thread = GetCurrentThread();
 #else
-	if (!got_signal)
+	if (is___scope_null())
+		ex->backtrace->size = backtrace(ex->backtrace->ctx, EX_MAX_NAME_LEN);
+	else if (is_except_root(ex) || ex->is_scoped)
 		ex->backtrace->size = backtrace(ex->backtrace->ctx, EX_MAX_NAME_LEN);
 #endif
 #endif
