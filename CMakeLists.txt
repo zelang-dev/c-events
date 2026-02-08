@@ -56,7 +56,7 @@ endif()
 
 if(UNIX)
     if(APPLE)
-        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wno-format -no-pie -D USE_DEBUG -D ENABLE_ASSERTS ")
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wno-format -fno-pie -D USE_DEBUG -D ENABLE_ASSERTS ")
     else()
         set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -rdynamic -no-pie -Wno-format -D USE_DEBUG -D ENABLE_ASSERTS ")
     endif()

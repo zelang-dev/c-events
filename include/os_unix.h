@@ -11,6 +11,7 @@
 
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 #include <sys/event.h>
+#include <libgen.h>
 #define	IN_ISDIR		0 /* event occurred against dir */
 #define IN_CREATE		NOTE_WRITE /* Subfile was created */
 #define IN_DELETE		NOTE_DELETE /* Subfile was deleted */

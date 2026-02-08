@@ -182,8 +182,8 @@ static void ex_print(const char *message) {
 	fprintf(stderr, "\nFatal Error: %s in function(%s)\n\n", uncaught_message, uncaught_infunction);
 #else
 	fprintf(stderr, "\n%s: %s\n", message, uncaught_message);
-	if (uncaught_infile != NULL) {
-		if (uncaught_infunction != NULL) {
+	if (!is_empty(uncaught_infile)) {
+		if (!is_empty(uncaught_infunction)) {
 			fprintf(stderr, "    thrown in %s at (%s:%s)\n\n", uncaught_infunction, uncaught_infile, uncaught_inline);
         } else {
 			fprintf(stderr, "    thrown at %s:%s\n\n", uncaught_infile, uncaught_inline);
