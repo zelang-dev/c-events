@@ -1,7 +1,6 @@
 #ifndef _EVENTS_INTERNAL_H
 #define _EVENTS_INTERNAL_H
 
-#include <events.h>
 #include <except.h>
 
 #ifndef USE_ASSEMBLY

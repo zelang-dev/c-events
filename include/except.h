@@ -1,6 +1,8 @@
 #ifndef _EXCEPT_H
 #define _EXCEPT_H
 
+#undef USE_RPMALLOC
+#define USE_RPMALLOC 1
 #include <events.h>
 
 #define EX_MAX_NAME_LEN  ARRAY_SIZE

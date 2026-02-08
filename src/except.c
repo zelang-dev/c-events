@@ -67,7 +67,8 @@ static volatile sig_atomic_t can_terminate = true;
 static char uncaught_message[ARRAY_SIZE] = {0};
 static char uncaught_infunction[ARRAY_SIZE/6] = {0};
 static char uncaught_infile[ARRAY_SIZE/2] = {0};
-static char uncaught_inline[ARRAY_SIZE/10] = {0};
+static char uncaught_inline[ARRAY_SIZE / 10] = {0};
+static char except_program_name[ARRAY_SIZE];
 
 ex_setup_func exception_setup_func = null;
 ex_unwind_func exception_unwind_func = null;
@@ -211,6 +212,26 @@ void ex_trace_set(ex_context_t *ex, void *ctx) {
 #endif
 }
 
+#if !defined(_WIN32) && defined(USE_DEBUG)
+/* Resolve symbol name and source location given the path
+to the executable and an address */
+static EVENTS_INLINE int addr2line(char const *const program_name, void const *const addr) {
+	char addr2line_cmd[PATH_MAX] = {0};
+
+	/* have addr2line map the address to the relent line in the code */
+#ifdef __APPLE__
+  	/* apple does things differently... */
+	snprintf(addr2line_cmd, PATH_MAX, "atos -o %.256s %p", program_name, addr);
+#else
+	snprintf(addr2line_cmd, PATH_MAX, "addr2line -f -s -i -p -e %.256s %p", program_name, addr);
+#endif
+
+	/* This will print a nicely formatted string specifying
+	the function and source line of the address */
+	return system(addr2line_cmd);
+}
+#endif
+
 void try_backtrace(ex_backtrace_t *ex) {
 #if defined(USE_DEBUG)
 #if defined(_WIN32)
@@ -298,7 +319,7 @@ void try_backtrace(ex_backtrace_t *ex) {
         pSymbol->MaxNameLen = MAX_SYM_NAME;
         SymFromAddr(process, (ULONG64)stack.AddrPC.Offset, &displacement, pSymbol);
 
-        line = (IMAGEHLP_LINE64 *)malloc(sizeof(IMAGEHLP_LINE64));
+        line = (IMAGEHLP_LINE64 *)events_malloc(sizeof(IMAGEHLP_LINE64));
         line->SizeOfStruct = sizeof(IMAGEHLP_LINE64);
 
         //try to get line
@@ -327,7 +348,17 @@ void try_backtrace(ex_backtrace_t *ex) {
     }
 #else
     fprintf(stderr, "backtrace() returned %d addresses:\n", (int)ex->size);
-    backtrace_symbols_fd(ex->ctx, ex->size, STDERR_FILENO);
+	int i, trace_size = ex->size;
+	char **messages = (char **)backtrace_symbols(ex->ctx, trace_size);
+
+	/* skip the first couple stack frames (as they are this function and
+	   our handler) and also skip the last frame as it's (always?) junk. */
+	for (i = 2; i < trace_size - 3; ++i) {
+		if (addr2line(except_program_name, ex->ctx[i]) != 0)
+			fprintf(stderr,"  error determining line # for: %s\n", messages[i]);
+	}
+
+	if (messages) { free(messages); }
 #endif
 #endif
 }
@@ -660,6 +691,13 @@ void ex_signal_setup(void) {
 	if (exception_signal_set)
 		return;
 
+	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
+#if !defined(_WIN32) && defined(USE_DEBUG)
+	 /* store off program path so we can use it later */
+	if (readlink("/proc/self/exe", except_program_name, ARRAY_SIZE) == -1)
+		perror("readlink");
+#endif
+
 #ifdef _WIN32
     ex_signal_seh(EXCEPTION_ACCESS_VIOLATION, EX_NAME(sig_segv));
     ex_signal_seh(EXCEPTION_ARRAY_BOUNDS_EXCEEDED, EX_NAME(array_bounds_exceeded));
@@ -891,17 +929,21 @@ EVENTS_INLINE bool try_finallying(ex_error_t *err, ex_context_t *ex_err) {
 
 bool try_caught(const char *err) {
 	ex_memory_t *scope = scope_local();
-	const char *exception = (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
+	if (!is_empty(scope)) {
+		const char *exception = !is_empty(scope->_panic) ? scope->_panic : scope->err;
+		if ((scope->is_recovered = str_is(err, exception)))
+			ex_local()->state = ex_catch_st;
 
-	if (is_empty(exception) && str_is(err, ex_local()->ex)) {
+		return scope->is_recovered;
+	}
+
+	const char *exception = !is_empty(ex_local()->_panic) ? ex_local()->_panic : ex_local()->ex;
+	if (str_is(err, exception)) {
 		ex_local()->state = ex_catch_st;
 		return true;
 	}
 
-	if ((scope->is_recovered = str_is(err, exception)))
-		ex_local()->state = ex_catch_st;
-
-	return scope->is_recovered;
+	return false;
 }
 
 EVENTS_INLINE const char *try_message(void) {
@@ -921,6 +963,7 @@ EVENTS_INLINE void *scope_arena(void) {
 ex_memory_t *scope_init(void) {
 	ex_memory_t *scope;
 	if (is_empty(scope = scope_local())) {
+		ex_signal_setup();
 		scope = __scope();
 		scope->arena = null;
 		scope->_panic = null;
@@ -935,7 +978,6 @@ ex_memory_t *scope_init(void) {
 		ctx->data = (void *)scope;
 		ctx->prev = (void *)scope;
 		ctx->is_scoped = true;
-		ex_signal_setup();
 		atexit(scope_destroy);
 	}
 

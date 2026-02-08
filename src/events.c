@@ -176,8 +176,10 @@ EVENTS_INLINE int events_init(int max_fd) {
 	if (events_shutdown_set || events_startup_set)
 		return 0;
 
-	int i;
 	events_startup_set = true;
+#if defined(USE_RPMALLOC) || defined(RP_MALLOC_H)
+	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
+#endif
 #ifdef _WIN32
 	_setmaxstdio(8192);
 	WSADATA wsaData;
@@ -223,6 +225,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 	mach_timebase_info(&sys_event.timer);
 #endif
 
+	int i;
 	__thrd_init(true, 0);
 	sys_event.local = (events_deque_t **)events_realloc(sys_event.local,
 		(sys_event.cpu_count + 1) * sizeof(sys_event.local[0]));
@@ -1816,6 +1819,7 @@ static void tasks_poster(waitgroup_t wg) {
 }
 
 uint32_t go(param_func_t fn, size_t num_of_args, ...) {
+	atomic_compiler_fence();
 	if (is_data(sys_event.cpu_index) && $size(sys_event.cpu_index) > 0) {
 		va_list ap;
 
@@ -2267,7 +2271,7 @@ static void *__tasks_pool_main(param_t args) {
 		task_take(queue);
 		if (queue->tasks != NULL)
 			__thrd_waitfor(queue);
-		else if (__thrd()->task_count > 1 || __thrd()->loop != NULL)
+		else if (__thrd()->task_count > 1)
 			yield_task();
 		else
 			break;
@@ -2311,12 +2315,16 @@ static int __tasks_pool_wrapper(void *arg) {
 		__thrd()->sleep_handle = NULL;
 	}
 
-	events_free(arg);
+	events_free(work);
+#if defined(USE_RPMALLOC) || defined(RP_MALLOC_H)
+	rpmalloc_thread_finalize(1);
+#endif
 	os_exit(res);
 	return res;
 }
 
 events_t *events_thread_init(void) {
+	atomic_compiler_fence();
 	if (__thrd()->loop == NULL)
 		events_add_pool(events_create(sys_event.cpu_count));
 
@@ -2328,6 +2336,7 @@ events_t *events_thread_init(void) {
 }
 
 int events_tasks_pool(events_t *loop) {
+	atomic_compiler_fence();
 	events_deque_t **local = sys_event.local;
 	os_tasks_t *t_work = NULL;
 	int save_err = errno, index = loop->loop_id;

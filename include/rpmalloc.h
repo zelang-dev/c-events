@@ -1,7 +1,9 @@
 /* rpmalloc.h  -  Memory allocator  -  Public Domain  -  2016 Mattias Jansson
  *
- * This library provides a cross-platform lock free thread caching malloc implementation in C11.
+ * This library provides a cross-platform lock free thread caching malloc implementation in C89.
  * The latest source code is always available at
+ *
+ * Modified fork from https://github.com/zelang-dev/rpmalloc
  *
  * https://github.com/mjansson/rpmalloc
  *
@@ -324,13 +326,6 @@ C_API int rpmalloc_tls_set(tls_storage_t key, void *val);
 C_API void rpmalloc_shutdown(void);
 C_API void rpmalloc_init(void);
 
-//! Override standard library malloc/free etc macros
-#undef memalign
-#undef malloc
-#undef calloc
-#undef realloc
-#undef free
-
 #ifndef FORCEINLINE
   #if defined(_MSC_VER) && !defined(__clang__)
     #define FORCEINLINE __forceinline
@@ -363,13 +358,6 @@ C_API void *RPMALLOC_CDECL rp_malloc(size_t size);
 C_API void *RPMALLOC_CDECL rp_calloc(size_t count, size_t size);
 C_API void *RPMALLOC_CDECL rp_realloc(void *ptr, size_t size);
 C_API void RPMALLOC_CDECL rp_free(void *ptr);
-
-#define memalign rp_memalign
-#define malloc rp_malloc
-#define calloc rp_calloc
-#define realloc rp_realloc
-#define free rpfree
-#define free_final rp_free
 
 #if defined(__TINYC__)
 #include <sys/types.h>

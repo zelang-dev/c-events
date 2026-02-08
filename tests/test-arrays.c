@@ -1,6 +1,4 @@
-#define USE_RPMALLOC 1
 #include "assertions.h"
-
 
 int some_func(int args) {
 	return args * 2;

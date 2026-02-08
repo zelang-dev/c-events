@@ -273,7 +273,7 @@ EVENTS_INLINE data_types data_type(void *self) {
 }
 
 EVENTS_INLINE bool is_data(void *params) {
-	return (params == NULL || !is_ptr_usable(params))
+	return (is_empty(params) || !is_ptr_usable(params))
 		? false
 		: array_type((array_t)params) == DATA_ARRAY;
 }

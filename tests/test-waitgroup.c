@@ -1,4 +1,3 @@
-#include <events.h>
 #include "assertions.h"
 
 void *worker(param_t args) {
