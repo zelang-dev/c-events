@@ -354,7 +354,7 @@ void try_backtrace(ex_backtrace_t *ex) {
 	/* skip the first couple stack frames (as they are this function and
 	   our handler) and also skip the last frame as it's (always?) junk. */
 	for (i = 2; i < trace_size - 3; ++i) {
-		if (addr2line(except_program_name, ex->ctx[i]) != 0)
+		if (addr2line(except_program_name, (ex->ctx[i] - 1)) != 0)
 			fprintf(stderr,"  error determining line # for: %s\n", messages[i]);
 	}
 
