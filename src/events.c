@@ -248,8 +248,8 @@ EVENTS_INLINE void events_deinit(void) {
 
 	events_shutdown_set = true;
 	deque_destroy();
-	if (sys_event.gc != NULL) {
-		foreach(t in sys_event.gc) {
+	if (is_data(sys_event.gc)) {
+		foreach_back(t in sys_event.gc) {
 			if (((tasks_t *)t.object)->magic_number == TASK_MAGIC_NUMBER) {
 #if defined(_WIN32) && defined(USE_FIBER)
 				DeleteFiber(((tasks_t *)t.object)->type->fiber);
@@ -262,7 +262,7 @@ EVENTS_INLINE void events_deinit(void) {
 		sys_event.gc = NULL;
 	}
 
-	if (sys_event.cpu_index != NULL) {
+	if (is_data(sys_event.cpu_index)) {
 		$delete(sys_event.cpu_index);
 		sys_event.cpu_index = NULL;
 	}
@@ -1828,7 +1828,7 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 		va_end(ap);
 
 #if defined(_WIN32) && defined(USE_FIBER)
-		return task_push(create_task(Kb(9), (data_func_t)fn, params, true));
+		return task_push(create_task(Kb(24), (data_func_t)fn, params, true));
 #else
 		return task_push(create_task(Kb(18), (data_func_t)fn, params, true));
 #endif
@@ -2395,9 +2395,24 @@ static int __threads_wrapper(void *arg) {
 			os_sleep(1);
 		}
 	} while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed));
+
+	if (__thrd()->sleep_handle != NULL
+		&& __thrd()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
+#if defined(_WIN32) && defined(USE_FIBER)
+		DeleteFiber(__thrd()->sleep_handle->type->fiber);
+#endif
+		events_free(__thrd()->sleep_handle);
+		__thrd()->sleep_handle = NULL;
+	}
+
 	__thrd()->pool = NULL;
 	$delete(queue->jobs);
-	events_free(arg);
+	events_free(work);
+
+#if defined(USE_RPMALLOC) || defined(RP_MALLOC_H)
+	rpmalloc_thread_finalize(1);
+#endif
+
 	os_exit(status);
 	return status;
 }

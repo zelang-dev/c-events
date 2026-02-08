@@ -112,6 +112,7 @@ typedef enum {
 	ASYNC_TCP,
 	ASYNC_PIPE,
 	ASYNC_FILE,
+	ASYNC_TLS,
 } async_types;
 
 typedef enum {
@@ -140,10 +141,6 @@ typedef void (*watch_cb)(int wd, events_monitors mask, const char *namepath, voi
 typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
 typedef void (*sigcall_t)(void);
 typedef exec_io_cb spawn_cb;
-
-#ifndef nil
-#	define nil	{0}
-#endif
 
 #ifndef null
 #	define null	NULL

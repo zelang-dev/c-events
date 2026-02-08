@@ -148,7 +148,7 @@ intptr_t events_backend_fd(events_t *_loop) {
 
 int events_poll_once_internal(events_t *_loop, int max_wait) {
 	events_epoll *loop = (events_epoll *)_loop;
-	int i, nevents, ffd = 0;
+	int i, len, nevents, ffd = 0;
 
 	nevents = epoll_wait(loop->epfd, loop->events, sizeof(loop->events) / sizeof(loop->events[0]),
 		(ffd > 0 ? 0 : max_wait * 1000));
@@ -164,12 +164,18 @@ int events_poll_once_internal(events_t *_loop, int max_wait) {
 				| ((event->events & EPOLLOUT) != 0 ? EVENTS_WRITE : 0)
 				| ((event->events & EPOLLHUP) != 0 ? EVENTS_CLOSED : 0);
 			if (target->is_pathwatcher) {
-				char *buffer = events_malloc(Kb(8));
-				int len = read(event->data.fd, buffer, Kb(8) + sizeof(inotify_t));
-				if (len < 0)
-					return -1;
+				char *buffer = events_malloc(Kb(8) + sizeof(inotify_t));
+				if (!is_empty(buffer)) {
+					if ((len = read(event->data.fd, buffer, Kb(8) + sizeof(inotify_t))) < 0) {
+						events_free(buffer);
+						return -1;
+					}
 
-				async_task(inotify_task, 5, casting(event->data.fd), buffer, casting(len), target->callback, target->cb_arg);
+					async_task(inotify_task, 5, casting(event->data.fd), buffer, casting(len), target->callback, target->cb_arg);
+					return 0;
+				}
+
+				return -1;
 			} else if (revents != 0) {
 				(*target->callback)(event->data.fd, revents, target->cb_arg);
 			}
