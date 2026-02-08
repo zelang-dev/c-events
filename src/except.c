@@ -68,7 +68,7 @@ static char uncaught_message[ARRAY_SIZE] = {0};
 static char uncaught_infunction[ARRAY_SIZE/6] = {0};
 static char uncaught_infile[ARRAY_SIZE/2] = {0};
 static char uncaught_inline[ARRAY_SIZE / 10] = {0};
-static char except_program_name[ARRAY_SIZE];
+static char except_program_name[ARRAY_SIZE] = {0};
 
 ex_setup_func exception_setup_func = null;
 ex_unwind_func exception_unwind_func = null;
@@ -353,7 +353,7 @@ void try_backtrace(ex_backtrace_t *ex) {
 
 	/* skip the first couple stack frames (as they are this function and
 	   our handler) and also skip the last frame as it's (always?) junk. */
-	for (i = 2; i < trace_size - 3; ++i) {
+	for (i = 1; i < trace_size - 1; ++i) {
 		if (addr2line(except_program_name, (ex->ctx[i] - 1)) != 0)
 			fprintf(stderr,"  error determining line # for: %s\n", messages[i]);
 	}
@@ -694,8 +694,14 @@ void ex_signal_setup(void) {
 	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
 #if !defined(_WIN32) && defined(USE_DEBUG)
 	 /* store off program path so we can use it later */
+#ifdef __APPLE__
+	uint32_t size = ARRAY_SIZE - 1;
+	if (_NSGetExecutablePath(except_program_name, &size) != 0)
+		perror("_NSGetExecutablePath");
+#else
 	if (readlink("/proc/self/exe", except_program_name, ARRAY_SIZE) == -1)
 		perror("readlink");
+#endif
 #endif
 
 #ifdef _WIN32

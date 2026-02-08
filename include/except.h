@@ -8,6 +8,9 @@
 #define EX_MAX_NAME_LEN  ARRAY_SIZE
 
 #if defined(USE_DEBUG)
+#   if __APPLE__ || __MACH__
+        include <mach-o/dyld.h>
+#   endif
 #   ifdef _WIN32
 #       include <DbgHelp.h>
 #       pragma comment(lib,"Dbghelp.lib")
@@ -186,7 +189,7 @@ throws an `E` defined O.S. exception as:
  */
 #define throw(E)    ex_throw_loc(E, __FILE__, __LINE__, __FUNCTION__, NULL)
 #define ex_signal_block(ctrl)   \
-    sigset_t ctrl##__FUNCTION__, ctrl_all##__FUNCTION__; \
+    sigset_t ctrl##__FUNCTION__ = {0}, ctrl_all##__FUNCTION__ = {0}; \
     sigfillset(&ctrl##__FUNCTION__);    \
     pthread_sigmask(SIG_SETMASK, &ctrl##__FUNCTION__, &ctrl_all##__FUNCTION__);
 
