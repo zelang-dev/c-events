@@ -1,3 +1,4 @@
+#undef NO_RPMALLOC
 #include "assertions.h"
 
 int some_func(int args) {

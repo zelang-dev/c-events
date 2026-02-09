@@ -177,9 +177,11 @@ EVENTS_INLINE int events_init(int max_fd) {
 		return 0;
 
 	events_startup_set = true;
-#if defined(USE_RPMALLOC) || defined(RP_MALLOC_H)
+
+#if !defined(NO_RPMALLOC)
 	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
 #endif
+
 #ifdef _WIN32
 	_setmaxstdio(8192);
 	WSADATA wsaData;
@@ -2316,7 +2318,7 @@ static int __tasks_pool_wrapper(void *arg) {
 	}
 
 	events_free(work);
-#if defined(USE_RPMALLOC) || defined(RP_MALLOC_H)
+#if !defined(NO_RPMALLOC)
 	rpmalloc_thread_finalize(1);
 #endif
 	os_exit(res);
@@ -2409,7 +2411,7 @@ static int __threads_wrapper(void *arg) {
 	$delete(queue->jobs);
 	events_free(work);
 
-#if defined(USE_RPMALLOC) || defined(RP_MALLOC_H)
+#if !defined(NO_RPMALLOC)
 	rpmalloc_thread_finalize(1);
 #endif
 

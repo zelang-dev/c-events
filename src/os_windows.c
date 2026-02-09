@@ -1,4 +1,11 @@
 #include "events_internal.h"
+#if !defined(ssize_t)
+#	ifdef _WIN64
+#		define ssize_t SSIZE_T
+#	else
+#		define ssize_t long
+#	endif
+#endif
 
 #undef read
 #undef write

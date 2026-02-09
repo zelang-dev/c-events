@@ -1,4 +1,11 @@
 #include "events_internal.h"
+#if defined(_MSC_VER) && !defined(ssize_t)
+#	ifdef _WIN64
+#		define ssize_t SSIZE_T
+#	else
+#		define ssize_t long
+#	endif
+#endif
 
 fds_t async_listener(char *server, int port, bool proto_tcp) {
 	fds_t fd;

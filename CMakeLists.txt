@@ -22,12 +22,13 @@ include(CTest)
 set(BUILD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/build)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BUILD_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/built")
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}" ${CMAKE_MODULE_PATH}/cmake)
+set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 option(BUILD_SHARED_LIBS "Build the library as a shared (dynamically-linked) " OFF)
+option(NO_RPMALLOC "Build without (rpmalloc) use standard `libc` malloc" OFF)
 
 message("Generated with config types: ${CMAKE_CONFIGURATION_TYPES}")
 set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
@@ -68,6 +69,10 @@ else()
     endif()
 endif()
 
+if(NO_RPMALLOC)
+	add_definitions(-DNO_RPMALLOC=1)
+endif()
+
 if(BUILD_SHARED_LIBS)
 	add_library(${PROJECT_NAME} SHARED ${ev_sources})
 else()
@@ -89,6 +94,28 @@ if(UNIX)
         target_link_libraries(${PROJECT_NAME} PUBLIC ${CMAKE_THREAD_LIBS_INIT} atomic)
     endif()
 endif()
+
+find_package(opentls QUIET)
+if(NOT opentls_FOUND)
+    FetchContent_Declare(opentls
+        URL https://github.com/zelang-dev/opentls/archive/refs/tags/4.1.12.zip
+        URL_MD5 0d95f587b35fa12991e42d763cf5f5bf
+    )
+    if(WIN32)
+        add_definitions(-DOPENSSL_MSVC_STATIC_RT=TRUE)
+        add_definitions(-DNO_GETTIMEOFDAY)
+        include_directories(${OPENSSL_INCLUDE_DIR})
+    endif()
+    FetchContent_MakeAvailable(opentls)
+endif()
+
+target_include_directories(${PROJECT_NAME}
+	PRIVATE $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}
+	$<INSTALL_INTERFACE:${OPENSSL_INCLUDE_DIR})
+
+target_link_libraries(${PROJECT_NAME} PUBLIC ${OPENSSL_SSL_LIBRARY})
+target_link_libraries(${PROJECT_NAME} PUBLIC ${OPENSSL_CRYPTO_LIBRARY})
+target_link_libraries(${PROJECT_NAME} PUBLIC opentls)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
 	OUTPUT_NAME ${PROJECT_NAME}
@@ -164,7 +191,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/eventsConfig.cmake
 	DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}" )
 
 install(
-	TARGETS ${PROJECT_NAME}
+	TARGETS ${PROJECT_NAME} opentls
 	EXPORT "${PROJECT_NAME}Targets"
 	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -185,6 +212,7 @@ if(WIN32)
 else()
 	install(FILES include/*.h DESTINATION include)
 endif()
+set(CPACK_INSTALL_CMAKE_CONFIGURATIONS Release)
 include(CPack)
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)

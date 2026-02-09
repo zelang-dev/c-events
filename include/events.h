@@ -89,10 +89,10 @@ typedef unsigned long __sigset_t;
 #	endif
 #endif
 
-#if defined(USE_RPMALLOC)
-#	include <rpmalloc.h>
-#elif !defined(RP_MALLOC_H) && !defined(USE_RPMALLOC)
+#if defined(NO_RPMALLOC)
 #	include <stdlib.h>
+#else
+#	include <rpmalloc.h>
 #endif
 
 #include <threaded.h>

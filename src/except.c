@@ -691,7 +691,10 @@ void ex_signal_setup(void) {
 	if (exception_signal_set)
 		return;
 
+#if !defined(NO_RPMALLOC)
 	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
+#endif
+
 #if !defined(_WIN32) && defined(USE_DEBUG)
 	 /* store off program path so we can use it later */
 #ifdef __APPLE__
