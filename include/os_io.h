@@ -58,6 +58,7 @@
 #endif
 
 #include <arrays.h>
+#include <os_tls.h>
 #ifdef _WIN32
 #	include <os_windows.h>
 #else
@@ -351,6 +352,7 @@ C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
 C_API int fs_writefile(const char *path, char *text);
 C_API char *fs_readfile(const char *path);
+C_API bool fs_touch(const char *path);
 
 /* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
 - This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.

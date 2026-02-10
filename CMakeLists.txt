@@ -38,6 +38,7 @@ set(ev_sources
 	${CMAKE_CURRENT_SOURCE_DIR}/src/events.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/except.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/os_tls.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/os_async.c)
 if(WIN32)
 	set(ev_sources ${ev_sources}
@@ -222,6 +223,7 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     if(BUILD_EXAMPLES)
         add_subdirectory(examples)
         add_subdirectory(examples/exceptions)
+        add_subdirectory(examples/ssl)
     endif()
 
     if(BUILD_TESTS)

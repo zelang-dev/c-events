@@ -433,6 +433,10 @@ EVENTS_INLINE size_t fs_filesize(const char *path) {
 	return 0;
 }
 
+EVENTS_INLINE bool fs_touch(const char *path) {
+	return fs_writefile(path, "") == 0;
+}
+
 int fs_writefile(const char *path, char *text) {
 	int len, fd;
 	if ((fd = fs_open(path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR)) > 0) {
