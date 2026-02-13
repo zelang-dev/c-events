@@ -1,6 +1,6 @@
 
-#ifndef _OS_IO_H
-#define _OS_IO_H
+#ifndef _ASYNC_IO_H
+#define _ASYNC_IO_H
 
 #ifndef C_API
  /* Public API qualifier. */
@@ -57,8 +57,7 @@
 #	define unreachable 	Statement(printf(CLR_LN"How did we get here? In %s on line %d\n", __FILE__, __LINE__);)
 #endif
 
-#include <arrays.h>
-#include <os_tls.h>
+#include <async_tls.h>
 #ifdef _WIN32
 #	include <os_windows.h>
 #else
@@ -277,14 +276,14 @@ C_API int async_read2(int fd, void *buf, int n);
 C_API int async_write(int fd, void *buf, int n);
 
 /** Start a ~network~ listener `server` running on ~address~,
-`port` number, with protocol, `proto_tcp` determents either TCP or UDP.
+`port` number, `backlog` count, with protocol, `proto_tcp` determents either TCP or UDP.
 
 The ~address~ is a string version of a `host name` or `IP` address.
 If `host name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup.
 If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
 - Returns a `fd` to use with `async_accept()`. */
-C_API fds_t async_listener(char *server, int port, bool proto_tcp);
+C_API fds_t async_listener(char *server, int port, int backlog, bool proto_tcp);
 
 /** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
 
@@ -372,4 +371,4 @@ C_API bool spawn_is_finish(execinfo_t *child);
 } /* terminate extern "C" { */
 #endif
 
-#endif /* _OS_IO_H */
+#endif /* _ASYNC_IO_H */

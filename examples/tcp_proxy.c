@@ -62,7 +62,7 @@ void *main_main(param_t args) {
 	server = args[1].char_ptr;
 	port = atoi(args[2].char_ptr);
 
-	if ((fd = async_listener(OS_NULL, local, true)) < 0) {
+	if ((fd = async_listener(OS_NULL, local, 128, true)) < 0) {
 		fprintf(stderr, "cannot listen on tcp port %d: %s\n", local, strerror(errno));
 		exit(1);
 	}

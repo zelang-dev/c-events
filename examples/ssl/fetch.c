@@ -1,39 +1,42 @@
 #include <events.h>
-#include <os_tls.h>
 
-int uv_main(int argc, char **argv) {
-	yield();
-	cli_message_set("\turl - website\n", 1, false);
-	if (is_cli_getopt(nullptr, true)) {
-		string data = nullptr;
-		int chunks = 0;
-		url_t *url = parse_url(cli_getopt());
-		if (!is_empty(url)) {
-			dnsinfo_t *dns = get_addrinfo(url->host, url->scheme, 3,
-				kv(ai_flags, AF_UNSPEC),
-				kv(ai_socktype, SOCK_STREAM),
-				kv(ai_protocol, IPPROTO_TCP)
-			);
+void *main_main(param_t args) {
+	if (getopt_has(null, true)) {
+		char data[Kb(16)] = {0};
+		int client, chunks = 0;
+		ssize_t len;
 
-			use_ca_certificate("cert.pem");
-			uv_stream_t *client = stream_secure(addrinfo_ip(dns), url->host, url->port);
-			if (!is_empty(client) && stream_write(client, "GET /"CRLF)) {
-				cout(CLR_LN);
-				while (stream_peek(client) != UV_EOF) {
-					if (!is_empty(data = stream_read(client)))
-						cout(data);
-					else
-						break;
+		use_ca_certificate("cert.pem");
+		if ((client = tls_get(getopts())) > 0 && tls_writer(client, "GET /"CRLF, 0)) {
+			cout(CLR_LN);
+			while (!socket_is_eof(client)) {
+				if ((len = tls_reader(client, data, sizeof(data) - 1)) > 0)
+					cout(data);
+				else
+					break;
 
-					chunks++;
-				}
+				memset(data, 0, len);
+				chunks++;
 			}
-
-			cout("\n\nReceived: %d chunks.\n", chunks);
-		} else {
-			return is_cli_getopt("help", false);
 		}
+
+		cout("\n\nReceived: %d chunks.\n", chunks);
+	} else {
+		getopt_has("help", false);
 	}
 
-	return coro_err_code();
+	return 0;
+}
+
+int main(int argc, char **argv) {
+	getopt_arguments_set(argc, argv);
+	getopt_message_set("\turl - website\n", 1, false);
+
+	events_init(1024);
+	events_t *loop = events_create(1);
+	async_task(main_main, 0);
+	async_run(loop);
+	events_destroy(loop);
+
+	return 0;
 }

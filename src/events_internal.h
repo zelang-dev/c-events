@@ -219,18 +219,20 @@ make_atomic(results_data_t, atomic_results_t)
 struct events_fd_s {
   /* use accessors! */
   /* TODO adjust the size to match that of a cache line */
-	events_cb callback;
-	void *cb_arg;
-	events_t *loop;
 	events_id_t loop_id;
 	char events;
 	unsigned char timeout_idx; /* EVENTS_TIMEOUT_IDX_UNUSED if not used */
-	intptr_t _backend; /* can be used by backends (never modified by core) */
 	int signal_idx;
 	bool signal_set;
 	bool is_iodispatch;
 	bool is_pathwatcher;
 	bool backend_used;
+	intptr_t _backend; /* can be used by backends (never modified by core) */
+	events_cb callback;
+	void *cb_arg;
+	events_t *loop;
+	tls_s *tls;
+	tls_config_t *tls_config;
 };
 make_atomic(events_fd_t *, atomic_events_t)
 
@@ -531,6 +533,7 @@ void events_free(void *ptr);
 uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
 void thread_result_set(os_request_t *p, void *res);
 uint32_t task_push(tasks_t *t);
+void *task_erred(tasks_t *t, int code);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread);
 bool tasks_is_active(void);
 int results_tid(uint32_t rid);

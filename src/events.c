@@ -195,7 +195,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 	assert(max_fd > 0);
 
 	events_ssl_init();
-	os_tls_hostname();
+	events_hostname();
 	if (os_init() == -1) {
 		return -1;
 	}
@@ -1093,8 +1093,10 @@ static EVENTS_INLINE const char *task_state(int status) {
 	}
 }
 
-EVENTS_INLINE int task_err_code(void) {
-	return active_task()->err_code;
+void *task_erred(tasks_t *t, int code) {
+	t->err_code = code;
+	t->status = TASK_ERRED;
+	return null;
 }
 
 EVENTS_INLINE void task_exception_set(void *err) {
@@ -1268,6 +1270,7 @@ static void wait_cb(fds_t fd, int event, void *arg) {
 	t->ready = true;
 	enqueue(l, t);
 	events_del(fd);
+	events_target(fd)->events = event;
 }
 
 void async_wait(int fd, int rw) {

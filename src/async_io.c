@@ -7,7 +7,7 @@
 #	endif
 #endif
 
-fds_t async_listener(char *server, int port, bool proto_tcp) {
+fds_t async_listener(char *server, int port, int backlog, bool proto_tcp) {
 	fds_t fd;
 	int proto, n;
 	char *ip;
@@ -47,7 +47,7 @@ fds_t async_listener(char *server, int port, bool proto_tcp) {
 	}
 
 	if (proto == SOCK_STREAM)
-		listen(fd, 128);
+		listen(fd, backlog);
 
 	events_set_nonblocking(fd);
 	return fd;
@@ -447,7 +447,7 @@ int fs_writefile(const char *path, char *text) {
 			return len;
 	}
 
-	return task_err_code();
+	return task_code();
 }
 
 char *fs_readfile(const char *path) {

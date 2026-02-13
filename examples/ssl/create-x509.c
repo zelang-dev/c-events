@@ -1,7 +1,7 @@
 #include <events.h>
 
 void *main_main(param_t args) {
-	const char *name = os_tls_hostname();
+	const char *name = events_hostname();
 
 	/* Generate the key. */
 	puts("Generating RSA key..."CLR_LN);

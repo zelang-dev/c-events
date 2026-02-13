@@ -1,6 +1,7 @@
-#ifndef _OS_TLS_H
-#define _OS_TLS_H
+#ifndef _ASYNC_TLS_H
+#define _ASYNC_TLS_H
 
+#define NO_REDEF_POSIX_FUNCTIONS
 #undef in
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -9,6 +10,7 @@
 #include <openssl/ossl_typ.h>
 #include <tls.h>
 #define in ,
+#include <arrays.h>
 
 #ifdef _WIN32
 #define _BIO_MODE_R(flags) (((flags) & PKCS7_BINARY) ? "rb" : "r")
@@ -68,23 +70,24 @@ typedef enum {
 
 typedef struct tls_config tls_config_t;
 typedef struct tls tls_s;
-typedef struct os_tls_s os_tls_t;
+typedef void (*tls_client_cb)(int);
 #define TLS_EOF 0xa000126
 
-C_API const char *os_tls_hostname(void);
-C_API int os_tls_accept(os_tls_t *const server, os_tls_t *const socket);
-C_API int os_tls_connect(char const *const host, os_tls_t *const socket);
-C_API void os_tls_close(os_tls_t *const socket);
-C_API bool os_tls_is_secure(os_tls_t *const socket);
-C_API char const *os_tls_error(os_tls_t  *const socket);
+C_API bool socket_is_eof(int);
+C_API bool socket_is_secure(int);
 
-C_API char *os_tls_read(os_tls_t *const socket);
-C_API ssize_t os_tls_write(os_tls_t *const socket, unsigned char const *const buf, size_t const len);
+C_API void async_tls_close(int);
+C_API const char *async_tls_error(int);
 
-C_API int os_tls_flush(os_tls_t *const socket);
-C_API int os_tls_peek(os_tls_t *const socket);
+C_API ssize_t tls_reader(int, char *buf, size_t max);
+C_API ssize_t tls_writer(int, char *buf, size_t len);
+C_API int tls_get(const char *);
+C_API int tls_bind(const char *, int backlog);
+C_API int tls_accept(int, char *server, int *port);
+C_API void tls_handler(tls_client_cb, int);
+C_API int tls_flusher(int);
 
-C_API bool is_tls_selfserver(void);
+C_API bool tls_is_selfserver(void);
 C_API void tls_selfserver_set(void);
 C_API void tls_selfserver_clear(void);
 
@@ -108,6 +111,7 @@ C_API bool x509_self_export(EVP_PKEY *pkey, X509 *x509, const char *path_noext);
 C_API void use_ca_certificate(const char *path);
 C_API void use_certificate(char *path, uint32_t ctx_pairs, ...);
 
+C_API const char *events_hostname(void);
 C_API void events_ssl_error(void);
 C_API void events_ssl_init(void);
 
@@ -115,4 +119,4 @@ C_API void events_ssl_init(void);
 }
 #endif
 
-#endif /* _OS_TLS_H */
+#endif /* _ASYNC_TLS_H */

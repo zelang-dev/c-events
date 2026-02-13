@@ -155,7 +155,7 @@ void *main_main(param_t args) {
  server = args[1].char_ptr;
  port = atoi(args[2].char_ptr);
 
- if ((fd = async_listener(OS_NULL, local, true)) < 0) {
+ if ((fd = async_listener(OS_NULL, local, 128, true)) < 0) {
   fprintf(stderr, "cannot listen on tcp port %d: %s\n", local, strerror(errno));
   exit(1);
  }
@@ -373,7 +373,6 @@ C_API void tasks_info(tasks_t *t, int pos);
 
 /* Return `current` task ~user_data~. */
 C_API void *task_data(void);
-C_API int task_err_code(void);
 C_API ptrdiff_t task_code(void);
 
 /* Set tasks `user_data`, a ~per~ `task` storage place,
@@ -470,14 +469,14 @@ C_API int async_read2(int fd, void *buf, int n);
 C_API int async_write(int fd, void *buf, int n);
 
 /** Start a ~network~ listener `server` running on ~address~,
-`port` number, with protocol, `proto_tcp` determents either TCP or UDP.
+`port` number, `backlog` count, with protocol, `proto_tcp` determents either TCP or UDP.
 
 The ~address~ is a string version of a `host name` or `IP` address.
 If `host name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup.
 If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
 - Returns a `fd` to use with `async_accept()`. */
-C_API fds_t async_listener(char *server, int port, bool proto_tcp);
+C_API fds_t async_listener(char *server, int port, int backlog, bool proto_tcp);
 
 /** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
 

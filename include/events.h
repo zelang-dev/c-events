@@ -387,7 +387,6 @@ C_API void tasks_info(tasks_t *t, int pos);
 
 /* Return `current` task ~user_data~. */
 C_API void *task_data(void);
-C_API int task_err_code(void);
 C_API void task_exception_set(void *);
 C_API void task_scope_set(ex_memory_t *);
 C_API ex_memory_t *task_scope(void);

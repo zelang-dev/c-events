@@ -1,38 +1,48 @@
 #include <events.h>
-#include <os_tls.h>
 
 #define DEFAULT_PORT 7000
 #define DEFAULT_BACKLOG 128
 
-void new_connection(uv_stream_t *socket) {
-	string data = stream_read(socket);
-	if (data) {
-		stream_write(socket, data);
-		stream_flush(socket);
+void new_connection(int socket) {
+	char data[Kb(8)] = {0};
+	ssize_t len = tls_reader(socket, data, sizeof(data));
+	if (len > 0) {
+		tls_writer(socket, data, len);
+		tls_flusher(socket);
 	}
 }
 
-int uv_main(int argc, char **argv) {
-    uv_stream_t *client, *server;
-	char addr[UV_MAXHOSTNAMESIZE] = nil;
-	cli_message_set("\t-s for `secure connection`\n", 0, false);
-	bool is_secure = is_cli_getopt("-s", true);
-	string_t host = is_secure ? "tls://127.0.0.1:%d" : "0.0.0.0:%d";
+void *main_main(param_t args) {
+	int client, server, rport;
+	char remote[16], addr[MAXHOSTNAMELEN];
+	bool is_secure = getopt_has("-s", true);
+	const char *host = is_secure ? "tls://127.0.0.1:%d" : "tcp://0.0.0.0:%d";
 
 	if (snprintf(addr, sizeof(addr), host, DEFAULT_PORT)) {
 		if (is_secure)
-			use_certificate(nullptr, 0);
+			use_certificate(null, 0);
 
-		server = stream_bind(addr, 0);
-        while (server) {
-            if (is_empty(client = stream_listen(server, DEFAULT_BACKLOG))) {
-                fprintf(stderr, "Listen error %s\n", uv_strerror(coro_err_code()));
-                break;
-            }
-
-            stream_handler(new_connection, client);
+		server = tls_bind(addr, DEFAULT_BACKLOG);
+		if (server > 0) {
+			while ((client = tls_accept(server, remote, rport)) > 0) {
+				cerr("connection from %s:%d"CLR_LN, remote, rport);
+				tls_handler(new_connection, client);
+			}
         }
     }
 
-    return coro_err_code();
+    return 0;
+}
+
+int main(int argc, char **argv) {
+	getopt_arguments_set(argc, argv);
+	getopt_message_set("\t-s for `secure connection`\n", 0, false);
+
+	events_init(1024);
+	events_t *loop = events_create(1);
+	async_task(main_main, 0);
+	async_run(loop);
+	events_destroy(loop);
+
+	return 0;
 }

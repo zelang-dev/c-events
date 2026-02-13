@@ -1,7 +1,7 @@
 #ifndef _THREADED_H /* _THREADED_H */
 #define _THREADED_H
 
-#include <os_io.h>
+#include <async_io.h>
 
 #if !defined(thread_local) /* User can override thread_local for obscure compilers */
 	 /* Running in multi-threaded environment */

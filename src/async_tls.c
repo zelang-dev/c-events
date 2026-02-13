@@ -1,3 +1,4 @@
+#define NO_REDEF_POSIX_FUNCTIONS
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <openssl/err.h>
@@ -7,8 +8,7 @@
 #   include <openssl/engine.h>
 #endif
 #include <openssl/rand.h>
-#include <events.h>
-#include <os_tls.h>
+#include "events_internal.h"
 
 #ifdef _WIN32
 #include <Wincrypt.h>
@@ -26,6 +26,7 @@ static char os_tls_cert[MAXHOSTNAMELEN + 4] = {0};
 static char os_tls_csr[MAXHOSTNAMELEN + 4] = {0};
 static char os_tls_pkey[MAXHOSTNAMELEN + 4] = {0};
 static char os_tls_self_touch[MAXHOSTNAMELEN + 6] = {0};
+
 struct x509_request {
     CONF *global_config;	/* Global SSL config */
     CONF *req_config;		/* SSL config for this request */
@@ -68,28 +69,6 @@ enum os_tls_cipher_type {
     CIPHER_DEFAULT = CIPHER_AES_128_CBC
 };
 
-/* OpenSSL Certificate */
-struct certificate_object {
-    data_types type;
-    void *value;
-    X509 *x509;
-};
-
-/* OpenSSL AsymmetricKey */
-struct pkey_object {
-	data_types type;
-    void *value;
-    bool is_private;
-    EVP_PKEY *pkey;
-};
-
-/* OpenSSL Certificate Signing Request */
-struct x509_request_object {
-	data_types type;
-    void *value;
-    X509_REQ *csr;
-};
-
 typedef enum {
 	ssl_generate_pkey = ca_file + 1,
 	ssl_create_self,
@@ -97,21 +76,23 @@ typedef enum {
 	ssl_worker
 } thrd_worker_types;
 
-struct os_tls_s {
-	data_types type;
-	int err;
-	int stream;
-	unsigned flags;
-	bool is_client;
-	bool is_server;
-	bool is_connecting;
-	uint32_t retry;
-	char *buf;
-	void *data;
-	//http_t *http;
-	tls_s *secure;
+enum {
+	http_incomplete = 1 << 0,
+	http_keepalive = 1 << 1,
+	http_outgoing = 1 << 2,
 };
 
+typedef struct {
+	ssize_t status;
+	size_t max;
+	unsigned char *buf;
+	tasks_t *thread;
+} tls_state;
+
+#define READ_BUFFER (1024 * 8)
+#define WRITE_BUFFER (1024 * 8)
+
+static volatile bool tls_is_self_signed = false;
 static const EVP_CIPHER *get_cipher(long algo) {
     switch (algo) {
         case CIPHER_RC2_40:
@@ -456,7 +437,7 @@ static void *thrd_worker_thread(param_t args) {
 			pkey = EVP_PKEY_new();
 			if (no_error = generate_pkey_ex(pkey, 4096, EVP_PKEY_RSA)) {
 				no_error = false;
-				x509 = x509_self(pkey, NULL, NULL, os_tls_hostname());
+				x509 = x509_self(pkey, NULL, NULL, events_hostname());
 				if (x509) {
 					no_error = create_self_ex(pkey, x509);
 					X509_free(x509);
@@ -625,7 +606,7 @@ void events_ssl_error(void) {
 }
 
 static void cert_names_setup(void) {
-	char *name = (char *)os_tls_hostname();
+	char *name = (char *)events_hostname();
 	if (str_is_empty((const char *)os_tls_cert)) {
 		if (!(snprintf(os_tls_cert, sizeof(os_tls_cert), "%s.crt", name))
 		|| !(snprintf(os_tls_csr, sizeof(os_tls_csr), "%s.csr", name))
@@ -661,7 +642,7 @@ EVENTS_INLINE const char *cert_file(void) {
 	return (const char *)os_tls_cert;
 }
 
-const char *os_tls_hostname(void) {
+const char *events_hostname(void) {
 	if (str_is_empty((const char *)os_tls_host)) {
 		if (gethostname(os_tls_host, sizeof(os_tls_host)) != 0) {
 			perror("gethostname");
@@ -674,7 +655,7 @@ const char *os_tls_hostname(void) {
 }
 
 static const char *default_cert_file(char *path) {
-	char *name = (char *)os_tls_hostname();
+	char *name = (char *)events_hostname();
 	char *dir = is_empty(path) ? "..\\" SYS_DIRSEP : path;
 	if (str_is_empty((const char *)os_tls_directory)) {
 		if (!(snprintf(os_tls_directory, sizeof(os_tls_directory), "%s", dir))
@@ -722,18 +703,18 @@ void events_ssl_init(void) {
 
     /* Determine default SSL configuration file */
     char *config_filename = getenv("OPENSSL_CONF");
-    if (config_filename == NULL) {
+    if (config_filename == NULL)
         config_filename = getenv("SSLEAY_CONF");
-    }
 
     /* default to 'openssl.cnf' if no environment variable is set */
-    if (config_filename == NULL) {
+    if (config_filename == NULL)
         snprintf(default_ssl_conf_filename, sizeof(default_ssl_conf_filename), "%s/%s",
                  X509_get_default_cert_area(),
                  "openssl.cnf");
-    } else {
+    else
         snprintf(default_ssl_conf_filename, sizeof(default_ssl_conf_filename), "%s", config_filename);
-    }
+
+	tls_init();
 }
 
 int cerr(const char *msg, ...) {
@@ -754,4 +735,275 @@ int cout(const char *msg, ...) {
 		fflush(stdout);
 
 	return r;
+}
+
+static int tlserr(int const rc, struct tls *const secure) {
+	if (0 == rc) return 0;
+	assert(-1 == rc);
+#ifdef USE_DEBUG
+	cerr("\n\nTLS error: %s"CLR_LN, tls_error(secure));
+	SSL_load_error_strings();
+	char x[255 + 1];
+	ERR_error_string_n(ERR_get_error(), x, sizeof(x));
+	cerr("SSL error: %s"CLR_LN, x);
+#endif
+	return EPROTO;
+}
+
+static int tls_poll(int socket, int event) {
+	if (TLS_WANT_POLLIN == event)
+		async_wait(socket, 'r');
+	else if (TLS_WANT_POLLOUT == event)
+		async_wait(socket, 'w');
+
+	events_fd_t *target = events_target(socket);
+	return (target->events & EVENTS_READ || target->events & EVENTS_WRITE) ? 0 : EOF;
+}
+
+EVENTS_INLINE bool socket_is_secure(int socket) {
+	if (!socket) return false;
+	return !is_empty(events_target(socket)->tls);
+}
+
+bool socket_is_eof(int socket) {
+	events_fd_t *target = events_target(socket);
+	char buf[1];
+	if (!is_empty(target->tls)) {
+		if ((tls_read(target->tls, buf, 0) == -1)
+			&& (ERR_get_error() == TLS_EOF))
+			return true;
+	} else {
+		if (!recv(fd2socket(socket), buf, 1, MSG_PEEK))
+			return true;
+	}
+
+	return false;
+}
+
+int tls_bind(const char *host, int backlog) {
+	fds_t server, has_scheme = str_has(host, "://");
+	const char *address = has_scheme ? host : str_cat(2, "tls://", host);
+	uri_t *url = parse_uri(address);
+	if (!has_scheme)
+		events_free((void *)address);
+
+	if (!is_empty(url)) {
+		server = async_listener(url->host, url->port, backlog, true);
+		if (url->type != DATA_TLS)
+			return socket2fd(server);
+
+		events_fd_t *starget = events_target(socket2fd(server));
+		starget->tls_config = tls_config_new();
+		if (defer(tls_config_free, starget->tls_config) > 0) {
+			if (!tls_config_set_keypair_file(starget->tls_config, cert_file(), pkey_file())) {
+				starget->tls = tls_server();
+				if (defer(tls_free, starget->tls) > 0) {
+					if (!tls_configure(starget->tls, starget->tls_config))
+						return socket2fd(server);
+
+					cerr("failed to configure bind: %s", tls_error(starget->tls));
+				} else {
+					cerr("failed to bind: `tls_server`\n");
+				}
+			} else {
+				cerr("failed to set bind: %s\n", tls_config_error(starget->tls_config));
+			}
+		} else {
+			cerr("failed to bind: `tls_config_new`\n");
+		}
+	}
+
+	return -EINVAL;
+}
+
+static int async_tls_accept(int server, int socket) {
+	int event, rc = EINVAL;
+	if (!server || !socket <= 0)
+		return -(rc);
+
+	events_fd_t *starget = events_target(server);
+	events_fd_t *ctarget = events_target(socket);
+	if (starget->tls) {
+		if (!(rc = tlserr(tls_accept_socket(starget->tls, &ctarget->tls, (intptr_t)socket), starget->tls))) {
+			for (;;) {
+				if (!(event = tls_handshake(ctarget->tls)))
+					break;
+
+				event = tls_poll(socket, event);
+				ctarget->events = 0;
+				if ((rc = tlserr(event, ctarget->tls)) < 0)
+					break;
+			}
+		}
+	}
+
+	if (rc < 0)
+		async_tls_close(socket);
+
+	return rc;
+}
+
+EVENTS_INLINE int tls_accept(int fd, char *server, int *port) {
+	return async_tls_accept(fd, socket2fd(async_accept(fd2socket(fd), server, port)));
+}
+
+static int async_tls_connect(const char *host, int socket) {
+	if (!socket)
+		return -EINVAL;
+
+	int event = 0, rc = -ENOMEM;
+	events_fd_t *target = events_target(socket);
+	if (!is_empty(target->tls = tls_client())) {
+		if (tls_is_self_signed)
+			tls_config_insecure_noverifycert(target->tls_config);
+		else
+			tls_config_verify(target->tls_config);
+
+		if (!(rc = tls_configure(target->tls, target->tls_config))) {
+			if (!(rc = tlserr(tls_connect_socket(target->tls, (intptr_t)socket, host), target->tls))) {
+				for (;;) {
+					if (!(event = tls_handshake(target->tls)))
+						break;
+
+					event = tls_poll(socket, event);
+					target->events = 0;
+					if ((rc = tlserr(event, target->tls)) < 0)
+						break;
+				}
+			}
+		}
+	}
+
+	if (rc < 0)
+		async_tls_close(socket);
+
+	return rc;
+}
+
+int tls_get(const char *uri) {
+	fds_t client, has_scheme = str_has(uri, "://");
+	const char *address = has_scheme ? uri : str_cat(2, "tls://", uri);
+	uri_t *url = parse_uri(address);
+	if (!has_scheme)
+		events_free((void *)address);
+
+	if (!is_empty(url)) {
+		client = async_connect(url->host, url->port, true);
+		int fd = socket2fd(client);
+		if (url->type != DATA_TLS)
+			return fd;
+
+		events_fd_t *ctarget = events_target(fd);
+		ctarget->tls_config = tls_config_new();
+		if (defer(tls_config_free, ctarget->tls_config) > 0) {
+			if (!tls_config_set_ca_file(ctarget->tls_config, ca_cert_file())
+				&& !tls_config_set_keypair_file(ctarget->tls_config, cert_file(), pkey_file())) {
+				if (!async_tls_connect(url->host, fd))
+					return fd;
+
+				cerr("failed to tls_get/async_tls_connect: %s\n", tls_error(ctarget->tls));
+			} else {
+				cerr("failed to tls_config_set_ca_file/keypair_file: %s\n", tls_config_error(ctarget->tls_config));
+			}
+		} else {
+			cerr("failed to connect: `tls_get/tls_config_new`\n");
+		}
+	}
+
+	return -1;
+}
+
+static void *tls_client_handler(param_t args) {
+	int client = args[0].integer;
+	tls_client_cb handlerFunc = (tls_client_cb)args[1].func;
+	bool is_tls = false;
+
+	deferring(async_tls_close, client);
+	handlerFunc(client);
+	return 0;
+}
+
+EVENTS_INLINE void tls_handler(tls_client_cb connected, int client) {
+	launch((launch_func_t)tls_client_handler, 2, client, connected);
+}
+
+bool tls_is_selfserver(void) {
+	return tls_is_self_signed;
+}
+
+void tls_selfserver_set(void) {
+	tls_is_self_signed = true;
+}
+
+void tls_selfserver_clear(void) {
+	tls_is_self_signed = false;
+}
+
+void async_tls_close(int socket) {
+	if (!socket)
+		return;
+
+	events_fd_t *target = events_target(socket);
+	if (target->tls) {
+		tls_close(target->tls);
+		tls_free(target->tls);
+		target->tls = null;
+	}
+}
+
+const char *async_tls_error(int socket) {
+	if (!socket) return null;
+	events_fd_t *target = events_target(socket);
+	if (!target->tls) return null;
+	return tls_error(target->tls);
+}
+
+ssize_t tls_reader(int socket, char *buf, size_t max) {
+	events_fd_t *target = events_target(socket);
+	if (is_empty(target->tls))
+		return async_read(socket, buf, max);
+
+	for (;;) {
+		ssize_t x = tls_read(target->tls, buf, max);
+		if (x >= 0)
+			return x;
+
+		if (x == -1 && ERR_get_error() == TLS_EOF)
+			return 0;
+
+		x = tls_poll(socket, (int)x);
+		target->events = 0;
+		if ((x = tlserr(x, target->tls)) < 0)
+			return x;
+	}
+
+	assert(0);
+	return -EINVAL; // Not reached
+}
+
+ssize_t tls_writer(int socket, char *buf, size_t len) {
+	events_fd_t *target = events_target(socket);
+	size_t count = !len ? strlen(buf) : len;
+	if (is_empty(target->tls))
+		return async_write(socket, buf, count);
+
+	for (;;) {
+		ssize_t x = tls_write(target->tls, buf, count);
+		if (x >= 0) return x;
+		x = tls_poll(socket, (int)x);
+		target->events = 0;
+		if ((x = tlserr(x, target->tls)) < 0)
+			return x;
+	}
+
+	assert(0);
+	return -EINVAL; // Not reached
+}
+
+int tls_flusher(int socket) {
+	events_fd_t *target = events_target(socket);
+	if (!is_empty(target->tls))
+		return tls_flush(target->tls);
+
+	return -EINVAL;
 }
