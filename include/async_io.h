@@ -275,7 +275,7 @@ C_API int async_read2(int fd, void *buf, int n);
  write data instead of blocking the whole program. */
 C_API int async_write(int fd, void *buf, int n);
 
-/** Start a ~network~ listener `server` running on ~address~,
+/** Start/bind a ~network~ server listening on ~address~,
 `port` number, `backlog` count, with protocol, `proto_tcp` determents either TCP or UDP.
 
 The ~address~ is a string version of a `host name` or `IP` address.
@@ -283,7 +283,7 @@ If `host name`, automatically calls `async_gethostbyname()` to preform a non-blo
 If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
 - Returns a `fd` to use with `async_accept()`. */
-C_API fds_t async_listener(char *server, int port, int backlog, bool proto_tcp);
+C_API fds_t async_bind(char *address, int port, int backlog, bool proto_tcp);
 
 /** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
 

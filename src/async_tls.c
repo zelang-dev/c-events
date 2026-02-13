@@ -788,7 +788,7 @@ int tls_bind(const char *host, int backlog) {
 		events_free((void *)address);
 
 	if (!is_empty(url)) {
-		server = async_listener(url->host, url->port, backlog, true);
+		server = async_bind(url->host, url->port, backlog, true);
 		if (url->type != DATA_TLS)
 			return socket2fd(server);
 

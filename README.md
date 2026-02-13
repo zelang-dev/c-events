@@ -80,7 +80,7 @@ This would also allow nonblocking file system handling. But for cross-platform s
 
 The *behavior/process* of coroutine *execution* in **c-raii** is setup for *automatically* creating/moving and putting **coroutines** in different *threads*. In which intergrating **libuv** into **c-asio** that feature had to be completely disabled on first `yield()` encounter, it's possibale, but reqquire more complexity or **thread local storage** introduction to **libuv** source, a major breaking change. Where `events_tasks_pool()` create a `os_tasks_t` thread pool, will be for explicitly running **Events API** in another *thread*.
 
-The following "simple TCP proxy" example demonstrate the simplicity of using `events_add()` by way of a `async_wait()` call. The `read()` and `write()` functions only has `async_wait` called added. These routines only work correctly when user set **file descriptor** to *non-blocking*. The standard process of creating a **socket** is in embedded in `async_listener()`, `async_connect()`, `async_accept()`, and are the only functions that will set **non-blocking** by default. Functions `async_connect`, `async_accept` includes a `async_wait` call.
+The following "simple TCP proxy" example demonstrate the simplicity of using `events_add()` by way of a `async_wait()` call. The `read()` and `write()` functions only has `async_wait` called added. These routines only work correctly when user set **file descriptor** to *non-blocking*. The standard process of creating a **socket** is in embedded in `async_bind()`, `async_connect()`, `async_accept()`, and are the only functions that will set **non-blocking** by default. Functions `async_connect`, `async_accept` includes a `async_wait` call.
 
 **Run:**
 
@@ -155,7 +155,7 @@ void *main_main(param_t args) {
  server = args[1].char_ptr;
  port = atoi(args[2].char_ptr);
 
- if ((fd = async_listener(OS_NULL, local, 128, true)) < 0) {
+ if ((fd = async_bind(OS_NULL, local, 128, true)) < 0) {
   fprintf(stderr, "cannot listen on tcp port %d: %s\n", local, strerror(errno));
   exit(1);
  }
@@ -468,7 +468,7 @@ C_API int async_read2(int fd, void *buf, int n);
  write data instead of blocking the whole program. */
 C_API int async_write(int fd, void *buf, int n);
 
-/** Start a ~network~ listener `server` running on ~address~,
+/** Start/bind a ~network~ server listening on ~address~,
 `port` number, `backlog` count, with protocol, `proto_tcp` determents either TCP or UDP.
 
 The ~address~ is a string version of a `host name` or `IP` address.
@@ -476,9 +476,9 @@ If `host name`, automatically calls `async_gethostbyname()` to preform a non-blo
 If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
 - Returns a `fd` to use with `async_accept()`. */
-C_API fds_t async_listener(char *server, int port, int backlog, bool proto_tcp);
+C_API fds_t async_bind(char *address, int port, int backlog, bool proto_tcp);
 
-/** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
+/** Sleep `current` task, until next `client` connection comes in from `fd` ~async_bind()~.
 
 - If `server` not NULL, it MUST be a buffer of `16 bytes` to hold remote IP address.
 - If `port` not NULL, it's filled with report port.

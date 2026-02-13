@@ -7,7 +7,7 @@
 #	endif
 #endif
 
-fds_t async_listener(char *server, int port, int backlog, bool proto_tcp) {
+fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 	fds_t fd;
 	int proto, n;
 	char *ip;
@@ -17,8 +17,8 @@ fds_t async_listener(char *server, int port, int backlog, bool proto_tcp) {
 
 	memset(&sa, 0, sizeof sa);
 	sa.sin_family = AF_INET;
-	if (server != OS_NULL && strcmp(server, "*") != 0) {
-		he = async_gethostbyname(server);
+	if (address != OS_NULL && strcmp(address, "*") != 0) {
+		he = async_gethostbyname(address);
 		if (he == NULL) {
 			return -1;
 		}
