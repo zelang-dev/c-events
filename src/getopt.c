@@ -11,7 +11,6 @@ static char *command_line_option = NULL;
 
 static void usage(const char *program, char *message) {
 	fprintf(stderr, CLR_LN"Usage: %s OPTIONS\n%s"CLR_LN, program, (message == NULL ? "" : message));
-	exit(1);
 }
 
 void getopt_message_set(const char *message, int minium, bool is_ordered) {

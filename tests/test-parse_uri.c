@@ -40,7 +40,9 @@ TEST(parse_uri) {
 				ASSERT_STR(token_part[1], "5");
 				break;
 		}
+		str_free(token_part);
 	}
+	str_free(token);
 
     fileinfo_t *fileinfo = pathinfo(url->path);
 	ASSERT_TRUE((data_type(fileinfo) == DATA_FILEINFO));

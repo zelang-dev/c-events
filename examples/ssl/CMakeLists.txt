@@ -1,7 +1,7 @@
 
 set(TARGET_LIST
- #tls-echo-server
- #fetch
+ tls-echo-server
+ fetch
  create-x509
 )
 

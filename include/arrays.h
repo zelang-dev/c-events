@@ -241,6 +241,7 @@ C_API char *str_cat(int num_args, ...);
 C_API char **str_slice(const char *s, const char *delim, int *count);
 C_API char *str_swap(const char *haystack, const char *needle, const char *swap);
 C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
+C_API void str_free(void *);
 
 /*
 Pad a string to a certain length with another string, returns the `padded` string.

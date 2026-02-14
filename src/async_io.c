@@ -20,6 +20,7 @@ fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 	if (address != OS_NULL && strcmp(address, "*") != 0) {
 		he = async_gethostbyname(address);
 		if (he == NULL) {
+			errno = EINVAL;
 			return -1;
 		}
 
@@ -89,6 +90,7 @@ fds_t async_connect(char *hostname, int port, bool proto_tcp) {
 	struct hostent *he = {0};
 
 	if ((he = async_gethostbyname(hostname)) == NULL) {
+		errno = EINVAL;
 		return -1;
 	}
 

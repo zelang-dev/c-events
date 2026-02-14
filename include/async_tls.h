@@ -79,6 +79,7 @@ C_API bool socket_is_secure(int);
 C_API void async_tls_close(int);
 C_API const char *async_tls_error(int);
 
+C_API int tls_out(char *msg, size_t nread);
 C_API ssize_t tls_reader(int, char *buf, size_t max);
 C_API ssize_t tls_writer(int, char *buf, size_t len);
 C_API int tls_get(const char *);
@@ -111,6 +112,7 @@ C_API bool x509_self_export(EVP_PKEY *pkey, X509 *x509, const char *path_noext);
 C_API void use_ca_certificate(const char *path);
 C_API void use_certificate(char *path, uint32_t ctx_pairs, ...);
 
+C_API const char *events_uname(void);
 C_API const char *events_hostname(void);
 C_API void events_ssl_error(void);
 C_API void events_ssl_init(void);

@@ -757,7 +757,7 @@ static int tls_poll(int socket, int event) {
 		async_wait(socket, 'w');
 
 	events_fd_t *target = events_target(socket);
-	return (target->events & EVENTS_READ || target->events & EVENTS_WRITE) ? 0 : EOF;
+	return (target->events == EVENTS_READ || target->events == EVENTS_WRITE) ? 0 : EOF;
 }
 
 EVENTS_INLINE bool socket_is_secure(int socket) {
@@ -780,13 +780,21 @@ bool socket_is_eof(int socket) {
 	return false;
 }
 
-int tls_bind(const char *host, int backlog) {
-	fds_t server, has_scheme = str_has(host, "://");
-	const char *address = has_scheme ? host : str_cat(2, "tls://", host);
-	uri_t *url = parse_uri(address);
-	if (!has_scheme)
-		events_free((void *)address);
+EVENTS_INLINE int tls_out(char *msg, size_t nread) {
+	int r = fwrite(msg, nread, 1, stdout);
+	if (r)
+		fflush(stdout);
 
+	return r;
+}
+
+int tls_bind(const char *host, int backlog) {
+	char address[MAXHOSTNAMELEN] = {0};
+	fds_t server, has_scheme = str_has(host, "://");
+	if (!has_scheme)
+		snprintf(address, sizeof(address), "tls://%s",host);
+
+	uri_t *url = parse_uri((has_scheme ? host : address));
 	if (!is_empty(url)) {
 		server = async_bind(url->host, url->port, backlog, true);
 		if (url->type != DATA_TLS)
@@ -881,14 +889,13 @@ static int async_tls_connect(const char *host, int socket) {
 }
 
 int tls_get(const char *uri) {
+	char address[MAXHOSTNAMELEN] = {0};
 	fds_t client, has_scheme = str_has(uri, "://");
-	const char *address = has_scheme ? uri : str_cat(2, "tls://", uri);
-	uri_t *url = parse_uri(address);
 	if (!has_scheme)
-		events_free((void *)address);
+		snprintf(address, sizeof(address), "tls://%s", uri);
 
-	if (!is_empty(url)) {
-		client = async_connect(url->host, url->port, true);
+	uri_t *url = parse_uri((has_scheme ? uri : address));
+	if (!is_empty(url) && (client = async_connect(url->host, (!url->port ? 443 : url->port), true)) > 0) {
 		int fd = socket2fd(client);
 		if (url->type != DATA_TLS)
 			return fd;
@@ -901,16 +908,16 @@ int tls_get(const char *uri) {
 				if (!async_tls_connect(url->host, fd))
 					return fd;
 
-				cerr("failed to tls_get/async_tls_connect: %s\n", tls_error(ctarget->tls));
+				cerr("\nfailed to tls_get/async_tls_connect: %s\n", tls_error(ctarget->tls));
 			} else {
-				cerr("failed to tls_config_set_ca_file/keypair_file: %s\n", tls_config_error(ctarget->tls_config));
+				cerr("\nfailed to tls_config_set_ca_file/keypair_file: %s\n", tls_config_error(ctarget->tls_config));
 			}
 		} else {
-			cerr("failed to connect: `tls_get/tls_config_new`\n");
+			cerr("\nfailed to connect: `tls_get/tls_config_new`\n");
 		}
 	}
 
-	return -1;
+	return -EINVAL;
 }
 
 static void *tls_client_handler(param_t args) {

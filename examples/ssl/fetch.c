@@ -2,7 +2,7 @@
 
 void *main_main(param_t args) {
 	if (getopt_has(null, true)) {
-		char data[Kb(16)] = {0};
+		char data[Kb(32)] = {0};
 		int client, chunks = 0;
 		ssize_t len;
 
@@ -10,19 +10,18 @@ void *main_main(param_t args) {
 		if ((client = tls_get(getopts())) > 0 && tls_writer(client, "GET /"CRLF, 0)) {
 			cout(CLR_LN);
 			while (!socket_is_eof(client)) {
-				if ((len = tls_reader(client, data, sizeof(data) - 1)) > 0)
-					cout(data);
+				if ((len = tls_reader(client, data, sizeof(data))) > 0)
+					tls_out(data, len);
 				else
 					break;
 
-				memset(data, 0, len);
 				chunks++;
 			}
+		} else {
+			perror("\ntls_get/tls_writer");
 		}
 
 		cout("\n\nReceived: %d chunks.\n", chunks);
-	} else {
-		getopt_has("help", false);
 	}
 
 	return 0;

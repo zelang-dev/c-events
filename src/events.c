@@ -180,10 +180,6 @@ EVENTS_INLINE int events_init(int max_fd) {
 
 #if !defined(NO_RPMALLOC)
 	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
-	CRYPTO_set_mem_functions(
-		(void *(*)(size_t, const char *, int))rp_malloc,
-		(void *(*)(void *, size_t, const char *, int))rp_realloc,
-		(void(*)(void *, const char *, int))rpfree);
 #endif
 
 #ifdef _WIN32

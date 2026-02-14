@@ -24,8 +24,8 @@ void *main_main(param_t args) {
 
 		server = tls_bind(addr, DEFAULT_BACKLOG);
 		if (server > 0) {
-			while ((client = tls_accept(server, remote, rport)) > 0) {
-				cerr("connection from %s:%d"CLR_LN, remote, rport);
+			while ((client = tls_accept(server, remote, &rport)) > 0) {
+				cerr("\nconnection from %s:%d"CLR_LN, remote, rport);
 				tls_handler(new_connection, client);
 			}
         }

@@ -1027,12 +1027,13 @@ uri_t *parse_uri_ex(const char *str) {
 		return null;
 
 	uri_t *uri = uri_parse_ex(str, strlen(str), false);
-	uri->type = scheme_type(uri->scheme);
-	if (uri->is_rejected || is_empty(uri->host)) {
+	if (uri->is_rejected || is_empty(uri->host) || !str_has(uri->host, ".")) {
+		errno = EINVAL;
 		uri_free(uri);
 		return null;
 	}
 
+	uri->type = scheme_type(uri->scheme);
 	return uri;
 }
 
@@ -1041,12 +1042,12 @@ uri_t *parse_uri(const char *url) {
 		return null;
 
 	uri_t *uri = uri_parse_ex(url, strlen(url), true);
-	if (!is_empty(uri) && is_empty(uri->host))
+	if (is_empty(uri) || is_empty(uri->host) || !str_has(uri->host, ".")) {
+		errno = EINVAL;
 		return null;
+	}
 
-	if (!is_empty(url))
-		uri->type = scheme_type(uri->scheme);
-
+	uri->type = scheme_type(uri->scheme);
 	return uri;
 }
 
@@ -1105,6 +1106,12 @@ char *str_itoa(int64_t x) {
 	buf[len] = '\0';
 
 	return buf;
+}
+
+EVENTS_INLINE void str_free(void *ptr) {
+	if (!is_empty(ptr) && is_ptr_usable(ptr)) {
+		events_free(ptr);
+	}
 }
 
 #include "getopt.c"
