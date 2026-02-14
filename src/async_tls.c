@@ -656,7 +656,7 @@ const char *events_hostname(void) {
 
 static const char *default_cert_file(char *path) {
 	char *name = (char *)events_hostname();
-	char *dir = is_empty(path) ? "..\\" SYS_DIRSEP : path;
+	char *dir = is_empty(path) ? ".." SYS_DIRSEP : path;
 	if (str_is_empty((const char *)os_tls_directory)) {
 		if (!(snprintf(os_tls_directory, sizeof(os_tls_directory), "%s", dir))
 			|| !(snprintf(os_tls_cert, sizeof(os_tls_cert), "%s%s.crt", os_tls_directory, name))
@@ -809,15 +809,15 @@ int tls_bind(const char *host, int backlog) {
 					if (!tls_configure(starget->tls, starget->tls_config))
 						return socket2fd(server);
 
-					cerr("failed to configure bind: %s", tls_error(starget->tls));
+					cerr("\nfailed to configure bind: %s", tls_error(starget->tls));
 				} else {
-					cerr("failed to bind: `tls_server`\n");
+					cerr("\nfailed to bind: `tls_server`\n");
 				}
 			} else {
-				cerr("failed to set bind: %s\n", tls_config_error(starget->tls_config));
+				cerr("\nfailed to set bind: %s\n", tls_config_error(starget->tls_config));
 			}
 		} else {
-			cerr("failed to bind: `tls_config_new`\n");
+			cerr("\nfailed to bind: `tls_config_new`\n");
 		}
 	}
 
@@ -825,9 +825,9 @@ int tls_bind(const char *host, int backlog) {
 }
 
 static int async_tls_accept(int server, int socket) {
-	int event, rc = EINVAL;
-	if (!server || !socket <= 0)
-		return -(rc);
+	int event, rc;
+	if (!server || !socket)
+		return -1;
 
 	events_fd_t *starget = events_target(server);
 	events_fd_t *ctarget = events_target(socket);
@@ -852,7 +852,11 @@ static int async_tls_accept(int server, int socket) {
 }
 
 EVENTS_INLINE int tls_accept(int fd, char *server, int *port) {
-	return async_tls_accept(fd, socket2fd(async_accept(fd2socket(fd), server, port)));
+	int client = socket2fd(async_accept(fd2socket(fd), server, port));
+	if (!async_tls_accept(fd, client))
+		return client;
+
+	return -1;
 }
 
 static int async_tls_connect(const char *host, int socket) {
