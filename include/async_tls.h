@@ -76,10 +76,8 @@ typedef void (*tls_client_cb)(int);
 C_API bool socket_is_eof(int);
 C_API bool socket_is_secure(int);
 
-C_API void async_tls_close(int);
-C_API const char *async_tls_error(int);
-
 C_API int tls_out(char *msg, size_t nread);
+C_API void tls_closer(int);
 C_API ssize_t tls_reader(int, char *buf, size_t max);
 C_API ssize_t tls_writer(int, char *buf, size_t len);
 C_API int tls_get(const char *);

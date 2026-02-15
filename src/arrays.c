@@ -1042,7 +1042,9 @@ uri_t *parse_uri(const char *url) {
 		return null;
 
 	uri_t *uri = uri_parse_ex(url, strlen(url), true);
-	if (is_empty(uri) || is_empty(uri->host) || !str_has(uri->host, ".")) {
+	if (!is_empty(uri) && str_has("localhost,127.0.0.1,0.0.0.0", uri->host))
+		uri->host = (char *)events_hostname();
+	else if (is_empty(uri) || is_empty(uri->host) || !str_has(uri->host, ".")) {
 		errno = EINVAL;
 		return null;
 	}

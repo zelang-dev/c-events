@@ -17,6 +17,7 @@ set(TARGET_LIST
  test-parse_uri
  test-defer
  test-exceptions
+ test-tls
 )
 
 add_executable(test-getopts test-getopts.c)
@@ -26,6 +27,9 @@ WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(child child.c)
 target_link_libraries(child ${PROJECT_NAME})
+
+add_executable(client client.c)
+target_link_libraries(client ${PROJECT_NAME})
 
 foreach (TARGET ${TARGET_LIST})
     add_executable(${TARGET} ${TARGET}.c)

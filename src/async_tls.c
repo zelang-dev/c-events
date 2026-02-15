@@ -846,7 +846,7 @@ static int async_tls_accept(int server, int socket) {
 	}
 
 	if (rc < 0)
-		async_tls_close(socket);
+		tls_closer(socket);
 
 	return rc;
 }
@@ -887,7 +887,7 @@ static int async_tls_connect(const char *host, int socket) {
 	}
 
 	if (rc < 0)
-		async_tls_close(socket);
+		tls_closer(socket);
 
 	return rc;
 }
@@ -929,7 +929,7 @@ static void *tls_client_handler(param_t args) {
 	tls_client_cb handlerFunc = (tls_client_cb)args[1].func;
 	bool is_tls = false;
 
-	deferring(async_tls_close, client);
+	deferring(tls_closer, client);
 	handlerFunc(client);
 	return 0;
 }
@@ -950,7 +950,7 @@ void tls_selfserver_clear(void) {
 	tls_is_self_signed = false;
 }
 
-void async_tls_close(int socket) {
+void tls_closer(int socket) {
 	if (!socket)
 		return;
 
@@ -958,6 +958,7 @@ void async_tls_close(int socket) {
 	if (target->tls) {
 		tls_close(target->tls);
 		tls_free(target->tls);
+		close(socket);
 		target->tls = null;
 	}
 }
