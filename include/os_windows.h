@@ -20,6 +20,7 @@
 #include <compat/fcntl.h>
 #include <compat/sys/stat.h>
 #include <compat/sys/socket.h>
+#include <compat/sys/utsname.h>
 #include <compat/ucontext.h>
 
 typedef SOCKET fds_t;

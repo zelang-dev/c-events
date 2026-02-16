@@ -21,6 +21,7 @@
 #if defined(_WIN32) || defined(_WIN64) /* WINDOWS ONLY */
 static CRITICAL_SECTION events_siglock;
 static volatile sig_atomic_t signal_running = false;
+static char os_exec_command[MAX_PATH] = {0};
 volatile sig_atomic_t events_got_signal = 0;
 
 #define events_sigblock		EnterCriticalSection(&events_siglock)
@@ -798,14 +799,16 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_datached,
 }
 
 EVENTS_INLINE process_t exec(const char *command, const char *args, execinfo_t *info) {
-	char *cmd_arg = str_cat((args == NULL ? 2 : 3), command, ",", args);
+	snprintf(os_exec_command, MAX_PATH, "%s%s", command,
+		(!str_has(command, ".bat") && !str_has(command, ".exe") ? ".exe" : ""));
+	char *cmd_arg = str_cat((args == NULL ? 2 : 3), os_exec_command, ",", args);
 	if (info == NULL)
 		info = exec_info(NULL, false, inherit, inherit, inherit);
 
 	info->argv = str_has(cmd_arg, ",") ? str_swap(cmd_arg, ",", " ") : cmd_arg;
 	events_free(cmd_arg);
 
-	return os_exec_info(command, info);
+	return os_exec_info(os_exec_command, info);
 }
 
 int exec_wait(process_t ps, uint32_t timeout_ms, int *exit_code) {
@@ -1881,4 +1884,85 @@ char *dirname(char *path) {
 
 	return path;
 }
+
+int uname(struct utsname *name) {
+	const char *unk = "unknown";
+	OSVERSIONINFO os_info;
+	SYSTEM_INFO sys_info;
+	HKEY registry_key;
+	CHAR product_name[_UTSNAME_LENGTH];
+	DWORD product_name_size;
+
+	strcpy(name->sysname, "Windows_NT");
+	strcpy_s(name->nodename, _UTSNAME_LENGTH, events_hostname());
+	memset(&os_info, 0, sizeof(OSVERSIONINFO));
+	os_info.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+
+	GetVersionEx(&os_info);
+	sprintf(name->release, "%u.%u", (unsigned int)os_info.dwMajorVersion,
+		(unsigned int)os_info.dwMinorVersion);
+
+	int r = RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+		"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+		0,
+		KEY_QUERY_VALUE | KEY_WOW64_64KEY,
+		&registry_key);
+
+	if (r == ERROR_SUCCESS) {
+		product_name_size = sizeof(product_name);
+		r = RegGetValueA(registry_key,
+			NULL,
+			"ProductName",
+			RRF_RT_REG_SZ,
+			NULL,
+			(PVOID)product_name,
+			&product_name_size);
+		RegCloseKey(registry_key);
+		if (r == ERROR_SUCCESS)
+			snprintf(name->version, _UTSNAME_LENGTH, "%s", product_name);
+	}
+
+	GetSystemInfo(&sys_info);
+	switch (sys_info.wProcessorArchitecture) {
+		case PROCESSOR_ARCHITECTURE_AMD64:
+			strcpy(name->machine, "x86_64");
+			break;
+		case PROCESSOR_ARCHITECTURE_IA64:
+			strcpy(name->machine, "ia64");
+			break;
+		case PROCESSOR_ARCHITECTURE_INTEL:
+			strcpy(name->machine, "i386");
+			if (sys_info.wProcessorLevel < 6)
+				name->machine[1] = '3';
+			break;
+		case PROCESSOR_ARCHITECTURE_IA32_ON_WIN64:
+			strcpy(name->machine, "i686");
+			break;
+		case PROCESSOR_ARCHITECTURE_MIPS:
+			strcpy(name->machine, "mips");
+			break;
+		case PROCESSOR_ARCHITECTURE_ALPHA:
+		case PROCESSOR_ARCHITECTURE_ALPHA64:
+			strcpy(name->machine, "alpha");
+			break;
+		case PROCESSOR_ARCHITECTURE_PPC:
+			strcpy(name->machine, "powerpc");
+			break;
+		case PROCESSOR_ARCHITECTURE_ARM:
+			strcpy(name->machine, "armv7");
+			break;
+		case PROCESSOR_ARCHITECTURE_ARM64:
+			strcpy(name->machine, "aarch64");
+			break;
+		case PROCESSOR_ARCHITECTURE_SHX:
+			strcpy(name->machine, "sh");
+			break;
+		default:
+			strcpy(name->machine, unk);
+			break;
+	}
+
+	return 0;
+}
+
 #endif /* WINDOWS ONLY */

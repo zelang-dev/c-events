@@ -1,8 +1,10 @@
 #include <events.h>
 
 void *main_main(param_t args) {
+#ifndef _WIN32
 	use_ca_certificate("cert.pem");
 	tls_selfserver_set();
+#endif
 	int client = tls_get("127.0.0.1:7000");
 	if (socket_is_secure(client)) {
 		cerr("\nConnected!"CLR_LN);
@@ -13,9 +15,9 @@ void *main_main(param_t args) {
 				cout("\nSecured transaction!"CLR_LN);
 			}
 		}
+		tls_closer(client);
 	}
 
-	tls_closer(client);
 	return 0;
 }
 

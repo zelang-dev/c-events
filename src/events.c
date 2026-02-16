@@ -30,6 +30,7 @@ static volatile bool events_shutdown_set = false;
 static volatile bool events_tasks_started = false;
 static array_t events_fsevents_tasks = null;
 static int events_execute(events_t * loop, int max_wait);
+static tasks_t *atexit_ctr_c_task = null;
 sys_events_t sys_event = {0};
 
 typedef struct {
@@ -191,7 +192,9 @@ EVENTS_INLINE int events_init(int max_fd) {
 	assert(max_fd > 0);
 
 	events_ssl_init();
-	events_hostname();
+#ifdef USE_DEBUG
+	cout("%s, %s\n", events_uname(), events_hostname());
+#endif
 	if (os_init() == -1) {
 		return -1;
 	}
@@ -1025,6 +1028,16 @@ static void deferred_unwind(array_t garbage) {
 	}
 }
 
+static void events_ctr_c_unwind(void) {
+	if (is_empty(atexit_ctr_c_task) || !is_ptr_usable(atexit_ctr_c_task))
+		return;
+
+	data_delete(atexit_ctr_c_task->args);
+	deferred_unwind(atexit_ctr_c_task->garbage);
+	task_delete(atexit_ctr_c_task);
+	atexit_ctr_c_task = null;
+}
+
 static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
 	results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
 	if (data != NULL && is_ptr_usable(co)) {
@@ -1530,6 +1543,7 @@ static EVENTS_INLINE size_t _tasks_align_forward(size_t addr, size_t align) {
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread) {
 	void *memory = NULL;
 	tasks_t *co = NULL;
+	bool is_main = false;
 	/* Stack size should be at least `TASK_STACK_SIZE`. */
 	if ((heapsize != 0 && heapsize < TASK_STACK_SIZE) || heapsize == 0)
 		heapsize = TASK_STACK_SIZE;
@@ -1539,8 +1553,11 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 		heapsize = MINSIGSTKSZ + heapsize;
 #endif
 
-	if (atomic_load(&sys_event.id_generate) == 1)
+	if (atomic_load(&sys_event.id_generate) == 1) {
+		is_main = true;
 		heapsize = heapsize * 4;
+	}
+
 #if !defined(_WIN32) && !defined(USE_FIBER)
 	else if (is_thread && heapsize <= Kb(32))
 		heapsize = Kb(32) + heapsize;
@@ -1586,6 +1603,11 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	co->stack_size = heapsize + sizeof(_results_data_t);
 	co->stack_base = (unsigned char *)(co + 1);
 	co->magic_number = TASK_MAGIC_NUMBER;
+	if (is_main) {
+		co->garbage = array();
+		atexit_ctr_c_task = co;
+		exception_ctrl_c_func = events_ctr_c_unwind;
+	}
 
 	return co;
 }

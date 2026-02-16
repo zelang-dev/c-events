@@ -509,10 +509,6 @@ static void *spawning(param_t args) {
 	int status = 0;
 #ifdef _WIN32
 	HANDLE ioThread = NULL;
-	if (!str_has(command, ".bat") && !str_has(command, ".exe")) {
-		command = str_cat(2, command, ".exe");
-		defer_free(command);
-	}
 #endif
 	task_name("spawn #%d", task_id());
 	pid = exec((const char *)command, args[1].const_char_ptr, info);

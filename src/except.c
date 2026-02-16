@@ -75,6 +75,7 @@ ex_unwind_func exception_unwind_func = null;
 ex_terminate_func exception_ctrl_c_func = null;
 ex_terminate_func exception_terminate_func = null;
 static bool exception_signal_set = false;
+static ex_memory_t *atexit_ctr_c_unwind = null;
 
 ex_setup_func guard_setup_func = null;
 ex_unwind_func guard_unwind_func = null;
@@ -101,8 +102,14 @@ void try_finish(ex_context_t *);
 
 static EVENTS_INLINE void scope_destroy(void) {
 	ex_memory_t *scope = scope_local();
-	if (is_empty(scope))
-		return;
+	if (is_empty(scope)) {
+		if (!is_empty(atexit_ctr_c_unwind)) {
+			scope = atexit_ctr_c_unwind;
+			atexit_ctr_c_unwind = null;
+		} else {
+			return;
+		}
+	}
 
 	scope_unwind(scope);
 	memset(scope, 0, sizeof(ex_memory_t));
@@ -987,6 +994,9 @@ ex_memory_t *scope_init(void) {
 		ctx->data = (void *)scope;
 		ctx->prev = (void *)scope;
 		ctx->is_scoped = true;
+		if (is_empty(atexit_ctr_c_unwind))
+			atexit_ctr_c_unwind = scope;
+
 		atexit(scope_destroy);
 	}
 

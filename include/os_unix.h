@@ -87,6 +87,7 @@ typedef void (*emulate_dtor)(void *);
 #include <ucontext.h>
 #include <pthread.h>
 #include <sys/syscall.h>
+#include <sys/utsname.h>
 
 #if defined __linux__
 typedef cpu_set_t os_cpumask;

@@ -1,5 +1,8 @@
 #include "assertions.h"
 
+/* this test sames as https://github.com/zelang-dev/c-asio/tree/main/tests/test-tls.c
+the Windows self-test there behave the same, so only do error checking. */
+
 void *worker_client(param_t args) {
 	int server;
 	process_t child;
@@ -7,6 +10,9 @@ void *worker_client(param_t args) {
 	sleep_task(args[0].u_int);
 
 	ASSERT_TASK(str_is("tls_client", args[1].char_ptr));
+#ifdef _WIN32
+	ASSERT_TASK(!socket_is_secure(server = tls_get("127.0.0.1:7000")));
+#endif
 	ASSERT_TASK(((child = exec("./client", null, exec_info(null, true, inherit, inherit, inherit))) > 0));
 	sleep_task(1000);
 
@@ -26,11 +32,12 @@ TEST(tls_accept) {
     int client, socket;
 	ASSERT_TRUE(socket_is_secure(socket = tls_bind("tls://127.0.0.1:7000", 128)));
 	uint32_t res = async_task(worker_client, 4, 500, "tls_client", "finish", socket);
+#ifndef _WIN32
 	ASSERT_TRUE(socket_is_secure(client = tls_accept(socket, null, null)));
-
 	if (socket_is_secure(client)) {
 		tls_handler((tls_client_cb)worker_connected, client);
 	}
+#endif
 
 	ASSERT_FALSE(task_is_ready(res));
 	while (!task_is_ready(res))

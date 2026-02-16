@@ -44,3 +44,7 @@ foreach (TARGET ${TARGET_LIST})
 		endif()
 	endif()
 endforeach()
+
+if(WIN32 AND CMAKE_CONFIGURATION_TYPES MATCHES Debug)
+	file(COPY ../cert.pem DESTINATION ${BUILD_DIR}/Debug)
+endif()

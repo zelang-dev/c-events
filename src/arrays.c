@@ -104,7 +104,7 @@ EVENTS_INLINE void data_remove(array_t arr, size_t i) {
 }
 
 EVENTS_INLINE void data_delete(array_t arr) {
-	if (arr) {
+	if (arr && is_ptr_usable(arr)) {
 		void *p1__ = array_address(arr);
 		free_func destructor__ = array_destructor(arr);
 		if (destructor__) {
@@ -1044,7 +1044,8 @@ uri_t *parse_uri(const char *url) {
 	uri_t *uri = uri_parse_ex(url, strlen(url), true);
 	if (!is_empty(uri) && str_has("localhost,127.0.0.1,0.0.0.0", uri->host))
 		uri->host = (char *)events_hostname();
-	else if (is_empty(uri) || is_empty(uri->host) || !str_has(uri->host, ".")) {
+	else if (is_empty(uri) || is_empty(uri->host)
+		|| (!str_has(uri->host, ".") && !str_is(uri->host, events_hostname()))) {
 		errno = EINVAL;
 		return null;
 	}

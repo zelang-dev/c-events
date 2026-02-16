@@ -19,13 +19,14 @@
 #endif
 
 static char default_ssl_conf_filename[MAXHOSTNAMELEN];
-static char os_tls_host[MAXHOSTNAMELEN] = {0};
-static char os_tls_directory[MAXHOSTNAMELEN] = {0};
-static char os_tls_ca_cert[MAXHOSTNAMELEN + 4] = {0};
-static char os_tls_cert[MAXHOSTNAMELEN + 4] = {0};
-static char os_tls_csr[MAXHOSTNAMELEN + 4] = {0};
-static char os_tls_pkey[MAXHOSTNAMELEN + 4] = {0};
-static char os_tls_self_touch[MAXHOSTNAMELEN + 6] = {0};
+static char events_powered_by[MAXHOSTNAMELEN] = {0};
+static char events_host[MAXHOSTNAMELEN] = {0};
+static char events_directory[MAXHOSTNAMELEN] = {0};
+static char events_ca_cert[MAXHOSTNAMELEN + 4] = {0};
+static char events_cert[MAXHOSTNAMELEN + 4] = {0};
+static char events_csr[MAXHOSTNAMELEN + 4] = {0};
+static char events_pkey[MAXHOSTNAMELEN + 4] = {0};
+static char events_self_touch[MAXHOSTNAMELEN + 6] = {0};
 
 struct x509_request {
     CONF *global_config;	/* Global SSL config */
@@ -41,15 +42,11 @@ struct x509_request {
     int priv_key_type;
     int priv_key_encrypt;
     int curve_name;
-
-#ifdef HAVE_EVP_PKEY_EC
-#endif
-
     EVP_PKEY *priv_key;
     const EVP_CIPHER *priv_key_encrypt_cipher;
 };
 
-enum os_tls_ssl_key_type {
+enum events_ssl_key_type {
     OPENSSL_KEYTYPE_RSA,
     OPENSSL_KEYTYPE_DSA,
     OPENSSL_KEYTYPE_DH,
@@ -57,7 +54,7 @@ enum os_tls_ssl_key_type {
     OPENSSL_KEYTYPE_DEFAULT = OPENSSL_KEYTYPE_RSA
 };
 
-enum os_tls_cipher_type {
+enum events_cipher_type {
     CIPHER_RC2_40,
     CIPHER_RC2_128,
     CIPHER_RC2_64,
@@ -75,22 +72,6 @@ typedef enum {
 	ssl_x509_pkey_write,
 	ssl_worker
 } thrd_worker_types;
-
-enum {
-	http_incomplete = 1 << 0,
-	http_keepalive = 1 << 1,
-	http_outgoing = 1 << 2,
-};
-
-typedef struct {
-	ssize_t status;
-	size_t max;
-	unsigned char *buf;
-	tasks_t *thread;
-} tls_state;
-
-#define READ_BUFFER (1024 * 8)
-#define WRITE_BUFFER (1024 * 8)
 
 static volatile bool tls_is_self_signed = false;
 static const EVP_CIPHER *get_cipher(long algo) {
@@ -546,7 +527,7 @@ char *x509_str(X509 *cert, bool show_details) {
 
 	if (cert == NULL) {
 		perror("X.509 Certificate cannot be retrieved");
-		return;
+		return null;
 	}
 
 	bio_out = BIO_new(BIO_s_mem());
@@ -607,20 +588,20 @@ void events_ssl_error(void) {
 
 static void cert_names_setup(void) {
 	char *name = (char *)events_hostname();
-	if (str_is_empty((const char *)os_tls_cert)) {
-		if (!(snprintf(os_tls_cert, sizeof(os_tls_cert), "%s.crt", name))
-		|| !(snprintf(os_tls_csr, sizeof(os_tls_csr), "%s.csr", name))
-		|| !(snprintf(os_tls_pkey, sizeof(os_tls_pkey), "%s.key", name))
-		|| !(snprintf(os_tls_self_touch, sizeof(os_tls_self_touch), "%s.local", name)))
-			cerr("Invalid certificate %s names: %s, %s, %s\n", name, os_tls_cert, os_tls_csr, os_tls_pkey);
+	if (str_is_empty((const char *)events_cert)) {
+		if (!(snprintf(events_cert, sizeof(events_cert), "%s.crt", name))
+		|| !(snprintf(events_csr, sizeof(events_csr), "%s.csr", name))
+		|| !(snprintf(events_pkey, sizeof(events_pkey), "%s.key", name))
+		|| !(snprintf(events_self_touch, sizeof(events_self_touch), "%s.local", name)))
+			cerr("Invalid certificate %s names: %s, %s, %s\n", name, events_cert, events_csr, events_pkey);
 	}
 }
 
 void use_ca_certificate(const char *path) {
-	if (str_is_empty((const char *)os_tls_ca_cert)) {
+	if (str_is_empty((const char *)events_ca_cert)) {
 		int r = is_empty(path)
-			? snprintf(os_tls_ca_cert, sizeof(os_tls_ca_cert), "%s", X509_get_default_cert_file())
-			: snprintf(os_tls_ca_cert, sizeof(os_tls_ca_cert), "%s", path);
+			? snprintf(events_ca_cert, sizeof(events_ca_cert), "%s", X509_get_default_cert_file())
+			: snprintf(events_ca_cert, sizeof(events_ca_cert), "%s", path);
 
 		if (!r) {
 			perror("Invalid ca trust certificate");
@@ -629,69 +610,57 @@ void use_ca_certificate(const char *path) {
 }
 
 EVENTS_INLINE const char *ca_cert_file(void) {
-	if (str_is_empty((const char *)os_tls_ca_cert))
+	if (str_is_empty((const char *)events_ca_cert))
 		use_ca_certificate(NULL);
 
-	return (const char *)os_tls_ca_cert;
+	return (const char *)events_ca_cert;
 }
 
 EVENTS_INLINE const char *cert_file(void) {
-	if (str_is_empty((const char *)os_tls_cert))
+	if (str_is_empty((const char *)events_cert))
 		cert_names_setup();
 
-	return (const char *)os_tls_cert;
-}
-
-const char *events_hostname(void) {
-	if (str_is_empty((const char *)os_tls_host)) {
-		if (gethostname(os_tls_host, sizeof(os_tls_host)) != 0) {
-			perror("gethostname");
-			if (!snprintf(os_tls_host, sizeof(os_tls_host), "localhost"))
-				return "localhost";
-		}
-	}
-
-	return (const char *)os_tls_host;
+	return (const char *)events_cert;
 }
 
 static const char *default_cert_file(char *path) {
 	char *name = (char *)events_hostname();
 	char *dir = is_empty(path) ? ".." SYS_DIRSEP : path;
-	if (str_is_empty((const char *)os_tls_directory)) {
-		if (!(snprintf(os_tls_directory, sizeof(os_tls_directory), "%s", dir))
-			|| !(snprintf(os_tls_cert, sizeof(os_tls_cert), "%s%s.crt", os_tls_directory, name))
-			|| !(snprintf(os_tls_csr, sizeof(os_tls_csr), "%s%s.csr", os_tls_directory, name))
-			|| !(snprintf(os_tls_pkey, sizeof(os_tls_pkey), "%s%s.key", os_tls_directory, name)))
+	if (str_is_empty((const char *)events_directory)) {
+		if (!(snprintf(events_directory, sizeof(events_directory), "%s", dir))
+			|| !(snprintf(events_cert, sizeof(events_cert), "%s%s.crt", events_directory, name))
+			|| !(snprintf(events_csr, sizeof(events_csr), "%s%s.csr", events_directory, name))
+			|| !(snprintf(events_pkey, sizeof(events_pkey), "%s%s.key", events_directory, name)))
 			cerr("Invalid certificate %s names: %s, %s, %s, %s\n",
-			name, os_tls_cert, os_tls_csr, os_tls_pkey, os_tls_directory);
+			name, events_cert, events_csr, events_pkey, events_directory);
 	}
 
 	if (is_empty(path)
-		&& (snprintf(os_tls_self_touch, sizeof(os_tls_self_touch), "%s.local", name)))
-		return (const char *)os_tls_self_touch;
+		&& (snprintf(events_self_touch, sizeof(events_self_touch), "%s.local", name)))
+		return (const char *)events_self_touch;
 
-	return (const char *)os_tls_cert;
+	return (const char *)events_cert;
 }
 
 EVENTS_INLINE const char *csr_file(void) {
-	if (str_is_empty((const char *)os_tls_csr))
+	if (str_is_empty((const char *)events_csr))
 		cert_names_setup();
 
-	return (const char *)os_tls_csr;
+	return (const char *)events_csr;
 }
 
 EVENTS_INLINE const char *pkey_file(void) {
-	if (str_is_empty((const char *)os_tls_pkey))
+	if (str_is_empty((const char *)events_pkey))
 		cert_names_setup();
 
-	return (const char *)os_tls_pkey;
+	return (const char *)events_pkey;
 }
 
 void use_certificate(char *path, uint32_t ctx_pairs, ...) {
 	if (is_empty(path)) {
 		if (!fs_exists(default_cert_file(path))) {
-			if (x509_self_export(NULL, NULL, os_tls_directory))
-				fs_touch(os_tls_self_touch);
+			if (x509_self_export(NULL, NULL, events_directory))
+				fs_touch(events_self_touch);
 		}
 	} else {
 		default_cert_file(path);
@@ -708,13 +677,39 @@ void events_ssl_init(void) {
 
     /* default to 'openssl.cnf' if no environment variable is set */
     if (config_filename == NULL)
-        snprintf(default_ssl_conf_filename, sizeof(default_ssl_conf_filename), "%s/%s",
-                 X509_get_default_cert_area(),
-                 "openssl.cnf");
+        snprintf(default_ssl_conf_filename, sizeof(default_ssl_conf_filename), "%s%s%s",
+                 X509_get_default_cert_area(), SYS_DIRSEP, "openssl.cnf");
     else
         snprintf(default_ssl_conf_filename, sizeof(default_ssl_conf_filename), "%s", config_filename);
 
 	tls_init();
+	events_uname();
+	events_hostname();
+}
+
+const char *events_hostname(void) {
+	if (str_is_empty((const char *)events_host)) {
+		if (gethostname(events_host, sizeof(events_host)) != 0) {
+			perror("gethostname");
+			if (!snprintf(events_host, sizeof(events_host), "localhost"))
+				return "localhost";
+		}
+	}
+
+	return (const char *)events_host;
+}
+
+const char *events_uname(void) {
+	if (str_is_empty((const char *)events_powered_by)) {
+		struct utsname buffer[1];
+		if (uname(buffer) == -1)
+			return null;
+
+		snprintf(events_powered_by, MAXHOSTNAMELEN, "%zu Cores, %s %s %s %s",
+			tasks_cpu_count(), buffer->sysname, buffer->machine, buffer->release, buffer->version);
+	}
+
+	return (const char *)events_powered_by;
 }
 
 int cerr(const char *msg, ...) {
@@ -805,9 +800,11 @@ int tls_bind(const char *host, int backlog) {
 		if (defer(tls_config_free, starget->tls_config) > 0) {
 			if (!tls_config_set_keypair_file(starget->tls_config, cert_file(), pkey_file())) {
 				starget->tls = tls_server();
-				if (defer(tls_free, starget->tls) > 0) {
-					if (!tls_configure(starget->tls, starget->tls_config))
+				if (!is_empty(starget->tls) > 0) {
+					if (!tls_configure(starget->tls, starget->tls_config)) {
+						deferring(tls_closer, server);
 						return socket2fd(server);
+					}
 
 					cerr("\nfailed to configure bind: %s", tls_error(starget->tls));
 				} else {
@@ -927,7 +924,6 @@ int tls_get(const char *uri) {
 static void *tls_client_handler(param_t args) {
 	int client = args[0].integer;
 	tls_client_cb handlerFunc = (tls_client_cb)args[1].func;
-	bool is_tls = false;
 
 	deferring(tls_closer, client);
 	handlerFunc(client);
