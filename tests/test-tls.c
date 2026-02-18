@@ -14,7 +14,7 @@ void *worker_client(param_t args) {
 	ASSERT_TASK(!socket_is_secure(server = tls_get("127.0.0.1:7000")));
 #endif
 	ASSERT_TASK(((child = exec("./client", null, exec_info(null, true, inherit, inherit, inherit))) > 0));
-	sleep_task(1000);
+	sleep_task(6000);
 
 	return args[2].char_ptr;
 }

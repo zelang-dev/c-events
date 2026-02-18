@@ -16,6 +16,8 @@ void *main_main(param_t args) {
 			}
 		}
 		tls_closer(client);
+	} else {
+		perror("\ntls_get");
 	}
 
 	return 0;

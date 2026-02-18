@@ -17,10 +17,10 @@ fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 
 	memset(&sa, 0, sizeof sa);
 	sa.sin_family = AF_INET;
-	if (address != OS_NULL && strcmp(address, "*") != 0) {
+	if (address != OS_NULL && !str_is(address, events_hostname())) {
 		he = async_gethostbyname(address);
 		if (he == NULL) {
-			errno = EINVAL;
+			errno = EDESTADDRREQ;
 			return -1;
 		}
 
@@ -84,17 +84,20 @@ fds_t async_accept(fds_t fd, char *server, int *port) {
 fds_t async_connect(char *hostname, int port, bool proto_tcp) {
 	fds_t fd;
 	int proto, n = 0;
-	char *ip;
+	char ipbuf[22] = {0};
+	char *ip = ipbuf;
 	struct sockaddr_in sa;
 	socklen_t sn;
 	struct hostent *he = {0};
 
-	if ((he = async_gethostbyname(hostname)) == NULL) {
-		errno = EINVAL;
-		return -1;
+	if (!str_is((const char *)hostname, events_hostname())) {
+		if ((he = async_gethostbyname(hostname)) == NULL) {
+			errno = EDESTADDRREQ;
+			return -1;
+		}
+		ip = (char *)he->h_addr;
 	}
 
-	ip = (char *)he->h_addr;
 	proto = proto_tcp ? SOCK_STREAM : SOCK_DGRAM;
 	if ((fd = socket(AF_INET, proto, IPPROTO_IP)) < 0) {
 		errno = os_geterror();

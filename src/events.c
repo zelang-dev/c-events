@@ -985,7 +985,7 @@ static EVENTS_INLINE tasks_t *task_dequeue(tasklist_t *l) {
 /* Delete specified coroutine. */
 static void task_delete(tasks_t *co) {
 	if (!co) {
-		fprintf(stderr, "attempt to delete an invalid task");
+		cerr("attempt to delete an invalid task");
 	} else if (!(co->status == TASK_NORMAL
 		|| co->status == TASK_DEAD
 		|| co->status == TASK_ERRED
@@ -1032,10 +1032,11 @@ static void events_ctr_c_unwind(void) {
 	if (is_empty(atexit_ctr_c_task) || !is_ptr_usable(atexit_ctr_c_task))
 		return;
 
-	data_delete(atexit_ctr_c_task->args);
-	deferred_unwind(atexit_ctr_c_task->garbage);
-	task_delete(atexit_ctr_c_task);
+	tasks_t *co = atexit_ctr_c_task;
 	atexit_ctr_c_task = null;
+	data_delete(co->args);
+	deferred_unwind(co->garbage);
+	task_delete(co);
 }
 
 static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
@@ -1424,20 +1425,18 @@ static EVENTS_INLINE void task_switch(tasks_t *co) {
 #endif
 
 void events_abort(const char *message, const char *file, int line, const char *function) {
-	fflush(stdout);
 #ifndef USE_DEBUG
-	fprintf(stderr, "\nFatal Error: %s in function(%s)\n\n", message, function);
+	cerr("\nFatal Error: %s in function(%s)\n\n", message, function);
 #else
-	fprintf(stderr, "\n%s: %s\n", "Runtime Error", message);
+	cerr("\nRuntime Error: %s\n", "", message);
 	if (file != NULL) {
 		if (function != NULL) {
-			fprintf(stderr, "    thrown in %s at (%s:%d)\n\n", function, file, line);
+			cerr("    thrown in %s at (%s:%d)\n\n", function, file, line);
 		} else {
-			fprintf(stderr, "    thrown at %s:%d\n\n", file, line);
+			cerr("    thrown at %s:%d\n\n", file, line);
 		}
 	}
 #endif
-	fflush(stderr);
 	abort();
 }
 

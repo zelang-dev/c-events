@@ -517,7 +517,7 @@ EVP_PKEY *pkey_get(const char *file_path) {
 	if (is_empty(pkey))
 		return NULL;
 
-	defer((func_t)EVP_PKEY_free, pkey);
+	defer(EVP_PKEY_free, pkey);
 	return pkey;
 }
 
@@ -573,7 +573,7 @@ X509 *x509_get(const char *file_path) {
 		return NULL;
 	}
 
-	defer((func_t)X509_free, cert);
+	defer(X509_free, cert);
 	return cert;
 }
 
@@ -735,6 +735,8 @@ int cout(const char *msg, ...) {
 static int tlserr(int const rc, struct tls *const secure) {
 	if (0 == rc) return 0;
 	assert(-1 == rc);
+	if (!tls_error_code(secure)) return -ECONNREFUSED;
+
 #ifdef USE_DEBUG
 	cerr("\n\nTLS error: %s"CLR_LN, tls_error(secure));
 	SSL_load_error_strings();
@@ -742,7 +744,7 @@ static int tlserr(int const rc, struct tls *const secure) {
 	ERR_error_string_n(ERR_get_error(), x, sizeof(x));
 	cerr("SSL error: %s"CLR_LN, x);
 #endif
-	return EPROTO;
+	return -EPROTO;
 }
 
 static int tls_poll(int socket, int event) {
@@ -801,10 +803,9 @@ int tls_bind(const char *host, int backlog) {
 			if (!tls_config_set_keypair_file(starget->tls_config, cert_file(), pkey_file())) {
 				starget->tls = tls_server();
 				if (!is_empty(starget->tls) > 0) {
-					if (!tls_configure(starget->tls, starget->tls_config)) {
-						deferring(tls_closer, server);
+					deferring(tls_closer, server);
+					if (!tls_configure(starget->tls, starget->tls_config))
 						return socket2fd(server);
-					}
 
 					cerr("\nfailed to configure bind: %s", tls_error(starget->tls));
 				} else {
@@ -849,11 +850,11 @@ static int async_tls_accept(int server, int socket) {
 }
 
 EVENTS_INLINE int tls_accept(int fd, char *server, int *port) {
-	int client = socket2fd(async_accept(fd2socket(fd), server, port));
-	if (!async_tls_accept(fd, client))
+	int rc, client = socket2fd(async_accept(fd2socket(fd), server, port));
+	if (!(rc = async_tls_accept(fd, client)))
 		return client;
 
-	return -1;
+	return rc == -ECONNREFUSED ? 0 : -1;
 }
 
 static int async_tls_connect(const char *host, int socket) {
@@ -883,8 +884,14 @@ static int async_tls_connect(const char *host, int socket) {
 		}
 	}
 
-	if (rc < 0)
-		tls_closer(socket);
+	if (rc < 0) {
+		if (rc == -ECONNREFUSED) {
+			tls_free(target->tls);
+			close(socket);
+		} else {
+			tls_closer(socket);
+		}
+	}
 
 	return rc;
 }
@@ -906,10 +913,11 @@ int tls_get(const char *uri) {
 		if (defer(tls_config_free, ctarget->tls_config) > 0) {
 			if (!tls_config_set_ca_file(ctarget->tls_config, ca_cert_file())
 				&& !tls_config_set_keypair_file(ctarget->tls_config, cert_file(), pkey_file())) {
-				if (!async_tls_connect(url->host, fd))
+				if (!(has_scheme = async_tls_connect(url->host, fd)))
 					return fd;
 
-				cerr("\nfailed to tls_get/async_tls_connect: %s\n", tls_error(ctarget->tls));
+				cerr("\nfailed to tls_get/async_tls_connect: %s\n",
+					(has_scheme == -ECONNREFUSED ? strerror(errno) : tls_error(ctarget->tls)));
 			} else {
 				cerr("\nfailed to tls_config_set_ca_file/keypair_file: %s\n", tls_config_error(ctarget->tls_config));
 			}
@@ -951,7 +959,7 @@ void tls_closer(int socket) {
 		return;
 
 	events_fd_t *target = events_target(socket);
-	if (target->tls) {
+	if (!is_empty(target->tls)) {
 		tls_close(target->tls);
 		tls_free(target->tls);
 		close(socket);
