@@ -193,7 +193,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 
 	events_ssl_init();
 #ifdef USE_DEBUG
-	cout("%s, %s\n", events_uname(), events_hostname());
+	cout("%s, %s"CLR_LN, events_uname(), events_hostname());
 #endif
 	if (os_init() == -1) {
 		return -1;

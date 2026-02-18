@@ -12,8 +12,10 @@ void *worker_client(param_t args) {
 	ASSERT_TASK(str_is("tls_client", args[1].char_ptr));
 #ifdef _WIN32
 	ASSERT_TASK(!socket_is_secure(server = tls_get("127.0.0.1:7000")));
-#endif
+	ASSERT_TASK(((child = exec("./client", null, null)) > 0));
+#else
 	ASSERT_TASK(((child = exec("./client", null, exec_info(null, true, inherit, inherit, inherit))) > 0));
+#endif
 	sleep_task(6000);
 
 	return args[2].char_ptr;
