@@ -2328,6 +2328,7 @@ static int __tasks_pool_wrapper(void *arg) {
 				|| tasks_schedulering(true) == TASK_ERRED)
 				break;
 		} while (__thrd()->loop != NULL);
+		scope_unwind(scope_local());
 		events_destroy(loop);
 		__thrd()->pool = NULL;
 	}

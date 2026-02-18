@@ -738,7 +738,7 @@ static int tlserr(int const rc, struct tls *const secure) {
 	if (!tls_error_code(secure)) return -ECONNREFUSED;
 
 #ifdef USE_DEBUG
-	cerr("\n\nTLS error: %s"CLR_LN, tls_error(secure));
+	cerr("\n\nTLS error: %s code: %d "CLR_LN, tls_error(secure), tls_error_code(secure));
 	SSL_load_error_strings();
 	char x[255 + 1];
 	ERR_error_string_n(ERR_get_error(), x, sizeof(x));
@@ -886,8 +886,10 @@ static int async_tls_connect(const char *host, int socket) {
 
 	if (rc < 0) {
 		if (rc == -ECONNREFUSED) {
+			errno = ECONNREFUSED;
 			tls_free(target->tls);
 			close(socket);
+			target->tls = null;
 		} else {
 			tls_closer(socket);
 		}
@@ -916,7 +918,7 @@ int tls_get(const char *uri) {
 				if (!(has_scheme = async_tls_connect(url->host, fd)))
 					return fd;
 
-				cerr("\nfailed to tls_get/async_tls_connect: %s\n",
+				cerr("\nfailed to async_tls_connect: %s\n",
 					(has_scheme == -ECONNREFUSED ? strerror(errno) : tls_error(ctarget->tls)));
 			} else {
 				cerr("\nfailed to tls_config_set_ca_file/keypair_file: %s\n", tls_config_error(ctarget->tls_config));
@@ -939,7 +941,17 @@ static void *tls_client_handler(param_t args) {
 }
 
 EVENTS_INLINE void tls_handler(tls_client_cb connected, int client) {
-	launch((launch_func_t)tls_client_handler, 2, client, connected);
+	if (!is_data(sys_event.cpu_index)
+		&& events_tasks_pool(events_create(sys_event.cpu_count)) < 0) {
+		launch((launch_func_t)tls_client_handler, 2, client, connected);
+	} else {
+		int rid = go(tls_client_handler, 2, client, connected);
+		if (rid > 0) {
+			events_deque_t *q = sys_event.local[results_tid(rid)];
+			atomic_flag_test_and_set(&q->started);
+			yield_task();
+		}
+	}
 }
 
 bool tls_is_selfserver(void) {
@@ -964,6 +976,8 @@ void tls_closer(int socket) {
 		tls_free(target->tls);
 		close(socket);
 		target->tls = null;
+	} else {
+		close(socket);
 	}
 }
 
