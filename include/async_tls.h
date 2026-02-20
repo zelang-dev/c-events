@@ -70,7 +70,7 @@ typedef enum {
 
 typedef struct tls_config tls_config_t;
 typedef struct tls tls_s;
-typedef void (*tls_client_cb)(int);
+typedef client_cb tls_client_cb;
 #define TLS_EOF 0xa000126
 
 C_API bool socket_is_eof(int);

@@ -783,7 +783,7 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_datached,
 
 	info->detached = is_datached;
 	if (env != NULL && str_has(env, "=") && str_has(env, ";"))
-		info->env = (const char **)str_slice(env, ";", NULL);
+		info->env = (const char **)str_split_ex(env, ";", NULL);
 
 	if (io_in != inherit)
 		info->write_input[1] = io_in;
@@ -801,11 +801,11 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_datached,
 EVENTS_INLINE process_t exec(const char *command, const char *args, execinfo_t *info) {
 	snprintf(os_exec_command, MAX_PATH, "%s%s", command,
 		(!str_has(command, ".bat") && !str_has(command, ".exe") ? ".exe" : ""));
-	char *cmd_arg = str_cat((args == NULL ? 2 : 3), os_exec_command, ",", args);
+	char *cmd_arg = str_cat_ex((args == NULL ? 2 : 3), os_exec_command, ",", args);
 	if (info == NULL)
 		info = exec_info(NULL, false, inherit, inherit, inherit);
 
-	info->argv = str_has(cmd_arg, ",") ? str_swap(cmd_arg, ",", " ") : cmd_arg;
+	info->argv = str_has(cmd_arg, ",") ? str_swap_ex(cmd_arg, ",", " ") : cmd_arg;
 	events_free(cmd_arg);
 
 	return os_exec_info(os_exec_command, info);

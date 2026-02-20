@@ -313,7 +313,7 @@ EVENTS_INLINE char *str_dup_ex(const char *str) {
 	return str_memdup_ex(str, strlen(str), false);
 }
 
-char *str_cat(int num_args, ...) {
+char *str_cat_ex(int num_args, ...) {
 	va_list ap;
 	size_t strsize = 0;
 	char *res = NULL;
@@ -362,7 +362,7 @@ char *str_cat_argv(int argc, char **argv, int start, char *delim) {
 	return str;
 }
 
-char *str_swap(const char *haystack, const char *needle, const char *swap) {
+char *str_swap_ex(const char *haystack, const char *needle, const char *swap) {
 	if (!haystack || !needle || !swap)
 		return NULL;
 
@@ -397,7 +397,7 @@ char *str_swap(const char *haystack, const char *needle, const char *swap) {
 	return result;
 }
 
-char **str_slice(const char *s, const char *delim, int *count) {
+char **str_split_ex(const char *s, const char *delim, int *count) {
 	if ((void *)s == NULL)
 		return NULL;
 
@@ -1115,6 +1115,143 @@ EVENTS_INLINE void str_free(void *ptr) {
 	if (!is_empty(ptr) && is_ptr_usable(ptr)) {
 		events_free(ptr);
 	}
+}
+
+static const unsigned char base64_table[65] =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static const unsigned char base64_decode_table[256] = {
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x3e, 0x80, 0x80, 0x80, 0x3f,
+	0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x80, 0x80,
+	0x80, 0x00, 0x80, 0x80, 0x80, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+	0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12,
+	0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24,
+	0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
+	0x31, 0x32, 0x33, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+	0x80, 0x80, 0x80, 0x80};
+
+static EVENTS_INLINE size_t str_base64_len(size_t decoded_len) {
+	/* This counts the padding bytes (by rounding to the next multiple of 4). */
+	return ((4u * decoded_len / 3u) + 3u) & ~3u;
+}
+
+EVENTS_INLINE bool str_is_base64(const unsigned char *src) {
+	size_t i, len = strlen((const char *)src);
+	for (i = 0; i < len; i++) {
+		if (base64_decode_table[src[i]] == 0x80)
+			return false;
+	}
+
+	return true;
+}
+
+unsigned char *str_base64_ex(const unsigned char *src) {
+	unsigned char *out, *pos;
+	const unsigned char *end, *begin;
+	size_t olen;
+	size_t len = strlen((const char *)src);
+
+	olen = str_base64_len(len) + 1 /* for NUL termination */;
+	if (olen < len)
+		return NULL; /* integer overflow */
+
+	out = events_calloc(1, olen);
+	if (!is_empty(out)) {
+		end = src + len;
+		begin = src;
+		pos = out;
+		while (end - begin >= 3) {
+			*pos++ = base64_table[begin[0] >> 2];
+			*pos++ = base64_table[((begin[0] & 0x03) << 4) | (begin[1] >> 4)];
+			*pos++ = base64_table[((begin[1] & 0x0f) << 2) | (begin[2] >> 6)];
+			*pos++ = base64_table[begin[2] & 0x3f];
+			begin += 3;
+		}
+
+		if (end - begin) {
+			*pos++ = base64_table[begin[0] >> 2];
+			if (end - begin == 1) {
+				*pos++ = base64_table[(begin[0] & 0x03) << 4];
+				*pos++ = '=';
+			} else {
+				*pos++ = base64_table[((begin[0] & 0x03) << 4) | (begin[1] >> 4)];
+				*pos++ = base64_table[(begin[1] & 0x0f) << 2];
+			}
+			*pos++ = '=';
+		}
+
+		*pos = '\0';
+	}
+
+	return out;
+}
+
+unsigned char *str_unbase64_ex(const unsigned char *src) {
+	unsigned char *out, *pos;
+	unsigned char block[4];
+	size_t i, count, olen;
+	int pad = 0;
+	size_t len = strlen((const char *)src);
+
+	count = 0;
+	for (i = 0; i < len; i++) {
+		if (base64_decode_table[src[i]] != 0x80)
+			count++;
+	}
+
+	if (count == 0 || count % 4)
+		return NULL;
+
+	olen = (count / 4 * 3) + 1;
+	pos = out = events_calloc(1, olen);
+	if (!is_empty(out)) {
+		count = 0;
+		for (i = 0; i < len; i++) {
+			unsigned char tmp = base64_decode_table[src[i]];
+			if (tmp == 0x80)
+				continue;
+
+			if (src[i] == '=')
+				pad++;
+			block[count] = tmp;
+			count++;
+			if (count == 4) {
+				*pos++ = (unsigned char)((block[0] << 2) | (block[1] >> 4));
+				*pos++ = (unsigned char)((block[1] << 4) | (block[2] >> 2));
+				*pos++ = (unsigned char)((block[2] << 6) | block[3]);
+				count = 0;
+				if (pad) {
+					if (pad == 1)
+						pos--;
+					else if (pad == 2)
+						pos -= 2;
+					else {
+						events_free(out);
+						/* Invalid padding */
+						return NULL;
+					}
+					break;
+				}
+			}
+		}
+		*pos = '\0';
+	}
+
+	return out;
 }
 
 #include "getopt.c"

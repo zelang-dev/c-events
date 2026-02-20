@@ -35,7 +35,7 @@ bool getopt_has(const char *flag, bool is_single) {
 	if (command_line_argc > command_line_required) {
 		for (i = command_line_index; i < command_line_argc; i++) {
 			if (is_single && str_has(command_line_argv[i], "=")) {
-				flags = str_slice(command_line_argv[i], "=", NULL);
+				flags = str_split_ex(command_line_argv[i], "=", NULL);
 				is_split = true;
 			}
 

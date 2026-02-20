@@ -603,7 +603,7 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 	execinfo_t *info = fdTable[pseudofd].process;
 	info->detached = is_detached;
 	if (env != NULL && str_has(env, "=") && str_has(env, ";"))
-		info->env = (const char **)str_slice(env, ";", NULL);
+		info->env = (const char **)str_split_ex(env, ";", NULL);
 
 	if (io_in)
 		info->write_input[1] = io_in;
@@ -619,11 +619,11 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 }
 
 EVENTS_INLINE process_t exec(const char *command, const char *args, execinfo_t *info) {
-	char *cmd_arg = str_cat((args == NULL ? 2 : 3), command, ",", args);
+	char *cmd_arg = str_cat_ex((args == NULL ? 2 : 3), command, ",", args);
 	if (info == NULL)
 		info = exec_info(NULL, false, inherit, inherit, inherit);
 
-	info->argv = str_slice(cmd_arg, ",", NULL);
+	info->argv = str_split_ex(cmd_arg, ",", NULL);
 	events_free(cmd_arg);
 
 	return os_exec_info(command, info);

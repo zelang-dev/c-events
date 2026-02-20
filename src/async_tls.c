@@ -758,7 +758,7 @@ static int tls_poll(int socket, int event) {
 }
 
 EVENTS_INLINE bool socket_is_secure(int socket) {
-	if (!socket) return false;
+	if (socket <= 0) return false;
 	return !is_empty(events_target(socket)->tls);
 }
 

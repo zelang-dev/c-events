@@ -22,6 +22,7 @@ typedef void *(*data_func_t)(void *);
 typedef intptr_t(*intptr_func_t)(intptr_t);
 typedef void(*defer_cb)(void *);
 typedef void(*defer_func)(intptr_t);
+typedef void (*client_cb)(int);
 typedef defer_cb func_t;
 
 typedef enum {
@@ -237,10 +238,13 @@ C_API char *str_trim(const char *str, size_t length);
 C_API char *str_trim_at(const char *str, int pos, size_t length);
 C_API char *str_dup(const char *str);
 C_API char *str_dup_ex(const char *str);
-C_API char *str_cat(int num_args, ...);
-C_API char **str_slice(const char *s, const char *delim, int *count);
-C_API char *str_swap(const char *haystack, const char *needle, const char *swap);
+C_API char *str_cat_ex(int num_args, ...);
+C_API char **str_split_ex(const char *s, const char *delim, int *count);
+C_API char *str_swap_ex(const char *haystack, const char *needle, const char *swap);
 C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
+C_API bool str_is_base64(const unsigned char *src);
+C_API unsigned char *str_base64_ex(const unsigned char *src);
+C_API unsigned char *str_unbase64_ex(const unsigned char *src);
 C_API void str_free(void *);
 
 /*

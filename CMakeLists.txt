@@ -39,6 +39,7 @@ set(ev_sources
 	${CMAKE_CURRENT_SOURCE_DIR}/src/except.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/async_io.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/async_udp.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/async_tls.c)
 if(WIN32)
 	set(ev_sources ${ev_sources}

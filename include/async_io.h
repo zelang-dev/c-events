@@ -141,6 +141,9 @@ typedef void (*watch_cb)(int wd, events_monitors mask, const char *namepath, voi
 typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
 typedef void (*sigcall_t)(void);
 typedef exec_io_cb spawn_cb;
+typedef const struct sockaddr sockaddr_t;
+typedef struct udp_packet_s *udp_t;
+typedef void (*udp_packet_cb)(udp_t);
 
 #ifndef null
 #	define null	NULL
@@ -366,6 +369,22 @@ C_API const char *fs_events_path(int wd);
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);
 C_API bool spawn_is_finish(execinfo_t *child);
+
+C_API int udp_bind(char *addr, unsigned int flags);
+C_API int udp_connect(char *addr);
+C_API void udp_with(int fd, char *addr, unsigned int flags);
+
+C_API int udp_send(udp_t, void *buf, int n);
+C_API udp_t udp_recv(int fd);
+C_API void udp_handler(udp_packet_cb connected, udp_t);
+
+C_API int async_sendto(int fd, void *buf, int n);
+C_API int async_recvfrom(int fd, void *buf, int n, udp_t *client);
+
+C_API char *udp_message(udp_t);
+C_API ssize_t udp_length(udp_t);
+C_API unsigned int udp_flags(udp_t);
+C_API bool socket_is_udp(int socket);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

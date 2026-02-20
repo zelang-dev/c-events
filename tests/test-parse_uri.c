@@ -15,9 +15,9 @@ TEST(parse_uri) {
 
 	char **token, **token_part;
 	int x, i = 0;
-	ASSERT_NOTNULL((token = str_slice(url->query, "&", &i)));
+	ASSERT_NOTNULL((token = str_split_ex(url->query, "&", &i)));
 	for (x = 0; x < i; x++) {
-		token_part = str_slice(token[x], "=", NULL);
+		token_part = str_split_ex(token[x], "=", NULL);
 		switch (x) {
 			case 0:
 				ASSERT_STR(token_part[0], "lots");
@@ -83,6 +83,70 @@ TEST(str_pad) {
 	return 0;
 }
 
+TEST(str_base64_ex) {
+	{
+		// Success
+		const char string[] = "IMProject is a very cool project!";
+		unsigned char *base64 = str_base64_ex(string);
+		ASSERT_STR("SU1Qcm9qZWN0IGlzIGEgdmVyeSBjb29sIHByb2plY3Qh", base64);
+		ASSERT_TRUE(str_is_base64(base64));
+		str_free(base64);
+	}
+	{
+		// Success
+		const char string[] = "Hehe";
+		unsigned char *base64 = str_base64_ex(string);
+		ASSERT_STR("SGVoZQ==", base64);
+		ASSERT_TRUE(str_is_base64(base64));
+		str_free(base64);
+	}
+	{
+		// Success
+		const char string[] = "jc";
+		unsigned char *base64 = str_base64_ex(string);
+		ASSERT_STR("amM=", base64);
+		ASSERT_TRUE(str_is_base64(base64));
+		str_free(base64);
+	}
+
+	return 0;
+}
+
+TEST(str_unbase64_ex) {
+	{
+		// Success
+		char text[] = "IMProject is a very cool project!";
+		unsigned char *base64 = "SU1Qcm9qZWN0IGlzIGEgdmVyeSBjb29sIHByb2plY3Qh";
+		unsigned char *data = str_unbase64_ex(base64);
+		ASSERT_STR(text, data);
+		str_free(data);
+	}
+	{
+		// Success
+		char text[] = "B?E(H+MbQeThWmZq4t7w!z%C*F)J@NcR";
+		const char base64[] = "Qj9FKEgrTWJRZVRoV21acTR0N3cheiVDKkYpSkBOY1I=";
+		unsigned char *data = str_unbase64_ex(base64);
+		ASSERT_STR(text, data);
+		str_free(data);
+	}
+	{
+		// Success
+		char text[] = "Hehe";
+		const char base64[] = "SGVoZQ==";
+		unsigned char *data = str_unbase64_ex(base64);
+		ASSERT_STR(text, data);
+		str_free(data);
+	}
+	{
+		const char base64[] = "SGVoZQ1==";
+		unsigned char *data = str_unbase64_ex(base64);
+		ASSERT_NULL(data);
+		str_free(data);
+	}
+
+	return 0;
+}
+
 TEST(list) {
     int result = 0;
 
@@ -90,6 +154,8 @@ TEST(list) {
 	EXEC_TEST(str_explode);
 	EXEC_TEST(str_repeat);
 	EXEC_TEST(str_pad);
+	EXEC_TEST(str_base64_ex);
+	EXEC_TEST(str_unbase64_ex);
 
     return result;
 }

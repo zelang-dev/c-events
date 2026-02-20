@@ -231,6 +231,7 @@ struct events_fd_s {
 	events_cb callback;
 	void *cb_arg;
 	events_t *loop;
+	udp_t udp;
 	tls_s *tls;
 	tls_config_t *tls_config;
 };
@@ -509,6 +510,16 @@ struct ex_guard_s {
 	ex_memory_t scope[1];
 };
 
+struct udp_packet_s {
+	data_types type;
+	int socket;
+	unsigned int flags;
+	bool message_set;
+	ssize_t nread;
+	char *message;
+	struct sockaddr_storage addr[1];
+};
+
 void events_set_destroy(void);
 int events_add_signal(int sig, sig_cb proc, void *data);
 void events_del_signal(int sig, int i);
@@ -578,6 +589,7 @@ int fsevents_stop(uint32_t rid);
 bool scope_is_guarded(void);
 int scope_deferred(ex_memory_t *scope, func_t func, void *data);
 
+char *str_parseip(char *name, uint32_t *ip, int *port, bool autofree);
 #ifdef __cplusplus
 }
 #endif
