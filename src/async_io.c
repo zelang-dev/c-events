@@ -10,7 +10,8 @@
 fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 	fds_t fd;
 	int proto, n;
-	char *ip;
+	char ipbuf[22] = {0};
+	char *ip = ipbuf;
 	struct sockaddr_in sa;
 	socklen_t sn;
 	struct hostent *he = {0};
@@ -18,8 +19,8 @@ fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 	memset(&sa, 0, sizeof sa);
 	sa.sin_family = AF_INET;
 	if (!proto_tcp || (address != OS_NULL && !str_is(address, events_hostname()))) {
-		if (!proto_tcp && backlog && port) {
-			ip = (char *)&backlog;
+		if (!proto_tcp && (port || backlog)) {
+			ip = backlog ? (char *)&backlog : ipbuf;
 		} else {
 			he = async_gethostbyname(address);
 			if (he == NULL) {

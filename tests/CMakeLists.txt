@@ -18,6 +18,7 @@ set(TARGET_LIST
  test-defer
  test-exceptions
  test-tls
+ test-udp
 )
 
 add_executable(test-getopts test-getopts.c)

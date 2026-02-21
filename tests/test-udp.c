@@ -11,9 +11,9 @@ void *worker_client(param_t args) {
 
 	ASSERT_TASK(str_is("worker_client", args[1].char_ptr));
 	ASSERT_TASK(socket_is_udp(client = udp_bind("127.0.0.1:7777", 0)));
-	sleep_task(100);
+	sleep_task(200);
 
-	udp_with(client, "udp://0.0.0.0:9999", 0);
+	udp_with(client, "127.0.0.2:9999", 0);
 	ASSERT_TASK((async_sendto(client, "hello", 5) == 5));
 	ASSERT_TASK(((nread = async_recvfrom(client, buf, sizeof(buf), &packets)) == 5));
 	ASSERT_TASK((data_type(packets) == DATA_UDP));
@@ -30,23 +30,23 @@ void *worker_connected(udp_t client) {
 	return 0;
 }
 
-TEST(udp_listen) {
+TEST(udp_recv) {
 	int server = 0;
 	udp_t client = null;
 	uint32_t res = async_task(worker_client, 3, 1000, "worker_client", "finish");
 	ASSERT_FALSE(socket_is_udp(server));
-	ASSERT_TRUE(socket_is_udp(server = udp_bind("0.0.0.0:9999", 0)));
+	ASSERT_TRUE(socket_is_udp(server = udp_bind("127.0.0.2:9999", 0)));
 
+	ASSERT_FALSE(task_is_ready(res));
 	ASSERT_TRUE((data_type(client = udp_recv(server)) == DATA_UDP));
 
-    ASSERT_FALSE(results_is_ready(res));
-	async_task(worker_connected, client);
-    ASSERT_FALSE(results_is_ready(res));
+    ASSERT_FALSE(task_is_ready(res));
+	udp_handler((udp_packet_cb)worker_connected, client);
 
-    while (!results_is_ready(res))
-        yield();
+	while (!task_is_ready(res))
+        yield_task();
 
-    ASSERT_TRUE(results_is_ready(res));
+	ASSERT_TRUE(task_is_ready(res));
     ASSERT_STR(results_for(res).char_ptr, "finish");
 
     return 0;
@@ -55,7 +55,7 @@ TEST(udp_listen) {
 TEST(list) {
     int result = 0;
 
-    EXEC_TEST(udp_listen);
+	EXEC_TEST(udp_recv);
 
     return result;
 }

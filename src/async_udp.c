@@ -93,10 +93,8 @@ int udp_bind(char *addr, unsigned int flags) {
 void udp_with(int fd, char *addr, unsigned int flags) {
 	uint32_t ip = 0, port = 0;
 	char *host = str_parseip(addr, &ip, &port, false);
-	if (!is_empty(host))
-		events_free(host);
-
 	udp_t packet = events_target(fd)->udp;
+
 	packet->flags = flags;
 	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
 
@@ -104,12 +102,14 @@ void udp_with(int fd, char *addr, unsigned int flags) {
 	memmove(&sa->sin_addr, &ip, 4);
 	sa->sin_family = AF_INET;
 	sa->sin_port = htons(port);
+	if (!is_empty(host))
+		events_free(host);
 }
 
 int async_sendto(int fd, void *buf, int n) {
 	int m;
 	udp_t packet = events_target(fd)->udp;
-	socklen_t client_len = sizeof((struct sockaddr_in *)packet->addr);
+	socklen_t client_len = sizeof(packet->addr);
 
 	while ((m = sendto(socket2fd(fd), (const char *)buf, n, packet->flags, (sockaddr_t *)packet->addr, client_len)) < 0
 		&& os_geterror() == EAGAIN) {
@@ -120,7 +120,7 @@ int async_sendto(int fd, void *buf, int n) {
 
 int udp_send(udp_t packet, void *buf, int n) {
 	int m;
-	socklen_t client_len = sizeof((struct sockaddr_in *)packet->addr);
+	socklen_t client_len = sizeof(packet->addr);
 
 	while ((m = sendto(fd2socket(packet->socket), (const char *)buf, n, packet->flags, (sockaddr_t *)packet->addr, client_len)) < 0
 		&& os_geterror() == EAGAIN) {
@@ -132,9 +132,9 @@ int udp_send(udp_t packet, void *buf, int n) {
 int async_recvfrom(int fd, void *buf, int n, udp_t *client) {
 	int m;
 	udp_t cl = null, packet = events_target(fd)->udp;
-	socklen_t client_len = sizeof((struct sockaddr_in *)packet->addr);
+	socklen_t client_len = sizeof(packet->addr);
 
-	while ((m = recvfrom(socket2fd(fd), buf, n, packet->flags, (struct sockaddr *)&packet->addr, &client_len)) < 0
+	while ((m = recvfrom(socket2fd(fd), buf, n, packet->flags, (struct sockaddr *)packet->addr, &client_len)) < 0
 		&& os_geterror() == EAGAIN) {
 		async_wait(fd, 'r');
 	}
@@ -165,9 +165,9 @@ udp_t udp_recv(int fd) {
 	int m;
 	char buf[Kb(32)] = {0};
 	udp_t client = null, packet = events_target(fd)->udp;
-	socklen_t client_len = sizeof((struct sockaddr_in *)packet->addr);
+	socklen_t client_len = sizeof(packet->addr);
 
-	while ((m = recvfrom(socket2fd(fd), buf, Kb(32), packet->flags, (struct sockaddr *)&packet->addr, &client_len)) < 0
+	while ((m = recvfrom(socket2fd(fd), buf, Kb(32), packet->flags, (struct sockaddr *)packet->addr, &client_len)) < 0
 		&& os_geterror() == EAGAIN) {
 		async_wait(fd, 'r');
 	}
