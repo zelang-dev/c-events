@@ -786,17 +786,13 @@ EVENTS_INLINE int tls_out(char *msg, size_t nread) {
 }
 
 int tls_bind(const char *host, int backlog) {
-	char address[MAXHOSTNAMELEN] = {0};
-	fds_t server, has_scheme = str_has(host, "://");
-	if (!has_scheme)
-		snprintf(address, sizeof(address), "tls://%s",host);
+	fds_t server;
+	int err = 0, port = 0;
+	char *url = str_parseip((char *)host, (uint32_t *)&err, &port, true);
+	if (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0", url))
+		url = (char *)events_hostname();
 
-	uri_t *url = parse_uri((has_scheme ? host : address));
-	if (!is_empty(url)) {
-		server = async_bind(url->host, url->port, backlog, true);
-		if (url->type != DATA_TLS)
-			return socket2fd(server);
-
+	if (!is_empty(url) && (server = async_bind(url, port, backlog, true)) > 0) {
 		events_fd_t *starget = events_target(socket2fd(server));
 		starget->tls_config = tls_config_new();
 		if (defer(tls_config_free, starget->tls_config) > 0) {
@@ -899,27 +895,24 @@ static int async_tls_connect(const char *host, int socket) {
 }
 
 int tls_get(const char *uri) {
-	char address[MAXHOSTNAMELEN] = {0};
-	fds_t client, has_scheme = str_has(uri, "://");
-	if (!has_scheme)
-		snprintf(address, sizeof(address), "tls://%s", uri);
+	fds_t client;
+	int err = 0, port = 0;
+	char *host = str_parseip((char *)uri, (uint32_t *)&err, &port, true);
+	if (!is_empty(host) && str_has("localhost,127.0.0.1,0.0.0.0", host))
+		host = (char *)events_hostname();
 
-	uri_t *url = parse_uri((has_scheme ? uri : address));
-	if (!is_empty(url) && (client = async_connect(url->host, (!url->port ? 443 : url->port), true)) > 0) {
+	if (!is_empty(host) && (client = async_connect(host, (!port ? 443 : port), true)) > 0) {
 		int fd = socket2fd(client);
-		if (url->type != DATA_TLS)
-			return fd;
-
 		events_fd_t *ctarget = events_target(fd);
 		ctarget->tls_config = tls_config_new();
 		if (defer(tls_config_free, ctarget->tls_config) > 0) {
 			if (!tls_config_set_ca_file(ctarget->tls_config, ca_cert_file())
 				&& !tls_config_set_keypair_file(ctarget->tls_config, cert_file(), pkey_file())) {
-				if (!(has_scheme = async_tls_connect(url->host, fd)))
+				if (!(err = async_tls_connect(host, fd)))
 					return fd;
 
 				cerr("\nfailed to async_tls_connect: %s\n",
-					(has_scheme == -ECONNREFUSED ? strerror(errno) : tls_error(ctarget->tls)));
+					(err == -ECONNREFUSED ? strerror(errno) : tls_error(ctarget->tls)));
 			} else {
 				cerr("\nfailed to tls_config_set_ca_file/keypair_file: %s\n", tls_config_error(ctarget->tls_config));
 			}

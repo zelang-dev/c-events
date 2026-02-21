@@ -10,6 +10,14 @@
 # define min(a, b) (((a) < (b)) ? (a) : (b))
 #endif
 
+#ifdef _WIN32
+#	define EXPECTED(x) (x)
+#	define UNEXPECTED(x) (x)
+#else
+#	define EXPECTED(x) __builtin_expect((x), 1)
+#	define UNEXPECTED(x) __builtin_expect((x), 0)
+#endif
+
 typedef struct array_metadata_s {
 	data_types type;
 	size_t size;
@@ -580,6 +588,68 @@ char *str_pad(char *str, int length, char *pad, str_pad_type pad_type) {
 	return result;
 }
 
+static const char *str_memnstr(const char *haystack, const char *needle, size_t needle_len, const char *end) {
+	const char *p = haystack;
+	size_t off_s;
+
+	assert(end >= p);
+
+	if (needle_len == 1) {
+		return (const char *)memchr(p, *needle, (end - p));
+	} else if (UNEXPECTED(needle_len == 0)) {
+		return p;
+	}
+
+	off_s = (size_t)(end - p);
+
+	if (needle_len > off_s) {
+		return null;
+	}
+
+	const char ne = needle[needle_len - 1];
+	end -= needle_len;
+
+	while (p <= end) {
+		if ((p = (const char *)memchr(p, *needle, (end - p + 1)))) {
+			if (ne == p[needle_len - 1] && !memcmp(needle + 1, p + 1, needle_len - 2)) {
+				return p;
+			}
+		} else {
+			return null;
+		}
+		p++;
+	}
+
+	return null;
+}
+
+int str_subcount(const char *text, char *pattern) {
+	int count = 0;
+	size_t haystack_len = strlen(text), needle_len = strlen(pattern);
+	const char *p, *endp;
+	char cmp;
+
+	if (needle_len == 0)
+		return 0;
+
+	p = text;
+	endp = p + haystack_len;
+	if (needle_len == 1) {
+		cmp = pattern[0];
+		while ((p = memchr(p, cmp, endp - p))) {
+			count++;
+			p++;
+		}
+	} else {
+		while ((p = (char *)str_memnstr(p, pattern, needle_len, endp))) {
+			p += needle_len;
+			count++;
+		}
+	}
+
+	return count;
+}
+
 static EVENTS_INLINE char *ltrim(char *s) {
 	while (isspace(*s)) s++;
 	return s;
@@ -1027,7 +1097,8 @@ uri_t *parse_uri_ex(const char *str) {
 		return null;
 
 	uri_t *uri = uri_parse_ex(str, strlen(str), false);
-	if (uri->is_rejected || is_empty(uri->host) || !str_has(uri->host, ".")) {
+	if (uri->is_rejected || is_empty(uri->host)
+		|| (!str_has(uri->host, ".") && !str_is(uri->host, events_hostname()))) {
 		errno = EINVAL;
 		uri_free(uri);
 		return null;
@@ -1042,9 +1113,7 @@ uri_t *parse_uri(const char *url) {
 		return null;
 
 	uri_t *uri = uri_parse_ex(url, strlen(url), true);
-	if (!is_empty(uri) && str_has("localhost,127.0.0.1,0.0.0.0", uri->host))
-		uri->host = (char *)events_hostname();
-	else if (is_empty(uri) || is_empty(uri->host)
+	if (is_empty(uri) || is_empty(uri->host)
 		|| (!str_has(uri->host, ".") && !str_is(uri->host, events_hostname()))) {
 		errno = EINVAL;
 		return null;

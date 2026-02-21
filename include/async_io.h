@@ -379,7 +379,7 @@ C_API udp_t udp_recv(int fd);
 C_API void udp_handler(udp_packet_cb connected, udp_t);
 
 C_API int async_sendto(int fd, void *buf, int n);
-C_API int async_recvfrom(int fd, void *buf, int n, udp_t *client);
+C_API int async_recvfrom(int fd, void *buf, int n, unsigned int flags);
 
 C_API char *udp_message(udp_t);
 C_API ssize_t udp_length(udp_t);

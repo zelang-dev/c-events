@@ -233,6 +233,7 @@ C_API bool str_is_empty(const char *str);
 C_API bool str_is(const char *str, const char *str2);
 C_API bool str_has(const char *text, char *pattern);
 C_API int str_pos(const char *text, char *pattern);
+C_API int str_subcount(const char *text, char *pattern);
 C_API char *str_cpy(char *dest, const char *src, size_t len);
 C_API char *str_trim(const char *str, size_t length);
 C_API char *str_trim_at(const char *str, int pos, size_t length);

@@ -9,7 +9,7 @@
 
 fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 	fds_t fd;
-	int proto, n;
+	int proto, n = !proto_tcp ? str_subcount(address, ".") : 0;
 	char ipbuf[22] = {0};
 	char *ip = ipbuf;
 	struct sockaddr_in sa;
@@ -19,17 +19,17 @@ fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 	memset(&sa, 0, sizeof sa);
 	sa.sin_family = AF_INET;
 	if (!proto_tcp || (address != OS_NULL && !str_is(address, events_hostname()))) {
-		if (!proto_tcp && (port || backlog)) {
-			ip = backlog ? (char *)&backlog : ipbuf;
+		if (!proto_tcp && (port || backlog) && n == 3) {
+			ip = (char *)&backlog;
 		} else {
-			he = async_gethostbyname(address);
-			if (he == NULL) {
+			if ((he = async_gethostbyname(address)) == NULL) {
 				errno = EDESTADDRREQ;
 				return -1;
 			}
 			ip = (char *)he->h_addr;
 		}
 
+		n = 0;
 		memmove(&sa.sin_addr, ip, 4);
 	}
 
@@ -96,15 +96,11 @@ fds_t async_connect(char *hostname, int port, bool proto_tcp) {
 	struct hostent *he = {0};
 
 	if (!proto_tcp || !str_is((const char *)hostname, events_hostname())) {
-		if (!proto_tcp && port) {
-			ip = hostname;
-		} else {
-			if ((he = async_gethostbyname(hostname)) == NULL) {
-				errno = EDESTADDRREQ;
-				return -1;
-			}
-			ip = (char *)he->h_addr;
+		if ((he = async_gethostbyname(hostname)) == NULL) {
+			errno = EDESTADDRREQ;
+			return -1;
 		}
+		ip = (char *)he->h_addr;
 	}
 
 	proto = proto_tcp ? SOCK_STREAM : SOCK_DGRAM;

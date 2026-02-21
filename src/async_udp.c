@@ -16,8 +16,18 @@ char *str_parseip(char *name, uint32_t *ip, int *port, bool autofree) {
 		tmp = str_split_ex(name, ":", null);
 		*port = atoi(tmp[1]);
 		name = tmp[0];
-		if (autofree)
+		if (autofree) {
 			defer_free(tmp);
+		} else {
+			i = snprintf(buf, ARRAY_SIZE, "%s", tmp[0]);
+			events_free(tmp);
+			tmp = null;
+			if (i)
+				tmp = (char **)str_dup_ex(buf);
+		}
+	} else if (!str_is_empty((const char *)buf)) {
+		tmp = (char **)str_dup(buf);
+		name = (char *)tmp;
 	}
 
 	p = name;
@@ -129,33 +139,12 @@ int udp_send(udp_t packet, void *buf, int n) {
 	return m;
 }
 
-int async_recvfrom(int fd, void *buf, int n, udp_t *client) {
+int async_recvfrom(int fd, void *buf, int n, unsigned int flags) {
 	int m;
-	udp_t cl = null, packet = events_target(fd)->udp;
-	socklen_t client_len = sizeof(packet->addr);
 
-	while ((m = recvfrom(socket2fd(fd), buf, n, packet->flags, (struct sockaddr *)packet->addr, &client_len)) < 0
+	while ((m = recvfrom(socket2fd(fd), buf, n, flags, null, null)) < 0
 		&& os_geterror() == EAGAIN) {
 		async_wait(fd, 'r');
-	}
-
-	if (m > 0) {
-		errno = ENOMEM;
-		if (defer_free(cl = events_calloc(1, sizeof(struct udp_packet_s)))) {
-			cl->socket = fd;
-			cl->flags = packet->flags;
-			cl->nread = m;
-			memcpy((void *)cl->addr, packet->addr, sizeof(cl->addr));
-			cl->message = events_calloc(1, m + 1);
-			if (!is_empty(cl->message)) {
-				memcpy(cl->message, buf, m);
-				cl->message_set = true;
-				cl->type = DATA_UDP;
-				events_target(fd)->udp = cl;
-				*client = cl;
-				errno = 0;
-			}
-		}
 	}
 
 	return m;
