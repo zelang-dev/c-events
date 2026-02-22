@@ -14,6 +14,7 @@
 #endif
 
 #include <windows.h>
+#include <afunix.h>
 #include <compat/epoll.h>
 #include <compat/dirent.h>
 #include <compat/unistd.h>

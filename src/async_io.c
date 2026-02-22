@@ -7,9 +7,9 @@
 #	endif
 #endif
 
-fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
+fds_t async_bind(char *address, int port, int backlog, bool protocol) {
 	fds_t fd;
-	int proto, n = !proto_tcp ? str_subcount(address, ".") : 0;
+	int proto, n = !protocol ? str_subcount(address, ".") : 0;
 	char ipbuf[22] = {0};
 	char *ip = ipbuf;
 	struct sockaddr_in sa;
@@ -18,8 +18,8 @@ fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 
 	memset(&sa, 0, sizeof sa);
 	sa.sin_family = AF_INET;
-	if (!proto_tcp || (address != OS_NULL && !str_is(address, events_hostname()))) {
-		if (!proto_tcp && (port || backlog) && n == 3) {
+	if (!protocol || (address != OS_NULL && !str_is(address, events_hostname()))) {
+		if (!protocol && (port || backlog) && n == 3) {
 			ip = (char *)&backlog;
 		} else {
 			if ((he = async_gethostbyname(address)) == NULL) {
@@ -34,14 +34,14 @@ fds_t async_bind(char *address, int port, int backlog, bool proto_tcp) {
 	}
 
 	sa.sin_port = htons(port);
-	proto = proto_tcp ? SOCK_STREAM : SOCK_DGRAM;
-	if ((fd = socket(AF_INET, proto, (proto_tcp ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
+	proto = protocol ? SOCK_STREAM : SOCK_DGRAM;
+	if ((fd = socket(AF_INET, proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
 		errno = os_geterror();
 		return -1;
 	}
 
 	// set reuse flag for tcp
-	if (proto_tcp && getsockopt(fd, SOL_SOCKET, SO_TYPE, (void *)&n, &sn) >= 0) {
+	if (protocol && getsockopt(fd, SOL_SOCKET, SO_TYPE, (void *)&n, &sn) >= 0) {
 		n = 1;
 		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&n, sizeof n);
 	}
@@ -86,7 +86,7 @@ fds_t async_accept(fds_t fd, char *server, int *port) {
 	return cfd;
 }
 
-fds_t async_connect(char *hostname, int port, bool proto_tcp) {
+fds_t async_connect(char *hostname, int port, bool protocol) {
 	fds_t fd;
 	int proto, n = 0;
 	char ipbuf[22] = {0};
@@ -95,7 +95,7 @@ fds_t async_connect(char *hostname, int port, bool proto_tcp) {
 	socklen_t sn;
 	struct hostent *he = {0};
 
-	if (!proto_tcp || !str_is((const char *)hostname, events_hostname())) {
+	if (!protocol || !str_is((const char *)hostname, events_hostname())) {
 		if ((he = async_gethostbyname(hostname)) == NULL) {
 			errno = EDESTADDRREQ;
 			return -1;
@@ -103,15 +103,15 @@ fds_t async_connect(char *hostname, int port, bool proto_tcp) {
 		ip = (char *)he->h_addr;
 	}
 
-	proto = proto_tcp ? SOCK_STREAM : SOCK_DGRAM;
-	if ((fd = socket(AF_INET, proto, (proto_tcp ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
+	proto = protocol ? SOCK_STREAM : SOCK_DGRAM;
+	if ((fd = socket(AF_INET, proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
 		errno = os_geterror();
 		return -1;
 	}
 	events_set_nonblocking(fd);
 
 	// for udp
-	if (!proto_tcp) {
+	if (!protocol) {
 		n = 1;
 		setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char *)&n, sizeof n);
 	}
