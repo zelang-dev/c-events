@@ -132,6 +132,8 @@ struct _pthread_v {
 	jmp_buf jb;
 };
 
+typedef void (*pthread_func_t)(void *);
+typedef void (**pthread_cb_t)(void *);
 typedef struct _pthread_v *pthread_t;
 
 typedef struct pthread_barrier_t pthread_barrier_t;
@@ -200,7 +202,7 @@ static int pthread_once(pthread_once_t *o, void (*func)(void)) {
 		if (!state) {
 			if (!_InterlockedCompareExchange(o, 2, 0)) {
 				/* Success */
-				pthread_cleanup_push(_pthread_once_cleanup, o);
+				pthread_cleanup_push((pthread_func_t)_pthread_once_cleanup, o);
 				func();
 				pthread_cleanup_pop(0);
 
@@ -414,14 +416,14 @@ static int pthread_rwlock_tryrdlock(pthread_rwlock_t *l) {
 	/* Multiple writers exist? */
 	if ((uintptr_t)state & 14) return EBUSY;
 
-	if (_InterlockedCompareExchangePointer((void *)l, (void *)((uintptr_t)state + 16), state) == state) return 0;
+	if (_InterlockedCompareExchangePointer((volatile PVOID *)l, (void *)((uintptr_t)state + 16), state) == state) return 0;
 
 	return EBUSY;
 }
 
 static int pthread_rwlock_trywrlock(pthread_rwlock_t *l) {
 	/* Try to grab lock if it has no users */
-	if (!_InterlockedCompareExchangePointer((void *)l, (void *)1, NULL)) return 0;
+	if (!_InterlockedCompareExchangePointer((volatile PVOID *)l, (void *)1, NULL)) return 0;
 
 	return EBUSY;
 }
@@ -677,7 +679,7 @@ static int pthread_setcanceltype(int type, int *oldtype) {
 }
 
 static int pthread_create_wrapper(void *args) {
-	struct _pthread_v *tv = args;
+	struct _pthread_v *tv = (struct _pthread_v *)args;
 	int i, j;
 
 	_pthread_once_raw(&_pthread_tls_once, pthread_tls_init);
@@ -705,7 +707,7 @@ static int pthread_create_wrapper(void *args) {
 }
 
 static int pthread_create(pthread_t *th, pthread_attr_t *attr, void *(*func)(void *), void *arg) {
-	struct _pthread_v *tv = malloc(sizeof(struct _pthread_v));
+	struct _pthread_v *tv = (struct _pthread_v *)malloc(sizeof(struct _pthread_v));
 	unsigned ssize = 0;
 
 	if (!tv) return 1;
@@ -730,7 +732,7 @@ static int pthread_create(pthread_t *th, pthread_attr_t *attr, void *(*func)(voi
 	/* Make sure tv->h has value of -1 */
 	_ReadWriteBarrier();
 
-	tv->h = (HANDLE)_beginthreadex(NULL, ssize, pthread_create_wrapper, tv, 0, NULL);
+	tv->h = (HANDLE)_beginthreadex(NULL, ssize, (_beginthreadex_proc_type)pthread_create_wrapper, tv, 0, NULL);
 
 	/* Failed */
 	if (!tv->h) return 1;
@@ -1012,7 +1014,7 @@ static int pthread_key_create(pthread_key_t *key, void (*dest)(void *)) {
 	if (nmax > PTHREAD_KEYS_MAX) nmax = PTHREAD_KEYS_MAX;
 
 	/* No spare room anywhere */
-	d = realloc(_pthread_key_dest, nmax * sizeof(*d));
+	d = (pthread_cb_t)realloc(_pthread_key_dest, nmax * sizeof(*d));
 	if (!d) {
 		pthread_rwlock_unlock(&_pthread_key_lock);
 
@@ -1068,7 +1070,7 @@ static int pthread_setspecific(pthread_key_t key, const void *value) {
 
 	if (key >= t->keymax) {
 		int keymax = (key + 1) * 2;
-		void **kv = realloc(t->keyval, keymax * sizeof(void *));
+		void **kv = (void **)realloc(t->keyval, keymax * sizeof(void *));
 
 		if (!kv) return ENOMEM;
 
