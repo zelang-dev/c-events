@@ -14,6 +14,7 @@
 #endif
 
 #include <windows.h>
+#include <afunix.h>
 #include <compat/epoll.h>
 #include <compat/dirent.h>
 #include <compat/unistd.h>
@@ -100,6 +101,7 @@ typedef PADDRINFOA *addrinfo_t;
 typedef int id_t;
 
 #define write 	os_write
+#undef socketpair
 
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {

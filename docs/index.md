@@ -469,14 +469,18 @@ C_API int async_read2(int fd, void *buf, int n);
 C_API int async_write(int fd, void *buf, int n);
 
 /** Start/bind a ~network~ server listening on ~address~,
-`port` number, `backlog` count, with protocol, `proto_tcp` determents either TCP or UDP.
+`port` number, `backlog` count, with ~protocol~.
+Protocol either:
+- `1` for TCP
+- `0` for UDP
+- `-1` for ~Unix Domain Socket~ (UDS) aka `AF_UNIX`
 
-The ~address~ is a string version of a `host name` or `IP` address.
+The ~address~ is a string version of a `host name`, `IP` address, or `pathname` for UDS.
 If `host name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup.
 If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
 - Returns a `fd` to use with `async_accept()`. */
-C_API fds_t async_bind(char *address, int port, int backlog, bool proto_tcp);
+C_API fds_t async_bind(char *address, int port, int backlog, bool protocol);
 
 /** Sleep `current` task, until next `client` connection comes in from `fd` ~async_bind()~.
 
@@ -486,12 +490,15 @@ C_API fds_t async_bind(char *address, int port, int backlog, bool proto_tcp);
 Returns a `connected` ~client~ `fd`, SHOULD be used in an new `task` instance for handling.*/
 C_API fds_t async_accept(fds_t fd, char *server, int *port);
 
-/** Create a ~new~ connection to `hostname`, port, with protocol,
-`proto_tcp` determents either TCP or UDP.
+/** Create a ~new~ connection to `hostname`, port, with ~protocol~.
+Protocol either:
+- `1` for TCP
+- `0` for UDP
+- `-1` for PIPE/IPC socket `AF_UNIX`
 
-- Hostname can be an `ip` address or a `domain name`.
+- Hostname can be an `ip` address, a `domain name` or `pathname` for UDS.
 - If `domain name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup. */
-C_API fds_t async_connect(char *hostname, int port, bool proto_tcp);
+C_API fds_t async_connect(char *hostname, int port, bool protocol);
 
 /* Return `ip` address from `async_gethostbyname()` execution. */
 C_API char *gethostbyname_ip(struct hostent *host);

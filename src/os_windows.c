@@ -12,6 +12,7 @@
 #undef close
 #undef open
 #undef connect
+#undef socketpair
 #define SLASH '\\'
 #define DIR_SEP	';'
 #define IS_SLASH(c)	((c) == '/' || (c) == '\\')

@@ -231,6 +231,7 @@ struct events_fd_s {
 	events_cb callback;
 	void *cb_arg;
 	events_t *loop;
+	uds_t unix;
 	udp_t udp;
 	tls_s *tls;
 	tls_config_t *tls_config;
@@ -518,6 +519,12 @@ struct udp_packet_s {
 	ssize_t nread;
 	char *message;
 	struct sockaddr_storage addr[1];
+};
+
+struct af_unix_s {
+	data_types type;
+	int socket;
+	struct sockaddr_un addr[1];
 };
 
 void events_set_destroy(void);
