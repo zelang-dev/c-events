@@ -293,7 +293,7 @@ If `host name`, automatically calls `async_gethostbyname()` to preform a non-blo
 If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
 - Returns a `fd` to use with `async_accept()`. */
-C_API fds_t async_bind(char *address, int port, int backlog, bool protocol);
+C_API fds_t async_bind(char *address, int port, int backlog, int protocol);
 
 /** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
 
@@ -311,7 +311,7 @@ Protocol either:
 
 - Hostname can be an `ip` address, `domain name` or `pathname` for UDS.
 - If `domain name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup. */
-C_API fds_t async_connect(char *hostname, int port, bool protocol);
+C_API fds_t async_connect(char *hostname, int port, int protocol);
 
 /* Return `ip` address from `async_gethostbyname()` execution. */
 C_API char *gethostbyname_ip(struct hostent *host);

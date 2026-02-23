@@ -2,7 +2,6 @@
 #include "events_internal.h"
 
 int uds_connect(char *addr) {
-	udp_t packet = null;
 	uint32_t ip = 0, port = 0;
 	char *host = str_parseip(addr, &ip, &port, true);
 	int fd = socket2fd(async_connect(host, port, -1));
@@ -13,19 +12,23 @@ int uds_connect(char *addr) {
 }
 
 int uds_bind(char *addr, int backlog) {
-	udp_t packet = null;
 	uint32_t ip = 0, port = 0;
 	char *host = str_parseip(addr, &ip, &port, true);
 	int fd = socket2fd(async_bind(host, port, backlog, -1));
-	if (fd > 0)
+	if (fd > 0) {
+		defer(unlink, host);
 		defer_free(events_target(fd)->unix);
-
+	}
 	return fd;
 }
 
 EVENTS_INLINE int uds_accept(int fd, char *server) {
-	return socket2fd(async_accept(fd2socket(fd), server, null));
+	int cfd = socket2fd(async_accept(fd2socket(fd), server, null));
+	if (cfd > 0)
+		events_target(cfd)->unix = events_target(fd)->unix;
+	return cfd;
 }
+
 /*
 int async_sendto(int fd, void *buf, int n) {
 	int m;

@@ -3,39 +3,39 @@
 void *worker_client(param_t args) {
 	int server = 0;
 	char buf[10] = {0};
-    ASSERT_WORKER(($size(args) == 3));
+	ASSERT_TASK(($size(args) == 3));
 
     sleep_task(args[0].u_int);
-	ASSERT_WORKER(str_is("worker_client", args[1].char_ptr));
+	ASSERT_TASK(str_is("worker_client", args[1].char_ptr));
 
-	ASSERT_WORKER(is_pipe(server = uds_connect("unix://test.sock")));
-	ASSERT_WORKER((async_read(server, buf, sizeof(buf)) == 5));
-	ASSERT_WORKER(str_is("world", buf));
-	ASSERT_WORKER((async_write(server, "hello", 5) == 5));
+	ASSERT_TASK(socket_is_uds(server = uds_connect("unix://test.sock")));
+	ASSERT_TASK((async_read(server, buf, sizeof(buf)) == 5));
+	ASSERT_TASK(str_is("world", buf));
+	ASSERT_TASK((async_write(server, "hello", 5) == 5));
 	sleep_task(100);
 
     return args[2].char_ptr;
 }
 
-void worker_connected(int socket) {
+int worker_connected(int socket) {
 	char buf[10] = {0};
-	ASSERT_WORKER((async_write(socket, "world", 5) == 5));
-	ASSERT_WORKER((async_read(socket, buf, sizeof(buf)) == 5));
-    ASSERT_WORKER(str_is("hello", buf));
+	ASSERT_TRUE((async_write(socket, "world", 5) == 5));
+	ASSERT_TRUE((async_read(socket, buf, sizeof(buf)) == 5));
+	ASSERT_TRUE(str_is("hello", buf));
 
     return 0;
 }
 
-TEST(pipe_listen) {
-    int client, socket;
+TEST(uds_accept) {
+    int client = 0, socket;
 	uint32_t res = async_task(worker_client, 3, 200, "worker_client", "finish");
 
-    ASSERT_TRUE(socket_is_uds(socket = uds_bind("test.sock", 0)));
-    ASSERT_TRUE(is_pipe(client = uds_accept(socket, 128)));
-    ASSERT_FALSE(socket_is_udp(client));
+	ASSERT_TRUE(socket_is_uds(socket = uds_bind("test.sock", 0)));
+	ASSERT_FALSE(socket_is_uds(client));
+	ASSERT_TRUE(socket_is_uds(client = uds_accept(socket, null)));
 
 	ASSERT_FALSE(task_is_ready(res));
-	uds_handler(worker_connected, casting(client));
+	uds_handler((uds_unix_cb)worker_connected, client);
 	ASSERT_FALSE(task_is_ready(res));
 
 	while (!task_is_ready(res))
@@ -50,7 +50,7 @@ TEST(pipe_listen) {
 TEST(list) {
     int result = 0;
 
-    EXEC_TEST(pipe_listen);
+	EXEC_TEST(uds_accept);
 
     return result;
 }

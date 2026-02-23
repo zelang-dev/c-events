@@ -7,7 +7,7 @@
 #	endif
 #endif
 
-fds_t async_bind(char *address, int port, int backlog, bool protocol) {
+fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	fds_t fd;
 	int err, proto, n = !protocol ? str_subcount(address, ".") : 0;
 	char ipbuf[22] = {0};
@@ -21,6 +21,7 @@ fds_t async_bind(char *address, int port, int backlog, bool protocol) {
 	bool is_unix = !is_empty(unix);
 
 	if (!is_unix) {
+		trace;
 		memset(&sa, 0, sizeof sa);
 		sa.sin_family = AF_INET;
 		if (!protocol || (address != OS_NULL && !str_is(address, events_hostname()))) {
@@ -115,7 +116,7 @@ fds_t async_accept(fds_t fd, char *server, int *port) {
 	return cfd;
 }
 
-fds_t async_connect(char *hostname, int port, bool protocol) {
+fds_t async_connect(char *hostname, int port, int protocol) {
 	fds_t fd;
 	int err, proto, n = 0;
 	char ipbuf[22] = {0};
