@@ -231,7 +231,7 @@ struct events_fd_s {
 	events_cb callback;
 	void *cb_arg;
 	events_t *loop;
-	uds_t unix;
+	uds_t uds;
 	udp_t udp;
 	tls_s *tls;
 	tls_config_t *tls_config;

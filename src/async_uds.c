@@ -6,7 +6,7 @@ int uds_connect(char *addr) {
 	char *host = str_parseip(addr, &ip, &port, true);
 	int fd = socket2fd(async_connect(host, port, -1));
 	if (fd > 0)
-		defer_free(events_target(fd)->unix);
+		defer_free(events_target(fd)->uds);
 
 	return fd;
 }
@@ -17,7 +17,7 @@ int uds_bind(char *addr, int backlog) {
 	int fd = socket2fd(async_bind(host, port, backlog, -1));
 	if (fd > 0) {
 		defer(unlink, host);
-		defer_free(events_target(fd)->unix);
+		defer_free(events_target(fd)->uds);
 	}
 	return fd;
 }
@@ -25,7 +25,7 @@ int uds_bind(char *addr, int backlog) {
 EVENTS_INLINE int uds_accept(int fd, char *server) {
 	int cfd = socket2fd(async_accept(fd2socket(fd), server, null));
 	if (cfd > 0)
-		events_target(cfd)->unix = events_target(fd)->unix;
+		events_target(cfd)->uds = events_target(fd)->uds;
 	return cfd;
 }
 
@@ -55,7 +55,7 @@ int async_recvfrom(int fd, void *buf, int n, unsigned int flags) {
 */
 EVENTS_INLINE bool socket_is_uds(int socket) {
 	if (socket <= 0) return false;
-	uds_t uds = events_target(socket)->unix;
+	uds_t uds = events_target(socket)->uds;
 	return !is_empty(uds) && is_ptr_usable(uds) && data_type(uds) == DATA_UNIX;
 }
 

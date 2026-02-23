@@ -15,10 +15,10 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	struct sockaddr_in sa;
 	socklen_t sn;
 	struct hostent *he = {0};
-	uds_t unix = (protocol == -1)
+	uds_t uds = (protocol == -1)
 		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
 		: null;
-	bool is_unix = !is_empty(unix);
+	bool is_unix = !is_empty(uds);
 
 	if (!is_unix) {
 		trace;
@@ -47,7 +47,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 		proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
 		errno = os_geterror();
 		if (is_unix)
-			events_free(unix);
+			events_free(uds);
 		return -1;
 	}
 
@@ -58,11 +58,11 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	}
 
 	if (is_unix) {
-		strncpy(unix->addr->sun_path, address, sizeof(unix->addr->sun_path) - 1);
-		unix->addr->sun_family = AF_UNIX;
-		unix->socket = fd;
-		unix->type = DATA_UNIX;
-		err = bind(fd, (struct sockaddr *)unix->addr, sizeof(unix->addr));
+		strncpy(uds->addr->sun_path, address, sizeof(uds->addr->sun_path) - 1);
+		uds->addr->sun_family = AF_UNIX;
+		uds->socket = fd;
+		uds->type = DATA_UNIX;
+		err = bind(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
 	} else {
 		err = bind(fd, (struct sockaddr *)&sa, sizeof sa);
 	}
@@ -71,7 +71,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 		errno = os_geterror();
 		close(fd);
 		if (is_unix)
-			events_free(unix);
+			events_free(uds);
 		return -1;
 	}
 
@@ -79,7 +79,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 		listen(fd, backlog);
 
 	events_set_nonblocking(fd);
-	events_target(socket2fd(fd))->unix = unix;
+	events_target(socket2fd(fd))->uds = uds;
 	return fd;
 }
 
@@ -125,10 +125,10 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 	struct sockaddr_un u_sa = {0};
 	socklen_t sn;
 	struct hostent *he = {0};
-	uds_t unix = (protocol == -1)
+	uds_t uds = (protocol == -1)
 		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
 		: null;
-	bool is_unix = !is_empty(unix);
+	bool is_unix = !is_empty(uds);
 
 	if (!is_unix && (!protocol || !str_is((const char *)hostname, events_hostname()))) {
 		if ((he = async_gethostbyname(hostname)) == NULL) {
@@ -143,7 +143,7 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 		proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
 		errno = os_geterror();
 		if (is_unix)
-			events_free(unix);
+			events_free(uds);
 		return -1;
 	}
 	events_set_nonblocking(fd);
@@ -156,11 +156,11 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 
 	// start connecting
 	if (is_unix) {
-		strncpy(unix->addr->sun_path, hostname, sizeof(unix->addr->sun_path) - 1);
-		unix->addr->sun_family = AF_UNIX;
-		unix->socket= fd;
-		unix->type = DATA_UNIX;
-		err = connect(fd, (struct sockaddr *)unix->addr, sizeof(unix->addr));
+		strncpy(uds->addr->sun_path, hostname, sizeof(uds->addr->sun_path) - 1);
+		uds->addr->sun_family = AF_UNIX;
+		uds->socket= fd;
+		uds->type = DATA_UNIX;
+		err = connect(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
 	} else {
 		memset(&sa, 0, sizeof sa);
 		memmove(&sa.sin_addr, ip, 4);
@@ -172,7 +172,7 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 	if (err < 0 && (os_geterror() != EINPROGRESS && os_geterror() != EAGAIN)) {
 		close(fd);
 		if (is_unix)
-			events_free(unix);
+			events_free(uds);
 		return -1;
 	}
 
@@ -183,7 +183,7 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 	if (getpeername(fd,
 		(is_unix ? (struct sockaddr *)&u_sa : (struct sockaddr *)&sa),
 		&sn) >= 0) {
-		events_target(socket2fd(fd))->unix = unix;
+		events_target(socket2fd(fd))->uds = uds;
 		return fd;
 	}
 
@@ -194,7 +194,7 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 		errno = os_geterror();
 
 	if (is_unix)
-		events_free(unix);
+		events_free(uds);
 
 	close(fd);
 	return -1;
