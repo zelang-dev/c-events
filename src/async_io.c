@@ -9,47 +9,68 @@
 
 fds_t async_bind(char *address, int port, int backlog, bool protocol) {
 	fds_t fd;
-	int proto, n = !protocol ? str_subcount(address, ".") : 0;
+	int err, proto, n = !protocol ? str_subcount(address, ".") : 0;
 	char ipbuf[22] = {0};
 	char *ip = ipbuf;
 	struct sockaddr_in sa;
 	socklen_t sn;
 	struct hostent *he = {0};
+	uds_t unix = (protocol == -1)
+		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
+		: null;
+	bool is_unix = !is_empty(unix);
 
-	memset(&sa, 0, sizeof sa);
-	sa.sin_family = AF_INET;
-	if (!protocol || (address != OS_NULL && !str_is(address, events_hostname()))) {
-		if (!protocol && (port || backlog) && n == 3) {
-			ip = (char *)&backlog;
-		} else {
-			if ((he = async_gethostbyname(address)) == NULL) {
-				errno = EDESTADDRREQ;
-				return -1;
+	if (!is_unix) {
+		memset(&sa, 0, sizeof sa);
+		sa.sin_family = AF_INET;
+		if (!protocol || (address != OS_NULL && !str_is(address, events_hostname()))) {
+			if (!protocol && (port || backlog) && n == 3) {
+				ip = (char *)&backlog;
+			} else {
+				if ((he = async_gethostbyname(address)) == NULL) {
+					errno = EDESTADDRREQ;
+					return -1;
+				}
+				ip = (char *)he->h_addr;
 			}
-			ip = (char *)he->h_addr;
+
+			n = 0;
+			memmove(&sa.sin_addr, ip, 4);
 		}
 
-		n = 0;
-		memmove(&sa.sin_addr, ip, 4);
+		sa.sin_port = htons(port);
 	}
 
-	sa.sin_port = htons(port);
 	proto = protocol ? SOCK_STREAM : SOCK_DGRAM;
-	if ((fd = socket((protocol == -1 ? AF_UNIX : AF_INET),
+	if ((fd = socket((is_unix ? AF_UNIX : AF_INET),
 		proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
 		errno = os_geterror();
+		if (is_unix)
+			events_free(unix);
 		return -1;
 	}
 
 	// set reuse flag for tcp
-	if (protocol && getsockopt(fd, SOL_SOCKET, SO_TYPE, (void *)&n, &sn) >= 0) {
+	if (!is_unix && protocol && getsockopt(fd, SOL_SOCKET, SO_TYPE, (void *)&n, &sn) >= 0) {
 		n = 1;
 		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&n, sizeof n);
 	}
 
-	if (bind(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
+	if (is_unix) {
+		strncpy(unix->addr->sun_path, address, sizeof(unix->addr->sun_path) - 1);
+		unix->addr->sun_family = AF_UNIX;
+		unix->socket = fd;
+		unix->type = DATA_UNIX;
+		err = bind(fd, (struct sockaddr *)unix->addr, sizeof(unix->addr));
+	} else {
+		err = bind(fd, (struct sockaddr *)&sa, sizeof sa);
+	}
+
+	if (err < 0) {
 		errno = os_geterror();
 		close(fd);
+		if (is_unix)
+			events_free(unix);
 		return -1;
 	}
 
@@ -57,46 +78,58 @@ fds_t async_bind(char *address, int port, int backlog, bool protocol) {
 		listen(fd, backlog);
 
 	events_set_nonblocking(fd);
+	events_target(socket2fd(fd))->unix = unix;
 	return fd;
 }
 
 fds_t async_accept(fds_t fd, char *server, int *port) {
 	fds_t cfd;
 	int one;
-	struct sockaddr_in sa;
+	struct sockaddr_in sa = {0};
+	struct sockaddr_un u_sa = {0};
 	uchar *ip;
 	socklen_t len;
+	bool is_unix = socket_is_uds(socket2fd(fd));
 
 	async_wait(fd, 'r');
-	len = sizeof sa;
-	if ((cfd = accept(fd, (void *)&sa, &len)) < 0) {
+	len = is_unix ? sizeof(u_sa) : sizeof(sa);
+	if ((cfd = accept(fd, (is_unix ? (struct sockaddr *)&u_sa : (struct sockaddr *)&sa), &len)) < 0) {
 		errno = os_geterror();
 		return -1;
 	}
 
-	if (server) {
+	if (!is_unix && server) {
 		ip = (uchar *)&sa.sin_addr;
 		snprintf(server, 16, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+	} else if (is_unix && server) {
+		snprintf(server, 108, "%s", u_sa.sun_path);
 	}
 
 	if (port)
 		*port = ntohs(sa.sin_port);
 	events_set_nonblocking(cfd);
 	one = 1;
-	setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (char *)&one, sizeof one);
+	if (!is_unix)
+		setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (char *)&one, sizeof one);
+
 	return cfd;
 }
 
 fds_t async_connect(char *hostname, int port, bool protocol) {
 	fds_t fd;
-	int proto, n = 0;
+	int err, proto, n = 0;
 	char ipbuf[22] = {0};
 	char *ip = ipbuf;
 	struct sockaddr_in sa;
+	struct sockaddr_un u_sa = {0};
 	socklen_t sn;
 	struct hostent *he = {0};
+	uds_t unix = (protocol == -1)
+		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
+		: null;
+	bool is_unix = !is_empty(unix);
 
-	if (!protocol || !str_is((const char *)hostname, events_hostname())) {
+	if (!is_unix && (!protocol || !str_is((const char *)hostname, events_hostname()))) {
 		if ((he = async_gethostbyname(hostname)) == NULL) {
 			errno = EDESTADDRREQ;
 			return -1;
@@ -105,9 +138,11 @@ fds_t async_connect(char *hostname, int port, bool protocol) {
 	}
 
 	proto = protocol ? SOCK_STREAM : SOCK_DGRAM;
-	if ((fd = socket((protocol == -1 ? AF_UNIX : AF_INET),
+	if ((fd = socket((is_unix ? AF_UNIX : AF_INET),
 		proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
 		errno = os_geterror();
+		if (is_unix)
+			events_free(unix);
 		return -1;
 	}
 	events_set_nonblocking(fd);
@@ -119,28 +154,46 @@ fds_t async_connect(char *hostname, int port, bool protocol) {
 	}
 
 	// start connecting
-	memset(&sa, 0, sizeof sa);
-	memmove(&sa.sin_addr, ip, 4);
-	sa.sin_family = AF_INET;
-	sa.sin_port = htons(port);
-	if (connect(fd, (struct sockaddr *)&sa, sizeof sa) < 0
-		&& (os_geterror() != EINPROGRESS && os_geterror() != EAGAIN)) {
+	if (is_unix) {
+		strncpy(unix->addr->sun_path, hostname, sizeof(unix->addr->sun_path) - 1);
+		unix->addr->sun_family = AF_UNIX;
+		unix->socket= fd;
+		unix->type = DATA_UNIX;
+		err = connect(fd, (struct sockaddr *)unix->addr, sizeof(unix->addr));
+	} else {
+		memset(&sa, 0, sizeof sa);
+		memmove(&sa.sin_addr, ip, 4);
+		sa.sin_family = AF_INET;
+		sa.sin_port = htons(port);
+		err = connect(fd, (struct sockaddr *)&sa, sizeof sa);
+	}
+
+	if (err < 0 && (os_geterror() != EINPROGRESS && os_geterror() != EAGAIN)) {
 		close(fd);
+		if (is_unix)
+			events_free(unix);
 		return -1;
 	}
 
 	// wait for finish
 	async_wait(fd, 'w');
 
-	sn = sizeof sa;
-	if (getpeername(fd, (struct sockaddr *)&sa, &sn) >= 0)
+	sn = is_unix ? sizeof(u_sa) : sizeof(sa);
+	if (getpeername(fd,
+		(is_unix ? (struct sockaddr *)&u_sa : (struct sockaddr *)&sa),
+		&sn) >= 0) {
+		events_target(socket2fd(fd))->unix = unix;
 		return fd;
+	}
 
 	// report error
 	sn = sizeof n;
 	getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&n, &sn);
 	if (n == 0)
 		errno = os_geterror();
+
+	if (is_unix)
+		events_free(unix);
 
 	close(fd);
 	return -1;

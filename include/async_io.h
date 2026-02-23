@@ -145,7 +145,7 @@ typedef const struct sockaddr sockaddr_t;
 typedef struct udp_packet_s *udp_t;
 typedef void (*udp_packet_cb)(udp_t);
 typedef struct af_unix_s *uds_t;
-typedef void (*af_unix_cb)(uds_t);
+typedef client_cb uds_unix_cb;
 
 
 #ifndef null
@@ -288,7 +288,7 @@ Protocol either:
 - `0` for UDP
 - `-1` for ~Unix Domain Socket~ (UDS) aka `AF_UNIX`
 
-The ~address~ is a string version of a `host name`, `IP` address, or `pathname` for UDS.
+The ~address~ is string version of `host name`, `IP` address, or `pathname` for UDS.
 If `host name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup.
 If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
@@ -297,10 +297,10 @@ C_API fds_t async_bind(char *address, int port, int backlog, bool protocol);
 
 /** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
 
-- If `server` not NULL, it MUST be a buffer of `16 bytes` to hold remote IP address.
+- If `server` not NULL, MUST be buffer of `16 bytes` to hold remote IP address.
 - If `port` not NULL, it's filled with report port.
 
-Returns a `connected` ~client~ `fd`, SHOULD be used in an new `task` instance for handling.*/
+Returns a `connected` ~client~ `fd`, SHOULD be used in new `task` instance for handling.*/
 C_API fds_t async_accept(fds_t fd, char *server, int *port);
 
 /** Create a ~new~ connection to `hostname`, port, with ~protocol~.
@@ -309,7 +309,7 @@ Protocol either:
 - `0` for UDP
 - `-1` for ~Unix Domain Socket~ (UDS) aka `AF_UNIX`
 
-- Hostname can be an `ip` address, a `domain name` or `pathname` for UDS.
+- Hostname can be an `ip` address, `domain name` or `pathname` for UDS.
 - If `domain name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup. */
 C_API fds_t async_connect(char *hostname, int port, bool protocol);
 
@@ -395,6 +395,12 @@ C_API char *udp_message(udp_t);
 C_API ssize_t udp_length(udp_t);
 C_API unsigned int udp_flags(udp_t);
 C_API bool socket_is_udp(int socket);
+
+C_API int uds_connect(char *addr);
+C_API int uds_bind(char *addr, int backlog);
+C_API int uds_accept(int fd, char *server);
+C_API void uds_handler(uds_unix_cb connected, int client);
+C_API bool socket_is_uds(int socket);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */
