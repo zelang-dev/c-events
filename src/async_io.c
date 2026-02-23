@@ -21,7 +21,6 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	bool is_unix = !is_empty(uds);
 
 	if (!is_unix) {
-		trace;
 		memset(&sa, 0, sizeof sa);
 		sa.sin_family = AF_INET;
 		if (!protocol || (address != OS_NULL && !str_is(address, events_hostname()))) {

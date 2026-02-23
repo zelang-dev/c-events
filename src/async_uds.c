@@ -53,6 +53,7 @@ int async_recvfrom(int fd, void *buf, int n, unsigned int flags) {
 	return m;
 }
 */
+
 EVENTS_INLINE bool socket_is_uds(int socket) {
 	if (socket <= 0) return false;
 	uds_t uds = events_target(socket)->uds;
