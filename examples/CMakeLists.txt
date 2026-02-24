@@ -23,6 +23,7 @@ set(TARGET_LIST
 	inotify
 	events_watch
 	onchange
+	udp-dhcp
 )
 
 foreach (TARGET ${TARGET_LIST})

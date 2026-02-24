@@ -32,7 +32,7 @@ int udp_bind(char *addr, unsigned int flags) {
 	return fd;
 }
 
-void udp_with(int fd, char *addr, unsigned int flags) {
+void udp_to(int fd, char *addr, unsigned int flags) {
 	uint32_t ip = 0, port = 0;
 	char *host = str_parseip(addr, &ip, &port, false);
 	udp_t packet = events_target(fd)->udp;
@@ -84,11 +84,12 @@ int async_recvfrom(int fd, void *buf, int n, unsigned int flags) {
 
 udp_t udp_recv(int fd) {
 	int m;
-	char buf[Kb(32)] = {0};
+	char *ip, buf[Kb(48)] = {0};
 	udp_t client = null, packet = events_target(fd)->udp;
+	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
 	socklen_t client_len = sizeof(packet->addr);
 
-	while ((m = recvfrom(socket2fd(fd), buf, Kb(32), packet->flags, (struct sockaddr *)packet->addr, &client_len)) < 0
+	while ((m = recvfrom(socket2fd(fd), buf, sizeof(buf), packet->flags, (struct sockaddr *)sa, &client_len)) < 0
 		&& os_geterror() == EAGAIN) {
 		async_wait(fd, 'r');
 	}
@@ -100,6 +101,8 @@ udp_t udp_recv(int fd) {
 			client->socket = fd;
 			client->flags = packet->flags;
 			client->nread = m;
+			ip = (uchar *)&sa->sin_addr;
+			snprintf(client->ip4addr, 16, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 			memcpy((void *)client->addr, packet->addr, sizeof(client->addr));
 			client->message = events_calloc(1, m + 1);
 			if (!is_empty(client->message)) {
@@ -128,6 +131,15 @@ EVENTS_INLINE char *udp_message(udp_t packet) {
 
 EVENTS_INLINE unsigned int udp_flags(udp_t packet) {
 	return packet->flags;
+}
+
+EVENTS_INLINE char *udp_ip(udp_t packet) {
+	return packet->ip4addr;
+}
+
+EVENTS_INLINE int udp_broadcast_set(int fd) {
+	int on = 1;
+	return setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof(on));
 }
 
 EVENTS_INLINE ssize_t udp_length(udp_t packet) {

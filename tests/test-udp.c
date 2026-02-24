@@ -12,7 +12,7 @@ void *worker_client(param_t args) {
 	ASSERT_TASK(socket_is_udp(client = udp_bind("127.0.0.1:7777", 0)));
 	sleep_task(200);
 
-	udp_with(client, "udp://127.0.0.2:9999", 0);
+	udp_to(client, "udp://127.0.0.2:9999", 0);
 	ASSERT_TASK((async_sendto(client, "hello", 5) == 5));
 	ASSERT_TASK(((nread = async_recvfrom(client, buf, sizeof(buf), 0)) == 5));
 	ASSERT_TASK(str_is("world", buf));

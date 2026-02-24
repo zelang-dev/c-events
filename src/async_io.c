@@ -667,3 +667,11 @@ EVENTS_INLINE uintptr_t spawn_pid(execinfo_t *child) {
 EVENTS_INLINE bool spawn_is_finish(execinfo_t *child) {
 	return !is_ptr_usable(child) || !is_ptr_usable(child->context) || task_is_terminated(child->context);
 }
+
+static EVENTS_INLINE void *_getentropy(param_t args) {
+	return casting(getentropy(args[0].object, args[1].max_size));
+}
+
+EVENTS_INLINE int async_getentropy(void *buf, size_t buflen) {
+	return await_for(queue_work(events_pool(), _getentropy, 2, buf, casting(buflen))).integer;
+}

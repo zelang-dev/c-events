@@ -64,6 +64,13 @@
 #	include <os_unix.h>
 #endif
 
+/*
+ * Solaris 11.3 adds getentropy(2), but defines the function in sys/random.h
+ */
+#if defined(__sun)
+#include <sys/random.h>
+#endif
+
 #if defined(_MSC_VER)
 #   define EVENTS_INLINE __forceinline
 #elif defined(__GNUC__)
@@ -168,6 +175,10 @@ typedef client_cb uds_unix_cb;
 
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {
+#endif
+
+#if !defined(__sun)
+C_API int getentropy(void *buf, size_t buflen);
 #endif
 
 C_API uint32_t inotify_mask(inotify_t *);
@@ -382,7 +393,7 @@ C_API bool spawn_is_finish(execinfo_t *child);
 
 C_API int udp_bind(char *addr, unsigned int flags);
 C_API int udp_connect(char *addr);
-C_API void udp_with(int fd, char *addr, unsigned int flags);
+C_API void udp_to(int fd, char *addr, unsigned int flags);
 
 C_API int udp_send(udp_t, void *buf, int n);
 C_API udp_t udp_recv(int fd);
@@ -394,6 +405,8 @@ C_API int async_recvfrom(int fd, void *buf, int n, unsigned int flags);
 C_API char *udp_message(udp_t);
 C_API ssize_t udp_length(udp_t);
 C_API unsigned int udp_flags(udp_t);
+C_API char *udp_ip(udp_t packet);
+C_API int udp_broadcast_set(int fd);
 C_API bool socket_is_udp(int socket);
 
 C_API int uds_connect(char *addr);
@@ -401,6 +414,8 @@ C_API int uds_bind(char *addr, int backlog);
 C_API int uds_accept(int fd, char *server);
 C_API void uds_handler(uds_unix_cb connected, int client);
 C_API bool socket_is_uds(int socket);
+
+C_API int async_getentropy(void *buf, size_t buflen);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

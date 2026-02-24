@@ -1663,7 +1663,8 @@ EVENTS_INLINE values_t await_for(uint32_t id) {
 }
 
 EVENTS_INLINE bool task_is_ready(uint32_t id) {
-	return task_result_get(id)->is_ready;
+	results_data_t ready = task_result_get(id);
+	return ready->is_ready || ready->is_terminated;
 }
 
 EVENTS_INLINE uint32_t task_id(void) {

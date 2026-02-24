@@ -107,6 +107,7 @@ typedef int id_t;
 extern "C" {
 #endif
 
+C_API BOOLEAN NTAPI SystemFunction036(PVOID Buffer, ULONG BufferLength);
 C_API int os_create_pipe(LPCSTR lpName, HANDLE *outRead, HANDLE *outWrite);
 C_API int os_open(const char *path, ...);
 C_API int os_pipe(int fildes[2]);

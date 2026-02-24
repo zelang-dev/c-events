@@ -517,7 +517,7 @@ struct udp_packet_s {
 	unsigned int flags;
 	bool message_set;
 	ssize_t nread;
-	char *message;
+	char *message, ip4addr[16];
 	struct sockaddr_storage addr[1];
 };
 

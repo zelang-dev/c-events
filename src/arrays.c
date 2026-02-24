@@ -854,7 +854,10 @@ char *str_parseip(char *name, uint32_t *ip, int *port, bool autofree) {
 	}
 
 	*ip = *(uint32_t *)addr;
-	return  autofree ? tmp[0] : (char *)tmp;
+	if (is_empty(tmp) && autofree)
+		return name;
+
+	return  autofree && !is_empty(tmp) ? tmp[0] : (char *)tmp;
 }
 
 static EVENTS_INLINE char *uri_dup(const void *src, size_t len) {
