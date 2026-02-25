@@ -1,4 +1,4 @@
-name: armv7, aarch64, riscv64
+name: armv7, aarch64, riscv64, ppc64le, s390x
 
 on:
   pull_request:
@@ -19,6 +19,10 @@ jobs:
             arch: aarch64
           - target: riscv64
             arch: riscv64
+          - target: ppc64v2
+            arch: ppc64le
+          - target: s390x
+            arch: s390x
     steps:
       - uses: actions/checkout@v4
       - uses: uraimo/run-on-arch-action@v3
