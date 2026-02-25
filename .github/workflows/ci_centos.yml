@@ -18,7 +18,6 @@ jobs:
       - name: Prepare
         run: |
           dnf install git make cmake gcc gcc-c++ binutils glibc-devel valgrind-devel valgrind autoconf libtool bison automake libxml2-devel libatomic pkg-config openssl-devel sudo which -y
-          pkg-config openssl-devel
       - name: Configure & build
         run: |
             mkdir build
