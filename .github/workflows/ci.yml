@@ -14,15 +14,13 @@ jobs:
         include:
           - target: amd64
             flags: -m64
-          - target: x86
-            flags: -m32
     steps:
       - uses: actions/checkout@v4
       - name: Prepare
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update -q -y
-          sudo apt-get install -y gcc-multilib g++-multilib libc6-dbg libc6-dbg:i386 libssl-dev:i386
+          sudo apt-get install -y gcc-multilib g++-multilib libc6-dbg libc6-dbg:i386
       - name: Configure & build
         run: |
             mkdir build
@@ -40,19 +38,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, Win32]
+        arch: [x64]
     steps:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.arch }}
-      - uses: egor-tensin/vs-shell@v2
-        with:
-           arch: Win32
-      - name: Build openssl with vcpkg
-        if: ${{ matrix.arch == 'Win32' }}
-        run: |
-            C:\vcpkg\vcpkg install --recurse openssl --triplet x86-windows-static
-        shell: cmd
       - uses: actions/checkout@v4
       - name: Configure & build
         run: |
@@ -68,7 +58,7 @@ jobs:
 
   build-macos:
     name: macOS
-    runs-on: macos-14
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - name: Configure & build
