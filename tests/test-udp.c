@@ -12,7 +12,7 @@ void *worker_client(param_t args) {
 	ASSERT_TASK(socket_is_udp(client = udp_bind("127.0.0.1:7777", 0)));
 	sleep_task(200);
 
-	udp_to(client, "udp://127.0.0.2:9999", 0);
+	udp_to(client, "udp://127.0.0.1:9999", 0);
 	ASSERT_TASK((async_sendto(client, "hello", 5) == 5));
 	ASSERT_TASK(((nread = async_recvfrom(client, buf, sizeof(buf), 0)) == 5));
 	ASSERT_TASK(str_is("world", buf));
@@ -32,7 +32,7 @@ TEST(udp_recv) {
 	udp_t client = null;
 	uint32_t res = async_task(worker_client, 3, 1000, "worker_client", "finish");
 	ASSERT_FALSE(socket_is_udp(server));
-	ASSERT_TRUE(socket_is_udp(server = udp_bind("127.0.0.2:9999", 0)));
+	ASSERT_TRUE(socket_is_udp(server = udp_bind("127.0.0.1:9999", 0)));
 
 	ASSERT_FALSE(task_is_ready(res));
 	ASSERT_TRUE((data_type(client = udp_recv(server)) == DATA_UDP));

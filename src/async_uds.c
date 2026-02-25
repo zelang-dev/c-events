@@ -2,7 +2,8 @@
 #include "events_internal.h"
 
 int uds_connect(char *addr) {
-	uint32_t ip = 0, port = 0;
+	uint32_t ip = 0;
+	int port = 0;
 	char *host = str_parseip(addr, &ip, &port, true);
 	int fd = socket2fd(async_connect(host, port, -1));
 	if (fd > 0)
@@ -12,7 +13,8 @@ int uds_connect(char *addr) {
 }
 
 int uds_bind(char *addr, int backlog) {
-	uint32_t ip = 0, port = 0;
+	uint32_t ip = 0;
+	int port = 0;
 	char *host = str_parseip(addr, &ip, &port, true);
 	int fd = socket2fd(async_bind(host, port, backlog, -1));
 	if (fd > 0) {

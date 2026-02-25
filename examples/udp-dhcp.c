@@ -50,7 +50,7 @@ char *make_discover_msg(char *base, size_t len) {
     // OPTIONS
     // - magic cookie
     base[236] = 99;
-    base[237] = 130;
+    base[237] = 127;
     base[238] = 83;
     base[239] = 99;
 

@@ -3,7 +3,8 @@
 
 int udp_connect(char *addr) {
 	udp_t packet = null;
-	uint32_t ip = 0, port = 0;
+	uint32_t ip = 0;
+	int port = 0;
 	char *host = str_parseip(addr, &ip, &port, true);
 	int fd = socket2fd(async_connect(host, port, false));
 	if (fd > 0
@@ -18,7 +19,8 @@ int udp_connect(char *addr) {
 
 int udp_bind(char *addr, unsigned int flags) {
 	udp_t packet = null;
-	uint32_t ip = 0, port = 0;
+	uint32_t ip = 0;
+	int port = 0;
 	char *host = str_parseip(addr, &ip, &port, true);
 	int fd = socket2fd(async_bind(host, port, ip, false));
 	if (fd > 0
@@ -33,14 +35,15 @@ int udp_bind(char *addr, unsigned int flags) {
 }
 
 void udp_to(int fd, char *addr, unsigned int flags) {
-	uint32_t ip = 0, port = 0;
+	uint32_t ip = 0;
+	int port = 0;
 	char *host = str_parseip(addr, &ip, &port, false);
 	udp_t packet = events_target(fd)->udp;
 
 	packet->flags = flags;
 	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
 
-	memset(sa, 0, sizeof sa);
+	memset(packet->addr, 0, sizeof(packet->addr));
 	memmove(&sa->sin_addr, &ip, 4);
 	sa->sin_family = AF_INET;
 	sa->sin_port = htons(port);
@@ -51,7 +54,7 @@ void udp_to(int fd, char *addr, unsigned int flags) {
 int async_sendto(int fd, void *buf, int n) {
 	int m;
 	udp_t packet = events_target(fd)->udp;
-	socklen_t client_len = sizeof(packet->addr);
+	socklen_t client_len = sizeof(sockaddr_t);
 
 	while ((m = sendto(socket2fd(fd), (const char *)buf, n, packet->flags, (sockaddr_t *)packet->addr, client_len)) < 0
 		&& os_geterror() == EAGAIN) {
@@ -84,7 +87,8 @@ int async_recvfrom(int fd, void *buf, int n, unsigned int flags) {
 
 udp_t udp_recv(int fd) {
 	int m;
-	char *ip, buf[Kb(48)] = {0};
+	uchar *ip;
+	char buf[Kb(48)] = {0};
 	udp_t client = null, packet = events_target(fd)->udp;
 	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
 	socklen_t client_len = sizeof(packet->addr);

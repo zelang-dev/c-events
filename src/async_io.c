@@ -63,7 +63,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 		uds->type = DATA_UNIX;
 		err = bind(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
 	} else {
-		err = bind(fd, (struct sockaddr *)&sa, sizeof sa);
+		err = bind(fd, (struct sockaddr *)&sa, sizeof(sa));
 	}
 
 	if (err < 0) {
