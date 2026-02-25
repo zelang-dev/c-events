@@ -22,7 +22,7 @@ jobs:
         run: |
             mkdir build
             cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Debug
+            cmake .. -DCMAKE_BUILD_TYPE=Debug -DOPENSSL_ROOT_DIR=/usr/local
             cmake --build .
       - name: Run tests
         run: |
