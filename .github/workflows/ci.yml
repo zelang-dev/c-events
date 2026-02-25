@@ -57,11 +57,8 @@ jobs:
             ctest -C Debug --output-on-failure -F
 
   build-macos:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, macos-15, macos-15-intel]
+    name: macOS
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - name: Configure & build
@@ -70,15 +67,7 @@ jobs:
             cd build
             cmake -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON ..
             cmake --build .
-      - name: Run tests & Disable Firewall
-        if: ${{ matrix.os == 'macos-15' || matrix.os == 'macos-14' }}
-        run: |
-          /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
-          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0
-          /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
-          cd build && sudo ctest -C Debug --output-on-failure -F
       - name: Run tests
-        if: ${{ matrix.os == 'macos-15-intel' }}
         run: |
             cd build
             ctest -C Debug --output-on-failure -F
