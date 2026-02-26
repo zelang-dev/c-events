@@ -37,6 +37,8 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y openssl libssl-dev build-essential qemu-user qemu-user-binfmt ${{ matrix.config.toolchain }}
+      - name: list include
+        run: sudo ls -l /usr/include/
       - name: Configure & build with ${{ matrix.config.cc }}
         run: |
             sudo ln -s /usr/include/${{ matrix.config.toolchain }}/openssl/opensslconf.h /usr/include/openssl/opensslconf.h
