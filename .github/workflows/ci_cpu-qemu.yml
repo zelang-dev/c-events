@@ -1,4 +1,4 @@
-name: qemu cpu chipsets
+name: Qemu multi-cpu
 
 on:
   pull_request:
@@ -32,13 +32,15 @@ jobs:
           - {target: ppc64 (u64 slots),   toolchain: gcc-powerpc64-linux-gnu,     cc: powerpc64-linux-gnu-gcc,    qemu: qemu-ppc64    }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install qemu and ${{ matrix.config.toolchain }}
         run: |
-          sudo apt-get update -q -y
-          sudo apt-get install -q -y --no-install-recommends openssl libssl-dev cmake build-essential qemu-user qemu-user-binfmt ${{ matrix.config.toolchain }}
+          sudo apt-get update -y
+          sudo apt-get install -y openssl libssl-dev build-essential qemu-user qemu-user-binfmt ${{ matrix.config.toolchain }}
       - name: Configure & build with ${{ matrix.config.cc }}
         run: |
+            sudo ln -s /usr/include/x86_64-linux-gnu/openssl/opensslconf.h /usr/include/openssl/opensslconf.h
+            sudo ln -s /usr/include/x86_64-linux-gnu/openssl/configuration.h /usr/include/openssl/configuration.h
             mkdir build
             cd build
             cmake -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON -DCMAKE_C_COMPILER=${{ matrix.config.cc }} ..
