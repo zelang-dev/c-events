@@ -1,6 +1,6 @@
 # events
 
-[![Windows & Ubuntu & macOS x86_64](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml)
+[![Windows & Ubuntu & macOS x86_64](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml) [![CentOS Stream 9+](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml)
 
 A *tiny*, *lightning fast* **event loop**, utilizing single interface for **epoll**, **kqueue**, **iocp**.
 
