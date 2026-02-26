@@ -32,7 +32,7 @@ jobs:
           - {target: ppc64 (u64 slots),   toolchain: gcc-powerpc64-linux-gnu,     cc: powerpc64-linux-gnu-gcc,    qemu: qemu-ppc64    }
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: Install qemu and ${{ matrix.config.toolchain }}
         run: |
           sudo apt-get update -q -y
