@@ -16,7 +16,12 @@ jobs:
             cd build
             cmake -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON ..
             cmake --build .
+      - name: Disable Firewall
+        run: |
+          /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0
+          /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
       - name: Run tests
         run: |
             cd build
-            ctest -C Debug --output-on-failure -F
+            ctest -C Debug --output-on-failure -F -V
