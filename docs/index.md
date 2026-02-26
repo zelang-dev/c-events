@@ -1,6 +1,6 @@
 # events
 
-[![Windows & Ubuntu & macOS x86_64](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml) [![CentOS Stream 9+](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml)
+[![Windows & Ubuntu & macOS x86_64](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml) [![CentOS Stream 9+](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml) [![armv7, aarch64, riscv64](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu.yml) [![Apple M1](https://github.com/zelang-dev/c-events/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci-macos.yml) [![ppc64le](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-ppc64le.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-ppc64le.yml) [![s390x](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-s390x.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-s390x.yml)
 
 A *tiny*, *lightning fast* **event loop**, utilizing single interface for **epoll**, **kqueue**, **iocp**.
 
