@@ -35,11 +35,14 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install qemu and ${{ matrix.config.toolchain }}
         run: |
-          sudo apt update
-          sudo apt install openssl libssl-dev qemu-user qemu-user-binfmt ${{ matrix.config.toolchain }} -y
-      - name: Configure with ${{ matrix.config.cc }}
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y --no-install-recommends openssl libssl-dev cmake build-essential qemu-user qemu-user-binfmt ${{ matrix.config.toolchain }}
+      - name: Configure & build with ${{ matrix.config.cc }}
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON -DCMAKE_C_COMPILER=${{ matrix.config.cc }}
+            mkdir build
+            cd build
+            cmake -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON -DCMAKE_C_COMPILER=${{ matrix.config.cc }} ..
+            cmake --build .
       - name: Run tests
         run: |
             cd build
