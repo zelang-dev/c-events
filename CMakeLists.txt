@@ -102,7 +102,7 @@ find_package(opentls QUIET)
 if(NOT opentls_FOUND)
     FetchContent_Declare(opentls
         URL https://github.com/zelang-dev/opentls/archive/refs/tags/4.1.19.zip
-      #  URL_MD5 ddb0aba138f2438e3d8a012ab9c68d82
+		URL_MD5 ce85e0ae3c03677a8631034d1181daec
     )
     if(WIN32)
         add_definitions(-DOPENSSL_MSVC_STATIC_RT=TRUE)
