@@ -308,7 +308,7 @@ static FORCEINLINE int32_t atomic_add32(atomic32_t *val, int32_t add) {
 	return atomic_fetch_add_explicit_32(val, add, memory_order_relaxed) + add;
 }
 static FORCEINLINE int atomic_cas32_acquire(atomic32_t *dst, int32_t val, int32_t ref) {
-	return atomic_compare_exchange_weak_explicit_32(dst, &ref, val, memory_order_acquire, memory_order_relaxed);
+	return atomic_compare_exchange_weak_explicit_32(dst, (uint32_t *)&ref, val, memory_order_acquire, memory_order_relaxed);
 }
 static FORCEINLINE void atomic_store32_release(atomic32_t *dst, int32_t val) {
 	atomic_store_explicit_32(dst, val, memory_order_release);
@@ -328,7 +328,7 @@ static FORCEINLINE void *atomic_exchange_ptr_acquire(atomic_ptr_t *dst, void *va
 	return (void *)atomic_exchange_explicit(dst, val, memory_order_acquire);
 }
 static FORCEINLINE int atomic_cas_ptr(atomic_ptr_t *dst, void *val, void *ref) {
-	return (int)atomic_swap(dst, &ref, val);
+	return (int)atomic_swap(dst, (atomic_ptr_t *)&ref, val);
 }
 
 #if defined(__TINYC__) || !defined(_WIN32)

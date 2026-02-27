@@ -47,14 +47,21 @@ void *main_main(param_t args) {
 }
 
 int main(int argc, char **argv) {
-	events_init(1024);
-	async_task(main_main, 0);
-	waitgroup_t wg = waitgroup(10);
-	ASSERT_FALSE(is_waitgroup(wg));
+	if (!events_init(1024)) {
+		async_task(main_main, 0);
+		waitgroup_t wg = waitgroup(10);
+		ASSERT_FALSE(is_waitgroup(wg));
 
-	events_t *loop = events_thread_init();
-	async_run(loop);
-	events_destroy(loop);
-
+		events_t *loop = events_thread_init();
+		async_run(loop);
+		events_destroy(loop);
+	} else {
+#if __APPLE__ || __MACH__
+		perror("todo: Apple M1"CLR_LN);
+#else
+		perror("main!"CLR_LN);
+		return -1;
+#endif
+	}
 	return 0;
 }

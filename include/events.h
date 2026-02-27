@@ -13,6 +13,9 @@
 #	endif
 #	include <mach/clock.h>
 #	include <mach/mach.h>
+# 	include <mach/task.h>
+# 	include <TargetConditionals.h>
+# 	include <AvailabilityMacros.h>
 typedef unsigned long __sigset_t;
 #elif !defined(_WIN32)
 #	define _GNU_SOURCE
@@ -21,6 +24,14 @@ typedef unsigned long __sigset_t;
 /* for SA_ONSTACK */
 #	define _XOPEN_SOURCE 600
 #endif
+
+# if defined(__linux__) && !defined(__ANDROID__)
+#  include <pty.h>
+# elif defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
+#  include <util.h>
+# elif defined(__FreeBSD__) || defined(__DragonFly__)
+#  include <libutil.h>
+# endif
 
 #include <limits.h>
 #include <errno.h>

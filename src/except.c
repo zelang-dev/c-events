@@ -68,7 +68,7 @@ static char uncaught_message[ARRAY_SIZE] = {0};
 static char uncaught_infunction[ARRAY_SIZE/6] = {0};
 static char uncaught_infile[ARRAY_SIZE/2] = {0};
 static char uncaught_inline[ARRAY_SIZE / 10] = {0};
-static char except_program_name[ARRAY_SIZE] = {0};
+static char except_program_name[MAXPATHLEN] = {0};
 
 ex_setup_func exception_setup_func = null;
 ex_unwind_func exception_unwind_func = null;
@@ -705,11 +705,11 @@ void ex_signal_setup(void) {
 #if !defined(_WIN32) && defined(USE_DEBUG)
 	 /* store off program path so we can use it later */
 #ifdef __APPLE__
-	uint32_t size = ARRAY_SIZE - 1;
+	uint32_t size = MAXPATHLEN - 1;
 	if (_NSGetExecutablePath(except_program_name, &size) != 0)
 		perror("_NSGetExecutablePath");
 #else
-	if (readlink("/proc/self/exe", except_program_name, ARRAY_SIZE) == -1)
+	if (readlink("/proc/self/exe", except_program_name, MAXPATHLEN) == -1)
 		perror("readlink");
 #endif
 #endif
