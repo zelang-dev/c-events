@@ -13,6 +13,9 @@
 #	endif
 #	include <mach/clock.h>
 #	include <mach/mach.h>
+# 	include <mach/task.h>
+# 	include <TargetConditionals.h>
+# 	include <AvailabilityMacros.h>
 typedef unsigned long __sigset_t;
 #elif !defined(_WIN32)
 #	define _GNU_SOURCE

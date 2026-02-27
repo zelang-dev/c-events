@@ -110,7 +110,7 @@ int os_init(void) {
 
 	if (hIoCompPort == -1) {
 #if __APPLE__ && __MACH__
-		int status, rtoken;
+		int status, rtoken;	
 		status = notify_register_file_descriptor("com.events.io.port", &hIoCompPort, 0, &hIoCompPort_token);
 		if (status != NOTIFY_STATUS_OK) {
 			errno = status;
@@ -128,7 +128,6 @@ int os_init(void) {
 
 	memset((char *)fdTable, 0, ioTableSize * sizeof(FD_TABLE));
 	os_signal_handlers(false);
-
 	return 0;
 }
 
