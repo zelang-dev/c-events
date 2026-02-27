@@ -1,4 +1,4 @@
-name: Apple M1
+name: Apple M2
 on:
   pull_request:
     branches: [ main ]
@@ -7,7 +7,7 @@ on:
 jobs:
   build-macos:
     name: macOS
-    runs-on: macos-latest
+    runs-on: macos-15-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: Configure & build
@@ -24,4 +24,4 @@ jobs:
       - name: Run tests
         run: |
             cd build
-            ctest -C Debug --output-on-failure -F -V
+            sudo ctest -C Debug --output-on-failure -F -V

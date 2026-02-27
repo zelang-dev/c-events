@@ -186,7 +186,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 #ifdef _WIN32
 	_setmaxstdio(8192);
 	WSADATA wsaData;
-	WSAStartup(MAKEWORD(2, 0), &wsaData);
+	WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif
 	assert(!EVENTS_IS_INITD);
 	assert(max_fd > 0);
