@@ -49,10 +49,6 @@ typedef struct {
 	inotify_t buffer[1];
 	char path[PATH_MAX];
 } watch_dir_t;
-
-#if __APPLE__ && __MACH__
-#   include <sys/ucontext.h>
-#endif
 #else
 #	include <sys/epoll.h>
 #	include <sys/sendfile.h>

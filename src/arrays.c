@@ -1223,7 +1223,7 @@ char *str_itoa(int64_t x) {
 	*buf = '-'; // Always write
 	buf += neg; // But advance only if negative
 
-#if defined(__APPLE__) || defined(__MACH__)
+#if defined(__APPLE__) || defined(__MACH__) || defined(__s390__) || defined(__s390x__)
 	x = llabs(x);
 #else
 	x = abs(x);

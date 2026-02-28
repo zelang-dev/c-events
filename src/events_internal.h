@@ -352,7 +352,7 @@ struct coro_events_s {
 	void *r[4]; /* r4-r11 */
 	void *lr;
 	void *sp;
-#elif (defined(_M_ARM64) || defined(__aarch64__)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
+#elif (defined(_M_ARM64) || defined(__aarch64__) || defined(__arm64__)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
 	void *x[12]; /* x19-x30 */
 	void *sp;
 	void *lr;
@@ -574,6 +574,11 @@ void *events_malloc(size_t size);
 void *events_realloc(void *ptr, size_t size);
 void events_free(void *ptr);
 
+void task_done(void);
+void task_awaitable(void);
+void task_func(void);
+tasks_t *task_derive(void *memory, size_t heapsize, bool is_thread);
+void task_switch(tasks_t *co);
 uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
 void thread_result_set(os_request_t *p, void *res);
 uint32_t task_push(tasks_t *t);

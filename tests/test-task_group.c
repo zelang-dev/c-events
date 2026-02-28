@@ -53,12 +53,8 @@ int main(int argc, char **argv) {
 		async_run(loop);
 		events_destroy(loop);
 	} else {
-#if __APPLE__ || __MACH__
-		perror("todo: Apple M1"CLR_LN);
-#else
-		perror("main!"CLR_LN);
+		perror("main");
 		return -1;
-#endif
 	}
 	return 0;
 }

@@ -219,7 +219,7 @@ C_API void os_cpumask_set(os_cpumask *mask, uint32_t i);
 C_API int os_affinity(os_thread_t t, const os_cpumask *mask);
 
 /** Get the current thread descriptor. */
-C_API uintptr_t os_self();
+C_API uintptr_t os_self(void);
 
 /** Suspend the thread for the specified time. */
 C_API int os_sleep(uint32_t msec);

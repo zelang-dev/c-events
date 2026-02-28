@@ -86,7 +86,7 @@ void g(int i) {
     } guarded;
 }
 
-void f() {
+void f(void) {
 	guard {
 		defer(f_print, NULL);
 		puts("Calling g.");

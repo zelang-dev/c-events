@@ -5,7 +5,7 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
 endif()
 
 project(events
-	VERSION 0.6.0
+	VERSION 0.6.1
 	DESCRIPTION "A tiny, lightning fast, event loop, using either `epoll`, `kqueue`, or `wepoll` and `iocp` for Windows."
     LANGUAGES C
 )
@@ -38,6 +38,7 @@ set(ev_sources
 	${CMAKE_CURRENT_SOURCE_DIR}/src/events.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/except.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/asm.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/async_io.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/async_udp.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/async_uds.c
@@ -60,11 +61,12 @@ endif()
 
 if(UNIX)
     if(APPLE)
-        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wno-format -D USE_DEBUG -D ENABLE_ASSERTS ")
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -D USE_DEBUG -D ENABLE_ASSERTS")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wabi -D _DARWIN_UNLIMITED_SELECT=1 -D _DARWIN_USE_64_BIT_INODE=1")
     else()
-        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -rdynamic -no-pie -Wno-format -D USE_DEBUG -D ENABLE_ASSERTS ")
+		set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -rdynamic -no-pie -D USE_DEBUG -D ENABLE_ASSERTS ")
     endif()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-format -fno-strict-aliasing -Wstrict-prototypes")
 else()
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /D USE_DEBUG /D ENABLE_ASSERTS ")
     if($ENV{Platform} MATCHES x86)

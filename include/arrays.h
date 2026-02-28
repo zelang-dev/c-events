@@ -7,6 +7,9 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <sys/types.h>
+#if defined(__s390__) || defined(__s390x__)
+#	include <endian.h>
+#endif
 
 #ifndef C_API
  /* Public API qualifier. */

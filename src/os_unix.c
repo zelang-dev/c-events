@@ -74,29 +74,6 @@ static void grow_ioTable(void) {
 		oldTableSize * sizeof(FD_TABLE));
 }
 
-static void os_sigpipehandler(int signo) {
-	;
-}
-
-static void install_signal_handler(int signo, const struct sigaction *act, int force) {
-	struct sigaction sa;
-
-	sigaction(signo, NULL, &sa);
-	if (force || sa.sa_handler == SIG_DFL) {
-		sigaction(signo, act, NULL);
-	}
-}
-
-static void os_signal_handlers(int force) {
-	struct sigaction sa;
-
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-
-	sa.sa_handler = os_sigpipehandler;
-	install_signal_handler(SIGPIPE, &sa, force);
-}
-
 int os_init(void) {
 	if (os_initialized)
 		return 0;
@@ -110,7 +87,7 @@ int os_init(void) {
 
 	if (hIoCompPort == -1) {
 #if __APPLE__ && __MACH__
-		int status, rtoken;	
+		int status, rtoken;
 		status = notify_register_file_descriptor("com.events.io.port", &hIoCompPort, 0, &hIoCompPort_token);
 		if (status != NOTIFY_STATUS_OK) {
 			errno = status;
@@ -126,8 +103,7 @@ int os_init(void) {
 		}
 	}
 
-	memset((char *)fdTable, 0, ioTableSize * sizeof(FD_TABLE));
-	os_signal_handlers(false);
+	memset((char *)fdTable, 0, (size_t)(ioTableSize * sizeof(FD_TABLE)));
 	return 0;
 }
 

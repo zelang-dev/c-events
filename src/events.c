@@ -32,6 +32,7 @@ static array_t events_fsevents_tasks = null;
 static int events_execute(events_t * loop, int max_wait);
 static tasks_t *atexit_ctr_c_task = null;
 sys_events_t sys_event = {0};
+void(fastcall * coro_swap)(tasks_t *, tasks_t *) = 0;
 
 typedef struct {
 	malloc_func local_malloc;
@@ -103,7 +104,6 @@ struct task_group_s {
 static void __thrd_init(bool is_main, uint32_t thread_id);
 static int __thrd_wrapper(void *arg);
 static int __main_wrapper(void *arg);
-static void task_switch(tasks_t *co);
 static void task_scheduler_switch(void);
 static void task_sleep_switch(void);
 static int tasks_schedulering(bool do_io);
@@ -172,7 +172,7 @@ EVENTS_INLINE void events_update_polling(events_t *loop, int fd, int events) {
 	events_target(fd)->events = events & EVENTS_READWRITE;
 }
 
-EVENTS_INLINE int events_init(int max_fd) {
+int events_init(int max_fd) {
 	atomic_thread_fence(memory_order_seq_cst);
 	if (events_shutdown_set || events_startup_set)
 		return 0;
@@ -193,7 +193,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 
 	events_ssl_init();
 #ifdef USE_DEBUG
-	cout("%s, %s"CLR_LN, events_uname(), events_hostname());
+	fprintf(stderr, "%s, %s"CLR_LN, events_uname(), events_hostname());
 #endif
 	if (os_init() == -1) {
 		return -1;
@@ -234,7 +234,7 @@ EVENTS_INLINE int events_init(int max_fd) {
 
 	int i;
 	__thrd_init(true, 0);
-	sys_event.local = (events_deque_t **)events_realloc(sys_event.local,
+	sys_event.local = (events_deque_t **)events_realloc((void *)sys_event.local,
 		(sys_event.cpu_count + 1) * sizeof(sys_event.local[0]));
 
 	for (i = 0; i <= sys_event.cpu_count; i++)
@@ -1056,13 +1056,13 @@ static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
 }
 
 /* called only if tasks_t func returns */
-static EVENTS_INLINE void task_done(void) {
+void task_done(void) {
 	active_task()->halt = true;
 	active_task()->status = TASK_DEAD;
 	task_scheduler_switch();
 }
 
-static void task_awaitable(void) {
+void task_awaitable(void) {
 	tasks_t *co = active_task();
 	param_t args = (param_t)co->args;
 	tasks_result_set(co, co->func(args));
@@ -1071,7 +1071,7 @@ static void task_awaitable(void) {
 	co->garbage = null;
 }
 
-static EVENTS_INLINE void task_func(void) {
+void task_func(void) {
 	task_awaitable();
 	task_done(); /* called only if coroutine function returns */
 }
@@ -1304,7 +1304,7 @@ static EVENTS_INLINE void __stdcall fiber_thunk(void *func) {
 }
 
 /* Windows fibers do not allow users to supply their own memory */
-static EVENTS_INLINE tasks_t *task_derive(void *memory, uint32_t heapsize, bool is_thread) {
+tasks_t *task_derive(void *memory, size_t heapsize, bool is_thread) {
 	active_task();
 	coroutine_t *co = (coroutine_t *)memory;
 	if (!is_thread)
@@ -1313,7 +1313,7 @@ static EVENTS_INLINE tasks_t *task_derive(void *memory, uint32_t heapsize, bool 
 	return (tasks_t *)co;
 }
 
-EVENTS_INLINE void task_switch(tasks_t *handle) {
+void task_switch(tasks_t *handle) {
 	tasks_t *coro_previous_handle = __thrd()->active_handle;
 	__thrd()->active_handle = handle;
 	__thrd()->active_handle->status = TASK_RUNNING;
@@ -1332,7 +1332,7 @@ static void _spring_board(int ignored) {
 }
 
 /* Switch to specified coroutine. */
-static void task_switch(tasks_t *co) {
+void task_switch(tasks_t *co) {
 	if (!sigsetjmp(((coroutine_t *)active_task())->sig_ctx, 0)) {
 		tasks_t *task_previous_handle = __thrd()->active_handle;
 		__thrd()->active_handle = co;
@@ -1346,7 +1346,7 @@ static void task_switch(tasks_t *co) {
 	}
 }
 
-static tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
+tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
 	(void)is_thread;
 	coroutine_t *contxt = (coroutine_t *)co;
 	void *memory = (unsigned char *)co + sizeof(_results_data_t);
@@ -1388,15 +1388,15 @@ static tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
 	return (tasks_t *)contxt;
 }
 
-#else
-static tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
+#elif defined(USE_UCONTEXT)
+tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
 	(void)is_thread;
 	ucontext_t *ctx = (ucontext_t *)co;
 	size_t size = stack_size + sizeof(_results_data_t);
 	size -= sizeof(ucontext_t);
 
 	/* Initialize ucontext. */
-	if (getcontext(ctx)) {
+	if (getcontext(ctx) == -1) {
 		perror("getcontext failed!");
 		return NULL;
 	}
@@ -1410,7 +1410,7 @@ static tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
 }
 
 /* Switch to specified coroutine. */
-static EVENTS_INLINE void task_switch(tasks_t *co) {
+void task_switch(tasks_t *co) {
 	tasks_t *task_previous_handle = __thrd()->active_handle;
 	__thrd()->active_handle = co;
 	__thrd()->active_handle->status = TASK_RUNNING;
@@ -1421,7 +1421,21 @@ static EVENTS_INLINE void task_switch(tasks_t *co) {
 	if (swapcontext((ucontext_t *)__thrd()->current_handle, (ucontext_t *)__thrd()->active_handle))
 		perror("Error! `swapcontext`");
 }
+#else
+void task_switch(tasks_t *co) {
+#if defined(_M_X64) || defined(_M_IX86)
+	register tasks_t *task_previous_handle = __thrd()->active_handle;
+#else
+	tasks_t *task_previous_handle = __thrd()->active_handle;
+#endif
+	__thrd()->active_handle = co;
+	__thrd()->active_handle->status = TASK_RUNNING;
+	__thrd()->current_handle = task_previous_handle;
+	if (__thrd()->current_handle->status != TASK_SLEEPING)
+		__thrd()->current_handle->status = TASK_NORMAL;
 
+	coro_swap(__thrd()->active_handle, task_previous_handle);
+}
 #endif
 
 void events_abort(const char *message, const char *file, int line, const char *function) {
@@ -1558,14 +1572,18 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	}
 
 #if !defined(_WIN32) && !defined(USE_FIBER)
-	else if (is_thread && heapsize <= Kb(32))
+	if (is_thread && heapsize <= Kb(32))
 		heapsize = Kb(32) + heapsize;
 #endif
 
 	heapsize = _tasks_align_forward(heapsize + sizeof(tasks_t), 16); /* Stack size should be aligned to 16 bytes. */
-	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL
-		|| (co = task_derive(memory, heapsize, is_thread))== NULL) {
-		perror("Error! calloc/task_derive");
+	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL) {
+		perror("Error! calloc");
+		return NULL;
+	}
+
+	if ((co = task_derive(memory, heapsize, is_thread)) == NULL) {
+		perror("Error! task_derive");
 		return NULL;
 	}
 

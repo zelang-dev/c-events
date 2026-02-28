@@ -1,14 +1,13 @@
 #include "events_internal.h"
 
-static void(fastcall *coro_swap)(tasks_t *, tasks_t *) = 0;
-static EVENTS_INLINE void task_done(void);
-static void task_awaitable(void);
-
+#ifdef USE_ASSEMBLY /* USE_ASSEMBLY */
 #ifdef MPROTECT
 alignas(4096)
 #else
 section(text)
 #endif
+
+void(fastcall *coro_swap)(tasks_t *, tasks_t *) = 0;
 
 #if ((defined(__clang__) || defined(__GNUC__)) && defined(__i386__)) || (defined(_MSC_VER) && defined(_M_IX86))
 /* ABI: fastcall */
@@ -37,7 +36,6 @@ static void coro_init(void) {
 }
 #else
 #ifdef MPROTECT
-#include <unistd.h>
 #include <sys/mman.h>
 #endif
 
@@ -161,7 +159,6 @@ static const unsigned char coro_swap_function[4096] = {
 };
 
 #ifdef MPROTECT
-#include <unistd.h>
 #include <sys/mman.h>
 #endif
 
@@ -201,7 +198,6 @@ tasks_t *task_derive(void *memory, size_t size, bool is_thread) {
 #elif defined(__clang__) || defined(__GNUC__)
 #if defined(__arm__)
 #ifdef MPROTECT
-#include <unistd.h>
 #include <sys/mman.h>
 #endif
 
@@ -241,7 +237,7 @@ tasks_t *task_derive(void *memory, size_t size, bool is_thread) {
 
 	return co;
 }
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 static const uint32_t coro_swap_function[1024] = {
 	0x910003f0, /* mov x16,sp           */
 	0xa9007830, /* stp x16,x30,[x1]     */
@@ -287,7 +283,6 @@ static void coro_init(void) {
 }
 #else
 #ifdef MPROTECT
-#include <unistd.h>
 #include <sys/mman.h>
 #endif
 
@@ -315,7 +310,7 @@ tasks_t *task_derive(void *memory, size_t size, bool is_thread) {
 		stack_top &= ~((size_t)15);
 		size_t *p = (size_t *)(stack_top);
 		handle[0] = (size_t)p;              /* x16 (stack pointer) */
-		handle[1] = (size_t)coro_func;        /* x30 (link register) */
+		handle[1] = (size_t)task_func;        /* x30 (link register) */
 		handle[12] = (size_t)p;             /* x29 (frame pointer) */
 
 #if defined(_WIN32) && !defined(NO_TIB)
@@ -702,3 +697,4 @@ tasks_t *task_derive(void *memory, size_t size, bool is_thread) {
 
 #endif
 #endif
+#endif /* USE_ASSEMBLY */
