@@ -32,7 +32,7 @@ static array_t events_fsevents_tasks = null;
 static int events_execute(events_t * loop, int max_wait);
 static tasks_t *atexit_ctr_c_task = null;
 sys_events_t sys_event = {0};
-void(fastcall * coro_swap)(tasks_t *, tasks_t *) = 0;
+C_API void(fastcall * coro_swap)(tasks_t *, tasks_t *);
 
 typedef struct {
 	malloc_func local_malloc;

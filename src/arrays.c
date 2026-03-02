@@ -1216,14 +1216,42 @@ static EVENTS_INLINE void utoa2p_ex(uint64_t x, char *s) {
 	memcpy(s, &t, sizeof(uint16_t));
 }
 
+#if defined(__s390__) || defined(__s390x__)
+static char *___str_itoa(int value, char *result, int base) {
+	// check that the base if valid
+	if (base < 2 || base > 36) { *result = '\0'; return result; }
+
+	char *ptr = result, *ptr1 = result, tmp_char;
+	int tmp_value;
+
+	do {
+		tmp_value = value;
+		value /= base;
+		*ptr++ = "zyxwvutsrqponmlkjihgfedcba9876543210123456789abcdefghijklmnopqrstuvwxyz"[35 + (tmp_value - value * base)];
+	} while (value);
+
+	// Apply negative sign
+	if (tmp_value < 0) *ptr++ = '-';
+	*ptr-- = '\0';
+	while (ptr1 < ptr) {
+		tmp_char = *ptr;
+		*ptr-- = *ptr1;
+		*ptr1++ = tmp_char;
+	}
+	return result;
+}
+#endif
+
 char *str_itoa(int64_t x) {
+#if defined(__s390__) || defined(__s390x__)
+	return ___str_itoa((int)x, scope_local()->scrape, 10);
+#else
 	char *buf = scope_local()->scrape;
 	// Handle negatives
 	bool neg = x < 0;
 	*buf = '-'; // Always write
 	buf += neg; // But advance only if negative
-
-#if defined(__APPLE__) || defined(__MACH__) || defined(__s390__) || defined(__s390x__)
+#if defined(__APPLE__) || defined(__MACH__)
 	x = llabs(x);
 #else
 	x = abs(x);
@@ -1249,6 +1277,7 @@ char *str_itoa(int64_t x) {
 	buf[len] = '\0';
 
 	return buf;
+#endif
 }
 
 EVENTS_INLINE void str_free(void *ptr) {

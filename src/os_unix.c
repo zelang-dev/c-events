@@ -803,7 +803,7 @@ EVENTS_INLINE int os_join(os_thread_t t, uint32_t timeout_ms, int *exit_code) {
 	return 0;
 }
 
-EVENTS_INLINE uintptr_t os_self() {
+EVENTS_INLINE uintptr_t os_self(void) {
 	return (uintptr_t)pthread_self();
 }
 

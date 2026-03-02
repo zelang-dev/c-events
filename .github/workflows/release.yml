@@ -16,12 +16,11 @@ jobs:
       matrix:
         config:
           - {target: x64,     build: win64 }
-          - {target: Win32,   build: win32 }
     steps:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.config.target }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure
         run: |
             mkdir build
@@ -58,7 +57,7 @@ jobs:
             - {target: amd64, flags: -m64 }
          #   - {target: i386, flags: -m32 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Prepare
         run: |
           sudo dpkg --add-architecture i386
@@ -95,15 +94,22 @@ jobs:
     container: quay.io/centos/centos:stream9
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Prepare
         run: |
-          dnf install git make cmake gcc gcc-c++ binutils glibc-devel valgrind autoconf libtool bison automake libxml2-devel sudo which rpmdevtools rpmlint -y
+          dnf install git make cmake gcc gcc-c++ binutils glibc-devel autoconf libtool bison automake libxml2-devel libatomic pkg-config openssl-devel sudo which -y
+      - name: Find openssl
+        run: |
+            whereis openssl
+            export OPENSSL_ROOT_DIR=/usr/bin/openssl
+            export OPENSSL_INCLUDE_DIR=/usr/include/openssl
+            export OPENSSL_CRYPTO_LIBRARY=/usr/lib64/libcrypto.so.3
+            export OPENSSL_SSL_LIBRARY=/usr/lib64/libssl.so.3
       - name: Configure & build
         run: |
             mkdir build
             cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release -D BUILD_TESTS=OFF -D BUILD_EXAMPLES=OFF
+            cmake .. -DCMAKE_BUILD_TYPE=Debug -DOPENSSL_ROOT_DIR=/usr/bin/openssl -DOPENSSL_INCLUDE_DIR=/usr/include/openssl -DOPENSSL_CRYPTO_LIBRARY=/usr/lib64/libcrypto.so.3 -DOPENSSL_SSL_LIBRARY=/usr/lib64/libssl.so.3
             cmake --build .
       - name: Create RPM Installer from Release
         run: |
@@ -120,13 +126,16 @@ jobs:
           file_glob: true
 
   build-macos:
-    name: macOS
+    runs-on: ${{ matrix.os }}
     permissions:
         contents: write
         packages: write
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15-intel]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure & build
         run: |
             mkdir build
@@ -178,7 +187,7 @@ jobs:
             mkdir -p built/Package
           install: |
             apt-get update -q -y
-            apt-get install -q -y --no-install-recommends cmake build-essential
+            apt-get install -q -y --no-install-recommends openssl libssl-dev cmake build-essential
           env: |
             # Valgrind on arm will fail if the stack size is larger than 8MB.
             # Set QEMUs stack size to 8MB since Github runners use 16MB default.
