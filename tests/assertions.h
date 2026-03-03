@@ -34,8 +34,8 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
 #  define COLOR_RESET
 #endif
 
-#define PRINT_ERR(...) printf(COLOR_RED "Failure" COLOR_RESET __VA_ARGS__)
-#define PRINT_OK(...) printf(COLOR_GREEN "Passed" COLOR_RESET __VA_ARGS__)
+#define PRINT_ERR(...) fprintf(stderr, COLOR_RED "Failure" COLOR_RESET __VA_ARGS__)
+#define PRINT_OK(...) fprintf(stderr, COLOR_GREEN "Passed" COLOR_RESET __VA_ARGS__)
 
 #define ASSERT_EQ_(expected, actual, cmp, print_op) do { \
     if (!(cmp)) \
@@ -95,7 +95,7 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
 
 #define ASSERT_STR(expected, actual) ASSERT_EQ_(expected, actual, strcmp(expected, actual) == 0, "%s")
 #define ASSERT_PTR(expected, actual) ASSERT_EQ_(expected, actual, memcmp(expected, actual, sizeof(actual)) == 0, "%p")
-#define ASSERT_UEQ(expected, actual) ASSERT_EQ_((long unsigned)expected, actual, expected == actual, "%lu")
+#define ASSERT_UEQ(expected, actual) ASSERT_EQ_((long unsigned)expected, (long unsigned)actual, expected == actual, "%lu")
 #define ASSERT_DOUBLE(expected, actual) ASSERT_EQ_(expected, actual, expected == actual, "%f")
 #define ASSERT_EQ(expected, actual) ASSERT_EQ_((int)expected, (int)actual, expected == actual, "%d")
 #define ASSERT_EQU(expected, actual) ASSERT_ERR_((int)expected, actual, expected == actual, "%d")
@@ -104,7 +104,7 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
 #define ASSERT_XEQ(expected, actual) ASSERT_EQ_((long)(expected), (long)(actual), expected == actual, "%ld")
 #define ASSERT_NULL(actual) ASSERT_EQ_(NULL, actual, NULL == actual, "%p")
 #define ASSERT_NOTNULL(actual) ASSERT_NEQ_(NULL, actual, NULL != actual, "%p")
-#define ASSERT_TRUE(actual) ASSERT_EQ_(true, actual, true == actual, "%c")
+#define ASSERT_TRUE(actual) ASSERT_EQ_(true, actual, true == actual, "%d")
 #define ASSERT_FALSE(actual) ASSERT_EQ_(false, actual, false == actual, "%d")
 #define ASSERT_THREAD(actual) ASSERT_THREAD_EQ(true, actual, true == actual, "%c")
 #define ASSERT_TASK(actual) ASSERT_THREAD_ABORT(true, actual, true == actual, "%c")

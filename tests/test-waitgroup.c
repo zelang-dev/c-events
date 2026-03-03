@@ -15,7 +15,7 @@ void *worker(param_t args) {
 TEST(waitfor) {
     int cid[30], i;
 
-    waitgroup_t wg = waitgroup(10);
+	waitgroup_t wg = waitgroup(10);
 	ASSERT_TRUE(is_waitgroup(wg));
 
 	for (i = 0; i < 30; i++) {
@@ -28,7 +28,7 @@ TEST(waitfor) {
 	ASSERT_FALSE(is_waitgroup(wg));
     ASSERT_EQ($size(wgr), 2);
 
-	ASSERT_EQ(32, results_for(cid[3]).integer);
+	ASSERT_EQ(32, results_for(cid[3]).max_size);
     ASSERT_STR("hello world", results_for(cid[2]).char_ptr);
 
     return 0;

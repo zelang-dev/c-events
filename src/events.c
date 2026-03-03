@@ -1911,11 +1911,13 @@ waitgroup_t waitgroup(uint32_t capacity) {
 		wg->count = active_cores;
 
 		for (i = 0; i < active_cores; i++) {
-			events_deque_t *q = sys_event.local[sys_event.cpu_index[i].u_int];
-			if ($capacity(q->jobs) < resized) {
-				atomic_lock($lock(q->jobs));
-				$reserve(q->jobs, resized + 1);
-				atomic_unlock($lock(q->jobs));
+			events_deque_t *q = sys_event.local[sys_event.cpu_index[i].max_size];
+			if (is_ptr_usable(q) && is_data(q->jobs)) {
+				if ($capacity(q->jobs) < resized) {
+					atomic_lock($lock(q->jobs));
+					$reserve(q->jobs, resized + 1);
+					atomic_unlock($lock(q->jobs));
+				}
 			}
 		}
 	}

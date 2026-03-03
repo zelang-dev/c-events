@@ -7,16 +7,17 @@ char *buf = "blablabla";
 char *path = "write.temp";
 
 void *worker3(param_t args) {
-	ASSERT_TASK(($size(args) == 2));
+	ASSERT_TASK(($size(args) == 3));
+
 	sleep_task(args[0].u_int);
-	ASSERT_TASK((args[0].u_int == 500));
+	ASSERT_TASK((args[0].max_size == 500));
 	ASSERT_TASK(str_is("worker", args[1].char_ptr));
 	return "finish";
 }
 
 TEST(fs_open) {
 	char text[2048];
-	uint32_t res = async_task(worker3, 2, 500, "worker");
+	uint32_t res = async_task(worker3, 3, 500, "worker", casting(9999));
 	ASSERT_EQ(fs_open("does_not_exist", O_RDONLY, 0), TASK_ERRED);
 	int fd = fs_open(__FILE__, O_RDONLY, 0);
 	ASSERT_TRUE((fd > 0));
