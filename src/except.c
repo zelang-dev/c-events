@@ -1033,9 +1033,10 @@ void scope_unwind(ex_memory_t *scope) {
 	if (is_data(array)) {
 		foreach_back(arr in array) {
 			if (is_ptr_usable(arr.object)) {
+				data_types type = data_type(arr.object);
 				if (is_data(arr.object)) {
 					$delete(arr.object);
-				} else if (data_type(arr.object) == DATA_DEFER) {
+				} else if (type == DATA_DEFER) {
 					defer_ran = true;
 					defer_t *clean = (defer_t *)arr.object;
 					clean->type = DATA_INVALID;
@@ -1044,7 +1045,7 @@ void scope_unwind(ex_memory_t *scope) {
 					else
 						clean->_func(clean->value);
 					events_free(clean);
-				} else if (data_type(arr.object) == DATA_OBJ) {
+				} else if (type == DATA_OBJ || type == DATA_HASHTABLE || type == DATA_MAP) {
 					((data_object_t *)arr.object)->dtor(arr.object);
 				} else if (!is_empty(arr.object)) {
 					events_free(arr.object);
@@ -1186,6 +1187,11 @@ void guard_reset(ex_guard_t *block, void *scope, ex_setup_func set, ex_unwind_fu
 
 		events_free(block);
 	}
+}
+
+EVENTS_INLINE int exit_scope(void) {
+	scope_unwind(get_scope());
+	return 0;
 }
 
 /* General error handling for any condition, passing callbacks.

@@ -62,6 +62,10 @@ typedef enum {
 	DATA_FUNC,
 	DATA_ARRAY,
 	DATA_TUPLE,
+	DATA_RANGE,
+	DATA_RANGE_CHAR,
+	DATA_HASHTABLE,
+	DATA_MAP,
 	DATA_DEFER,
 	DATA_TASKGROUP,
 	DATA_DEQUE,
@@ -114,7 +118,7 @@ typedef union {
 	intptr_t **array_int;
 	uintptr_t **array_uint;
 	data_func_t func;
-} values_t, *tuple_t, *param_t, *array_t;
+} values_t, *tuple_t, *param_t, *array_t, *range_t;
 typedef void (*launch_func_t)(param_t);
 
 typedef struct {
@@ -203,6 +207,10 @@ C_API bool is_data(void *);
 C_API bool is_taskgroup(void *);
 C_API bool is_waitgroup(void *);
 C_API bool is_ptr_usable(void *self);
+
+C_API range_t rangeing(int start, int stop, int steps);
+C_API range_t range(int start, int stop);
+C_API range_t range_char(const char *text);
 
 #ifndef $append
 #define $append(arr, value) 			data_append((array_t)arr, (void *)value)

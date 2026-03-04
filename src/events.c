@@ -1007,9 +1007,10 @@ static void deferred_unwind(array_t garbage) {
 	if (is_data(garbage)) {
 		foreach_back(arr in garbage) {
 			if (is_ptr_usable(arr.object)) {
+				data_types type = data_type(arr.object);
 				if (is_data(arr.object)) {
 					$delete(arr.object);
-				} else if (data_type(arr.object) == DATA_DEFER) {
+				} else if (type == DATA_DEFER) {
 					defer_t *clean = (defer_t *)arr.object;
 					clean->type = DATA_INVALID;
 					if (clean->is_ptr)
@@ -1017,7 +1018,7 @@ static void deferred_unwind(array_t garbage) {
 					else
 						clean->_func(clean->value);
 					events_free(clean);
-				} else if (data_type(arr.object) == DATA_OBJ) {
+				} else if (type == DATA_OBJ || type == DATA_HASHTABLE || type == DATA_MAP) {
 					((data_object_t *)arr.object)->dtor(arr.object);
 				} else if (!is_empty(arr.object)) {
 					events_free(arr.object);

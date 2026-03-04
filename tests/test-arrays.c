@@ -25,7 +25,8 @@ TEST(arrays) {
 	ASSERT_STR("hello world", d[3].char_ptr);
 	ASSERT_UEQ(246, ((intptr_func_t)d[5].func)(d[4].max_size));
 	ASSERT_STR("four", d[6].char_ptr);
-	ASSERT_UEQ(600, d[7].max_size);
+	num = d[7].max_size;
+	ASSERT_UEQ(num, 600);
 
 	d[4].char_ptr = data;
 	ASSERT_STR("hello again!", d[4].char_ptr);
@@ -46,10 +47,57 @@ TEST(arrays) {
 	return 0;
 }
 
+TEST(range) {
+	int x = 0, i = 10;
+	range_t list = range(10, 15);
+	ASSERT_TRUE(($size(list) == 5));
+	foreach(item in list) {
+		ASSERT_UEQ(x, iitem);
+		ASSERT_UEQ(i, item.max_size);
+		i++;
+		x++;
+	}
+
+	return 0;
+}
+
+TEST(rangeing) {
+	int x = 0, i = 5;
+	range_t list = rangeing(5, 10, 2);
+	ASSERT_TRUE(($size(list) == 3));
+	foreach(item in list) {
+		printf("%zu ", item.max_size);
+		ASSERT_UEQ(x, iitem);
+		ASSERT_UEQ(i, item.max_size);
+		i = i + 2;
+		x++;
+	}
+
+	return 0;
+}
+
+TEST(range_char) {
+	const char *hello = "hello world";
+	int i = 0;
+	range_t list = range_char("hello world");
+	ASSERT_TRUE(($size(list) == strlen(hello)));
+	foreach(item in list) {
+		printf("%c ", item.schar);
+		ASSERT_UEQ(i, iitem);
+		ASSERT_CHAR(*hello++, item.schar);
+		i++;
+	}
+
+	return exit_scope();
+}
+
 TEST(list) {
 	int result = 0;
 
 	EXEC_TEST(arrays);
+	EXEC_TEST(range);
+	EXEC_TEST(rangeing);
+	EXEC_TEST(range_char);
 
 	return result;
 }

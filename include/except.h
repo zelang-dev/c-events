@@ -396,6 +396,7 @@ C_API ex_memory_t *scope_init(void);
 C_API void *scope_arena(void);
 C_API void scope_unwind(ex_memory_t *scope);
 C_API void scope_request_erred(os_request_t *p, ex_context_t err);
+C_API int exit_scope(void);
 
 /* Returns an ~protected~ memory pointer from ~current~ `scoped` context, aka `RAII`.
 

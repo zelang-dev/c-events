@@ -32,7 +32,6 @@ const data_values_t data_values_empty[1] = {0};
 
 #define array_address(vec) (&((array_metadata_t *)(vec))[-1])
 #define array_base(ptr) ((void *)&((array_metadata_t *)(ptr))[1])
-#define array_set_context(vec, ptr) array_address(vec)->context = (ptr)
 #define array_set_capacity(vec, size) array_address(vec)->capacity = (size)
 #define array_set_size(vec, _size) array_address(vec)->size = (_size)
 #define array_set_type(vec, _type) array_address(vec)->type = (_type)
@@ -78,6 +77,44 @@ const data_values_t data_values_empty[1] = {0};
 #   define va_copy(dest, src) (dest) = (src)
 #  endif
 #endif
+
+range_t rangeing(int start, int stop, int steps) {
+	range_t arr = array();
+	int i, n = stop - start;
+	size_t cv_sz___;
+	for (i = start; i < stop; i = i + steps)
+		$append(arr, (intptr_t)i);
+
+	cv_sz___ = array_length(arr);
+	array_grow((arr), (cv_sz___));
+	array_set_type(arr, DATA_RANGE);
+	defer(data_delete, arr);
+	return arr;
+}
+
+range_t range(int start, int stop) {
+	range_t arr = array();
+	int i, n = stop - start;
+	array_grow((arr), (n + 1));
+	for (i = start; i < stop; i++)
+		$append(arr, (intptr_t)i);
+
+	array_set_type(arr, DATA_RANGE);
+	defer(data_delete, arr);
+	return arr;
+}
+
+range_t range_char(const char *text) {
+	range_t arr = array();
+	size_t i, len = strlen(text);
+	array_grow((arr), (len + 1));
+	for (i = 0; i < len; i++)
+		$append(arr, (uintptr_t)*text++);
+
+	array_set_type(arr, DATA_RANGE_CHAR);
+	defer(data_delete, arr);
+	return arr;
+}
 
 EVENTS_INLINE size_t data_size(array_t v) {
 	return array_length(v);
