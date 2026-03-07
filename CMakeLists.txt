@@ -5,7 +5,7 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
 endif()
 
 project(events
-	VERSION 0.6.4
+	VERSION 0.7.0
 	DESCRIPTION "A tiny, lightning fast, event loop, using either `epoll`, `kqueue`, or `wepoll` and `iocp` for Windows."
     LANGUAGES C
 )
@@ -29,6 +29,7 @@ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 option(BUILD_SHARED_LIBS "Build the library as a shared (dynamically-linked) " OFF)
 option(NO_RPMALLOC "Build without (rpmalloc) use standard `libc` malloc" OFF)
+option(BUILD_HTTPIE "Additional data structures, http parser and web client/server processor" OFF)
 
 message("Generated with config types: ${CMAKE_CONFIGURATION_TYPES}")
 set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
@@ -220,6 +221,10 @@ else()
 endif()
 set(CPACK_INSTALL_CMAKE_CONFIGURATIONS Release)
 include(CPack)
+
+if (BUILD_HTTPIE)
+	add_subdirectory(httpie)
+endif()
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     option(BUILD_EXAMPLES "whether or not examples should be built" ON)
