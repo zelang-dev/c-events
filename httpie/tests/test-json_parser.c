@@ -3,10 +3,10 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 #   include <compat/dirent.h>
-#   define TESTDIR "../../tests/valid"
+#   define TESTDIR "../../httpie/tests/valid"
 #else
 #   include <dirent.h>
-#   define TESTDIR "../tests/valid"
+#   define TESTDIR "../httpie/tests/valid"
 #endif
 
 TEST(json_parse_file) {
@@ -20,12 +20,12 @@ TEST(json_parse_file) {
 #endif
 
     dirp = opendir(TESTDIR);
-    deferring((func_t)closedir, dirp);
+    defer(closedir, dirp);
     unused = chdir(TESTDIR);
     printf("Valid Json Folder:\n");
     while (!is_empty((dp = readdir(dirp)))) {
         if (dp->d_name[0] != '.' && !is_empty((encoded = json_parse_file(dp->d_name)))) {
-            deferring((func_t)json_value_free, encoded);
+            defer(json_value_free, encoded);
             //printf("file: %s - %s\n", dp->d_name, json_serialize(encoded, true));
             ASSERT_TRUE(is_json(encoded));
         } else if (dp->d_name[0] != '.') {
@@ -45,7 +45,7 @@ TEST(is_string_json) {
 
     unused = chdir("..");
     dirp = opendir("invalid");
-    deferring((func_t)closedir, dirp);
+    defer(closedir, dirp);
     unused = chdir("invalid");
     printf("Invalid Json Folder:\n");
     while ((dp = readdir(dirp)) != NULL) {

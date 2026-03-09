@@ -2,9 +2,9 @@
 #include "test_assert.h"
 
 #if defined(_WIN32) || defined(_WIN64)
-#   define TESTDIR "../../tests"
+#   define TESTDIR "../../httpie/tests"
 #else
-#   define TESTDIR "../tests"
+#   define TESTDIR "../httpie/tests"
 #endif
 
 TEST(parse_multipart) {

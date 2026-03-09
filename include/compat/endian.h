@@ -11,6 +11,7 @@
 #define LITTLE_ENDIAN 1234
 #define BIG_ENDIAN 4321
 #define PDP_ENDIAN 3412
+#define HAVE_LITTLE_ENDIAN 1
 
 /*
  * Use GCC compiler defines to determine endianness.

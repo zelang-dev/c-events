@@ -362,6 +362,9 @@ static EVENTS_INLINE void *_os_write(param_t args) {
 static EVENTS_INLINE void *_os_sendfile(param_t args) {
 #if defined(__APPLE__) || defined(__MACH__)
 	return casting(sendfile(args[0].integer, args[1].integer, (off_t)args[2].long_long, (off_t *)args[3].long_long_ptr, NULL, 0));
+#elif __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__
+	return casting(sendfile(args[0].integer, args[1].integer, (off_t)args[2].long_long,
+		(off_t *)args[3].long_long_ptr, NULL, 0, 0));
 #else
 	return casting(sendfile(args[0].integer, args[1].integer, (off_t *)args[2].long_long_ptr, args[3].max_size));
 #endif

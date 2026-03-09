@@ -1,6 +1,6 @@
 set(SUB_PROJECT httpie)
-set(SUB_PROJECT_VERSION 0.7.0)
-set(SUB_PROJECT_VERSION_MAJOR 0.7)
+set(SUB_PROJECT_VERSION ${PROJECT_VERSION})
+set(SUB_PROJECT_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(SUB_PROJECT_DESCRIPTION "httpie - dual webclient/server processor")
 
 file(GLOB httpie_files

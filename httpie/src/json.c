@@ -207,29 +207,22 @@ FORCEINLINE bool is_json(json_t *schema) {
 
 FORCEINLINE string json_serialize(json_t *json, bool is_pretty) {
     string json_string = "";
-    if (!is_empty(json)) {
-        if (is_pretty)
-            json_string = json_serialize_to_string_pretty((const json_t *)json);
-        else
-            json_string = json_serialize_to_string((const json_t *)json);
-
-        deferring((func_t)json_free_serialized_string, json_string);
+	if (!is_empty(json)) {
+		json_string = (is_pretty) ? json_serialize_to_string_pretty((const json_t *)json) : json_serialize_to_string((const json_t *)json);
+        defer(json_free_serialized_string, json_string);
     }
 
     return json_string;
 }
 
 FORCEINLINE json_t *json_decode(string_t text, bool is_commented) {
-    if (is_commented)
-        return json_parse_string_with_comments(text);
-    else
-        return json_parse_string(text);
+	return (is_commented) ? json_parse_string_with_comments(text) : json_parse_string(text);
 }
 
 json_t *json_encode(string_t desc, ...) {
     int count = (int)strlen(desc);
     json_t *json_root = json_value_init_object();
-    deferring((func_t)json_value_free, json_root);
+    defer(json_value_free, json_root);
     JSON_Object *json_object = json_value_get_object(json_root);
 
     va_list argp;
@@ -368,7 +361,7 @@ json_t *json_encode(string_t desc, ...) {
 string json_for(string_t desc, ...) {
     int count = (int)strlen(desc);
     json_t *json_root = json_value_init_object();
-    deferring((func_t)json_value_free, json_root);
+    defer(json_value_free, json_root);
     JSON_Object *json_object = json_value_get_object(json_root);
     JSON_Status status = json_object_set_value(json_object, "array", json_value_init_array());
     JSON_Array *value_array = json_object_get_array(json_object, "array");
@@ -470,7 +463,7 @@ string json_read_file(string_t filename) {
 
     fclose(fp);
     file_contents[size_read] = '\0';
-    deferring(free, file_contents);
+    defer_free(file_contents);
 
     return file_contents;
 }
