@@ -737,6 +737,23 @@ EVENTS_INLINE bool str_is(const char *str, const char *str2) {
 	return (str != NULL && str2 != NULL) && (strcmp(str, str2) == 0);
 }
 
+bool str_case_equal(const char *s1, const char *s2, size_t len) {
+	int diff;
+
+	if (s1 == NULL || s2 == NULL || len == 0)
+		return false;
+
+	do {
+		diff = tolower(*(const unsigned char *)(s1++)) - tolower(*(const unsigned char *)(s2++));
+	} while (diff == 0 && s1[-1] != '\0' && --len > 0);
+
+	return diff == 0;
+}
+
+EVENTS_INLINE bool str_is_case(const char *s1, const char *s2) {
+	return str_case_equal(s1, s2, SIZE_MAX);
+}
+
 EVENTS_INLINE bool str_is_empty(const char *str) {
 	return is_empty(str) || strlen(str) == 0;
 }

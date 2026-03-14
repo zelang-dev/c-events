@@ -235,14 +235,16 @@ C_API range_t range_char(const char *text);
 #endif
 
 #ifndef is_empty
-#	define is_empty(ptr)					((void *)(ptr) == null)
+#	define is_empty(ptr) 				((void *)(ptr) == null)
 #endif
 
 C_API char *trim(char *str);
 C_API char *str_itoa(int64_t x);
+C_API bool str_has(const char *text, char *pattern);
 C_API bool str_is_empty(const char *str);
 C_API bool str_is(const char *str, const char *str2);
-C_API bool str_has(const char *text, char *pattern);
+C_API bool str_is_case(const char *s1, const char *s2);
+C_API bool str_case_equal(const char *s1, const char *s2, size_t len);
 C_API int str_pos(const char *text, char *pattern);
 C_API int str_subcount(const char *text, char *pattern);
 C_API char *str_cpy(char *dest, const char *src, size_t len);

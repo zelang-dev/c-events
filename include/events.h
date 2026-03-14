@@ -207,6 +207,12 @@ C_API int events_set_allocator(malloc_func, realloc_func, calloc_func, free_func
 /* Sets I/O on the given fd to be non-blocking. */
 C_API int events_set_nonblocking(fds_t fd);
 
+/* Sets the timeout of a socket to the specified number of milliseconds.
+ *
+ * Max time waiting for the acknowledged of TCP data before the connection
+ * will be forcefully closed and ETIMEDOUT is returned to the application. */
+C_API int events_tcp_timeout(fds_t fd, int milliseconds);
+
 /* Creates a new event loop (defined by each backend). */
 C_API events_t *events_create(int max_timeout);
 

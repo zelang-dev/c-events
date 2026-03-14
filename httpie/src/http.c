@@ -1,14 +1,4 @@
-#include <httpie.h>
-
-#if defined(_WIN32) || defined(_WIN64)
-struct tm *gmtime_r(const time_t *timer, struct tm *buf) {
-    int r = gmtime_s(buf, timer);
-    if (r)
-        return NULL;
-
-    return buf;
-}
-#endif
+#include "lib/httpie_internal.h"
 
 static string_t method_strings[] = {
 "DELETE", "GET", "HEAD", "POST", "PUT", "CONNECT", "OPTIONS", "TRACE", "COPY", "LOCK", "MKCOL", "MOVE", "PROPFIND", "PROPPATCH", "SEARCH", "UNLOCK", "REPORT", "MKACTIVITY", "CHECKOUT", "MERGE", "M-SEARCH", "NOTIFY", "SUBSCRIBE", "UNSUBSCRIBE", "PATCH", "PURGE"
@@ -26,99 +16,60 @@ static char http_server_name[NAME_MAX] = HTTP_SERVER;
 static char http_agent_name[NAME_MAX] = HTTP_AGENT;
 static char http_timestamp[81] = {0};
 
-#define PROXY_CONNECTION "proxy-connection"
-#define CONNECTION "connection"
-#define CONTENT_LENGTH "content-length"
-#define TRANSFER_ENCODING "transfer-encoding"
-#define UPGRADE "upgrade"
-#define CHUNKED "chunked"
-#define KEEP_ALIVE "keep-alive"
-#define CLOSE "close"
+/*
+ * Returns a converted time to tm structure.
+ * No timezone conversion takes place. UTC as zone is assumed.
+ */
+struct tm *http_gmtime_r(const time_t *clk, struct tm *result) {
+#if defined(_WIN32_CE)
+	int a;
+	int doy;
+	FILETIME ft;
+	SYSTEMTIME st;
 
-struct cookie_s {
-	int maxAge;
-	bool httpOnly;
-	bool secure;
-	char path[64];
-	char expiries[64];
-	char domain[64];
-	char sameSite[64];
-	char value[Kb(2)];
-};
+	if (is_empty(clk) || is_empty(result)) return NULL;
 
-struct response_s {
-	data_types type;
-	/* The current response status */
-	http_status status;
-	/* The protocol version */
-	double version;
-	/* The current response body */
-	string body;
-	/* The unchanged data from server */
-	string raw;
-	/* The protocol */
-	string protocol;
-	/* The current headers */
-	hash_http_t *headers;
-};
+	*(int64_t)&ft = ((int64_t)*clk) * RATE_DIFF * EPOCH_DIFF;
 
-struct form_data_s {
-	size_t bodysize;
-	string body;
-	string filename;
-	string disposition;
-	string type;
-	string encoding;
-};
+	FileTimeToSystemTime(&ft, &st);
 
-struct http_s {
-	data_types type;
-	/* This parser ~instance~ state,
-	either `RESPONSE` or `REQUEST` behaviour. */
-	http_parser_type action;
-	/* The current response status */
-	http_status status;
-	/* The requested status code */
-	http_status code;
-	/* Is Multipart `form_data` in header response? */
-	int is_multipart;
-	/* The protocol version */
-	double version;
-	string hostname;
-	/* The unchanged data from server */
-	string raw;
-	/* The current response body */
-	string body;
-	/* The requested uri */
-	string uri;
-	/* The multi-part `boundary` name */
-	string boundary;
-	/* Array of multi-part `disposition` names */
-	array_t names;
-	/* Array of set-cookie `session` names */
-	array_t cookies;
-	/* Parser, `request/response` staging allocations,
-	WILL be freed at exit, and before `parse_http` execution. */
-	array_t garbage;
-	/* The current headers
-	and `response` headers to send */
-	hash_http_t *headers;
-	/* The request params */
-	hash_http_t *parameters;
-	/* The multi-part dispositions, `form_data_t` */
-	hash_http_t *dispositions;
-	/* The set-cookie sessions, `cookie_t` */
-	hash_http_t *sessions;
-	/* The protocol */
-	char protocol[16];
-	/* The requested method */
-	char method[32];
-	/* The requested status message */
-	char message[64];
-	/* The requested path */
-	char path[128];
-	char variable[256];
-};
+	result->tm_year = st.wYear - 1900;
+	result->tm_mon = st.wMonth - 1;
+	result->tm_wday = st.wDayOfWeek;
+	result->tm_mday = st.wDay;
+	result->tm_hour = st.wHour;
+	result->tm_min = st.wMinute;
+	result->tm_sec = st.wSecond;
+	result->tm_isdst = false;
+
+	doy = result->tm_mday;
+	for (a = 0; a < result->tm_mon; a++) doy += days_per_month[a];
+	if (result->tm_mon >= 2 && LEAP_YEAR(result->tm_year + 1900)) doy++;
+
+	result->tm_yday = doy;
+	return result;
+
+#elif defined(_WIN32)
+	if (gmtime_s(result, clk) == 0) return result;
+	return nullptr;
+#else
+	return gmtime_r(clk, result);
+#endif
+}
+
+void http_gmt_time_str(char *buf, size_t buf_len, time_t *t) {
+	struct tm tmm;
+
+	if (is_empty(buf) || buf_len < 1)
+		return;
+
+	if (http_gmtime_r(t, &tmm) != NULL)
+		strftime(buf, buf_len, "%a, %d %b %Y %H:%M:%S GMT", &tmm);
+	else {
+		str_cpy(buf, "Thu, 01 Jan 1970 00:00:00 GMT", buf_len);
+		buf[buf_len - 1] = '\0';
+	}
+}
 
 static void http_clear(http_t *this) {
 	if (is_data(this->garbage)) {
@@ -194,7 +145,7 @@ string http_std_date(time_t t) {
 		t = time(&timer);
 	}
 
-	tm1 = gmtime_r(&t, &tm_buf);
+	tm1 = http_gmtime_r(&t, &tm_buf);
 	if (!tm1) {
 		return http_timestamp;
 	}
@@ -259,7 +210,10 @@ string_t http_status_str(uint16_t const status) {
         case 415: return "Unsupported Media Type";
         case 416: return "Requested Range Not Satisfiable";
         case 417: return "Expectation Failed";
-        case 418: return "I'm a teapot";               // RFC 2324
+		case 418: return "I'm a teapot";               // RFC 2324
+		case 419: return "Authentication Timeout";		/* common use							*/
+		case 420: return "Enhance Your Calm";			/* common use							*/
+		case 421: return "Misdirected Request";		/* RFC7540 Section 9.1.2					*/
         case 422: return "Unprocessable Entity";       // RFC 4918
         case 423: return "Locked";                     // RFC 4918
         case 424: return "Failed Dependency";          // RFC 4918
@@ -267,7 +221,8 @@ string_t http_status_str(uint16_t const status) {
         case 426: return "Upgrade Required";           // RFC 2817
         case 428: return "Precondition Required";      // RFC 6585
         case 429: return "Too Many Requests";          // RFC 6585
-        case 431: return "Request Header Fields Too Large";// RFC 6585
+		case 431: return "Request Header Fields Too Large";// RFC 6585			*/
+		case 440: return "Login Timeout";			/* common use							*/
         case 444: return "Connection Closed Without Response";
         case 451: return "Unavailable For Legal Reasons";
         case 499: return "Client Closed Request";
@@ -280,12 +235,23 @@ string_t http_status_str(uint16_t const status) {
         case 504: return "Gateway Time-out";
         case 505: return "HTTP Version Not Supported";
         case 506: return "Variant Also Negotiates";    // RFC 2295
-        case 507: return "Insufficient Storage";       // RFC 4918
-        case 509: return "Bandwidth Limit Exceeded";
+		case 507: return "Insufficient Storage";       // RFC 4918
+		case 508: return "Loop Detected";			/* RFC5842 Section 7.1						*/
+		case 509: return "Bandwidth Limit Exceeded";
         case 510: return "Not Extended";               // RFC 2774
         case 511: return "Network Authentication Required"; // RFC 6585
         case 599: return "Network Connect Timeout Error";
-        default: return nullptr;
+		default:
+			/*
+			* Return at least a category according to RFC 2616 Section 10.
+			*/
+			if (status >= 100 && status < 200) return "Information";
+			if (status >= 200 && status < 300) return "Success";
+			if (status >= 300 && status < 400) return "Redirection";
+			if (status >= 400 && status < 500) return "Client Error";
+			if (status >= 500 && status < 600) return "Server Error";
+
+			return "";
     }
 }
 
@@ -496,7 +462,7 @@ static void parse_multipart(http_t *this) {
 	}
 }
 
-void parse_http(http_parser_type action, http_t *this, string headers) {
+int parse_http(http_parser_type action, http_t *this, string headers) {
 	string key, value, line, parameters, delim = nullptr,
 		*sessions = nullptr, *messages, *lines = nullptr, *parts = nullptr;
 	int i = 0, x = 0, z = 0, count = 0;
@@ -514,7 +480,7 @@ void parse_http(http_parser_type action, http_t *this, string headers) {
 
 	messages = str_split_ex(headers, LFLF, &count);
 	if (is_empty(messages))
-		return;
+		return -1;
 
 	defer_free(messages);
 	this->raw = headers;
@@ -578,7 +544,7 @@ void parse_http(http_parser_type action, http_t *this, string headers) {
 					is_cookie_set = true;
 					cookie_t *cookie = calloc(1, sizeof(cookie_t));
 					if (is_empty(cookie))
-						panic("calloc() failed");
+						return -1;
 
 					defer_free(cookie);
 					if (str_has(value, "Secure"))
@@ -651,7 +617,11 @@ void parse_http(http_parser_type action, http_t *this, string headers) {
 
 		if (!is_empty(lines))
 			free(lines);
+
+		return this->request_len;
 	}
+
+	return -1;
 }
 
 void http_free(http_t *this) {

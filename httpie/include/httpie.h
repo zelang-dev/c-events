@@ -3,323 +3,95 @@
 
 #include <map.h>
 #include <json.h>
+#include <https.h>
 
-typedef struct form_data_s form_data_t;
-typedef struct cookie_s cookie_t;
-typedef struct response_s response_t;
-typedef struct http_s http_t;
-typedef hash_t hash_http_t;
+#define _POSIX_THREAD_SAFE_FUNCTIONS 1
+#define ERROR_STRING_LEN ARRAY_SIZE
 
-typedef enum {
-    URL_SCHEME,
-    URL_HOST,
-    URL_PORT,
-    URL_USER,
-    URL_PASS,
-    URL_PATH,
-    URL_QUERY,
-    URL_FRAGMENT,
-} url_key;
-
-typedef enum {
-    // Informational 1xx
-    STATUS_CONTINUE = 100,
-    STATUS_SWITCHING_PROTOCOLS = 101,
-    STATUS_PROCESSING = 102,
-    STATUS_EARLY_HINTS = 103,
-    // Successful 2xx
-    STATUS_OK = 200,
-    STATUS_CREATED = 201,
-    STATUS_ACCEPTED = 202,
-    STATUS_NON_AUTHORITATIVE_INFORMATION = 203,
-    STATUS_NO_CONTENT = 204,
-    STATUS_RESET_CONTENT = 205,
-    STATUS_PARTIAL_CONTENT = 206,
-    STATUS_MULTI_STATUS = 207,
-    STATUS_ALREADY_REPORTED = 208,
-    STATUS_IM_USED = 226,
-    // Redirection 3xx
-    STATUS_MULTIPLE_CHOICES = 300,
-    STATUS_MOVED_PERMANENTLY = 301,
-    STATUS_FOUND = 302,
-    STATUS_SEE_OTHER = 303,
-    STATUS_NOT_MODIFIED = 304,
-    STATUS_USE_PROXY = 305,
-    STATUS_RESERVED = 306,
-    STATUS_TEMPORARY_REDIRECT = 307,
-    STATUS_PERMANENT_REDIRECT = 308,
-    // Client Errors 4xx
-    STATUS_BAD_REQUEST = 400,
-    STATUS_UNAUTHORIZED = 401,
-    STATUS_PAYMENT_REQUIRED = 402,
-    STATUS_FORBIDDEN = 403,
-    STATUS_NOT_FOUND = 404,
-    STATUS_METHOD_NOT_ALLOWED = 405,
-    STATUS_NOT_ACCEPTABLE = 406,
-    STATUS_PROXY_AUTHENTICATION_REQUIRED = 407,
-    STATUS_REQUEST_TIMEOUT = 408,
-    STATUS_CONFLICT = 409,
-    STATUS_GONE = 410,
-    STATUS_LENGTH_REQUIRED = 411,
-    STATUS_PRECONDITION_FAILED = 412,
-    STATUS_PAYLOAD_TOO_LARGE = 413,
-    STATUS_URI_TOO_LONG = 414,
-    STATUS_UNSUPPORTED_MEDIA_TYPE = 415,
-    STATUS_RANGE_NOT_SATISFIABLE = 416,
-    STATUS_EXPECTATION_FAILED = 417,
-    STATUS_IM_A_TEAPOT = 418,
-    STATUS_MISDIRECTED_REQUEST = 421,
-    STATUS_UNPROCESSABLE_ENTITY = 422,
-    STATUS_LOCKED = 423,
-    STATUS_FAILED_DEPENDENCY = 424,
-    STATUS_TOO_EARLY = 425,
-    STATUS_UPGRADE_REQUIRED = 426,
-    STATUS_PRECONDITION_REQUIRED = 428,
-    STATUS_TOO_MANY_REQUESTS = 429,
-    STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE = 431,
-    STATUS_UNAVAILABLE_FOR_LEGAL_REASONS = 451,
-    // Server Errors 5xx
-    STATUS_INTERNAL_SERVER_ERROR = 500,
-    STATUS_NOT_IMPLEMENTED = 501,
-    STATUS_BAD_GATEWAY = 502,
-    STATUS_SERVICE_UNAVAILABLE = 503,
-    STATUS_GATEWAY_TIMEOUT = 504,
-    STATUS_VERSION_NOT_SUPPORTED = 505,
-    STATUS_VARIANT_ALSO_NEGOTIATES = 506,
-    STATUS_INSUFFICIENT_STORAGE = 507,
-    STATUS_LOOP_DETECTED = 508,
-    STATUS_NOT_EXTENDED = 510,
-    STATUS_NETWORK_AUTHENTICATION_REQUIRED = 511
-} http_status;
-
-typedef enum {
-    /* Request Methods */
-    HTTP_DELETE,
-    HTTP_GET,
-    HTTP_HEAD,
-    HTTP_POST,
-    HTTP_PUT,
-    /* pathological */
-    HTTP_CONNECT,
-    HTTP_OPTIONS,
-    HTTP_TRACE,
-    /* webdav */
-    HTTP_COPY,
-    HTTP_LOCK,
-    HTTP_MKCOL,
-    HTTP_MOVE,
-    HTTP_PROPFIND,
-    HTTP_PROPPATCH,
-    HTTP_SEARCH,
-    HTTP_UNLOCK,
-    /* subversion */
-    HTTP_REPORT,
-    HTTP_MKACTIVITY,
-    HTTP_CHECKOUT,
-    HTTP_MERGE,
-    /* upnp */
-    HTTP_MSEARCH,
-    HTTP_NOTIFY,
-    HTTP_SUBSCRIBE,
-    HTTP_UNSUBSCRIBE,
-    /* RFC-5789 */
-    HTTP_PATCH,
-    HTTP_PURGE
-} http_method_type;
-
-typedef enum {
-    HTTP_REQUEST = HTTP_PURGE + 1,
-    HTTP_RESPONSE,
-    HTTP_BOTH
-} http_parser_type;
-
-typedef enum {
-    F_CHUNKED = 1 << 0,
-    F_CONNECTION_KEEP_ALIVE = 1 << 1,
-    F_CONNECTION_CLOSE = 1 << 2,
-    F_TRAILING = 1 << 3,
-    F_UPGRADE = 1 << 4,
-    F_SKIP_BODY = 1 << 5
-} http_flags;
-
-#define kv_custom(key, value) (head_custom), (key), (value)
-typedef enum {
-	/* For X-Powered-By: */
-	head_by = HTTP_BOTH + 1,
-	/* For Cookie:, or Set-Cookie: `; Path=; Expires=; Max-Age=; SameSite=; Domain=; HttpOnly; Secure` */
-	head_cookie,
-	/* For Strict-Transport-Security:
-	`max-age=31536000; includeSubDomains; preload` */
-	head_secure,
-	/* For Connection: `keep-alive`, `close`, `etc...` */
-	head_conn,
-	/* For Authorization: Bearer */
-	head_bearer,
-	/* For Authorization: Basic */
-	head_auth_basic,
-	/* Internal, use `kv_custom("key", "value")` instead */
-	head_custom,
-} header_types;
+/* HTTP server context */
+typedef struct http_ini_s http_ini_t;
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-C_API string url_decode(string str, size_t len);
-C_API string url_encode(char const *s, size_t len);
-C_API void parse_str(http_t *this, string lines, string sep, string part);
+/*
+ * Keeps reading the input into buffer buf,
+ * until \r\n\r\n appears in the buffer which marks the end
+ * of the HTTP request. The buffer buf may already have some data. The length
+ * of the data is stored in nread. Upon every read operation the value of nread
+ * is incremented by the number of bytes read. */
+C_API int http_read_request(http_t *conn, char *buf, int bufsiz, int *nread);
+
+/* Processes a request from a remote client. */
+C_API bool http_get_request(http_t *conn, int *err);
+
+/* Forwards body data to the client.
+The function returns true if successful, and false otherwise. */
+C_API bool http_forward_body(http_t *conn, FILE *fp);
 
 /*
-Returns valid HTTP status codes reasons.
-
-Verified 2020-05-22
-
-see https://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml
-*/
-C_API string_t http_status_str(uint16_t const status);
-
-/* Return date string in standard format for http headers */
-C_API string http_std_date(time_t t);
-
-/* Return date string ahead in standard format for `Set-Cookie` headers */
-C_API string http_date_ahead(u32 days, u32 hours, u32 minutes, u32 seconds);
-
-/**
- * Parse `request/response` headers, and store.
+ * Returns true if the connection
+ * should be kept alive and false if it should be closed.
  *
- * @param action either HTTP_RESPONSE or HTTP_REQUEST
- * @param this current `http_t` instance
- * @param headers raw message
- */
-C_API void parse_http(http_parser_type action, http_t *this, string headers);
+ * HTTP 1.1 assumes keep alive if "Connection:" header is not set This function
+ * must tolerate situations when connection info is not set up, for example if
+ * request parsing failed. */
+C_API bool http_should_keep_alive(http_t *conn);
+C_API int http_printf(http_t *conn, const char *fmt, ...);
+C_API int http_printf_no_cache(http_t *conn);
+C_API int http_read(http_t *conn, void *buf, size_t len);
+C_API void http_error(http_t *conn, int status, const char *fmt, ...);
 
-/**
- * Returns `http_t` instance, for simple generic handling/constructing
- * `request/response` messages.
- *
- * Following the https://tools.ietf.org/html/rfc2616.html specs.
- *
- * - For use with `http_response()` and `http_request()`.
- *
- * @param hostname for `Host:` header request,  will be ignored on `path/url` setting
- * @param protocol version for `HTTP/` header
- */
-C_API http_t *http_for(string hostname, double protocol);
-C_API void http_free(http_t *this);
+/*
+ * Returns a string to be used in the header which suggests the connection to
+ * be either closed, or kept alive for further requests. */
+C_API const char *http_suggest_connection_header(http_t *conn);
 
-/* Set User agent name for request, max length = `NAME_MAX/MAX_PATH` */
-C_API void http_user_agent(string);
+/*
+ * Prints a formatted error message to the opened
+ * error log stream. It first tries to use a user supplied error handler. If
+ * that doesn't work, the alternative is to write to an error log file. */
+C_API void http_logger(enum http_dbg debug_level, http_t *conn, const char *fmt, ...);
 
-/* Set Server name for response, max length = `NAME_MAX/MAX_PATH` */
-C_API void http_server_agent(string);
+/* Sends a list of allowed options a client can use to connect to the server. */
+C_API void http_options(http_t *conn);
+C_API bool http_get_random(uint64_t *out);
 
-/**
- * Construct a new response string.
- *
- * @param this current `http_t` instance
- * @param body defaults to `Not Found`, if `status` empty
- * @param status defaults to `STATUS_NO_FOUND`, if `body` empty, otherwise `STATUS_OK`
- * @param type defaults to `text/html; charset=utf-8`, if empty
- * @param header_pairs number of additional headers
- *
- * - `using:` header_types = `head_by, head_cookie, head_secure, head_conn, head_bearer, head_auth_basic`
- *
- * - `kv(header_types, "value")`
- *
- * - `or:` `kv_custom("key", "value")`
- */
-C_API string http_response(http_t *this, string body, http_status status,
-	string type, u32 header_pairs, ...);
+/* Do cleanup work when an error occurred initializing a context. */
+C_API http_ini_t *http_abort_start(http_ini_t *ctx, const char *fmt, ...);
 
-/**
- * Construct a new request string.
- *
- * @param this current `http_t` instance
- * @param method
- * @param path
- * @param type defaults to `text/html; charset=utf-8`, if empty
- * @param body_data
- * @param header_pairs number of additional headers
- *
- * - `using:` header_types = `head_by, head_cookie, head_secure, head_conn, head_bearer, head_auth_basic`
- *
- * - `kv(header_types, "value")`
- *
- * - `or:` `kv_custom("key", "value")`
- */
-C_API string http_request(http_t *this, http_method_type method, string path, string type,
-	string body_data, u32 header_pairs, ...);
+/* Returns all the from the heap allocated space to store config options back to the heap. */
+C_API void http_free_config_options(http_ini_t *ctx);
+C_API void *http_free_ex(void *memory);
 
-/**
- * Return a request/response header `content`.
- */
-C_API string http_get_header(http_t *this, string key);
+/* Used to free the resources associated with a context. */
+C_API void http_free_context(http_ini_t *ctx);
 
-/**
- * Add or overwrite an request/response header parameter.
- */
-C_API void http_put_header(http_t *this, string key, string value, bool force_cap);
-C_API bool http_has_header(http_t *this, string key);
+/* Sets the options of a newly created context to reasonable default values.
+ * When successful, the function returns false. Otherwise true is returned,
+ * and the function already performed a cleanup. */
+C_API bool http_init_options(http_ini_t *ctx);
 
-/**
- * Return a `request/response` header content `variable` value.
- *
- * - `key` header to check for
- * - `var` variable to find
- */
-C_API string http_get_var(http_t *this, string key, string var);
-C_API bool http_has_var(http_t *this, string key, string var);
+/*
+ * The main entry point for the `httpie` server. The function starts all threads and when finished returns the
+ * context to the running server for future reference. */
+C_API http_ini_t *http_start(const struct lh_clb_t *callbacks, void *user_data, const struct lh_opt_t *options);
 
-C_API bool http_has_flag(http_t *this, string key, string flag);
+/*
+ * Processes the user supplied options and adds
+ * them to the central option list of the context. If en error occurs, the
+ * function returns true, otherwise FALSE is returned. In case of an error all
+ * cleanup is already done before returning and an error message has been
+ * generated. */
+bool http_process_options(http_ini_t *ctx, const struct lh_opt_t *options);
 
-/**
- * Return a request `variable` parameter `value`.
- */
-C_API string http_get_param(http_t *this, string key);
-C_API bool http_has_param(http_t *this, string key);
-
-C_API http_status http_get_status(http_t *this);
-C_API http_status http_get_code(http_t *this);
-C_API double http_get_version(http_t *this);
-C_API string http_get_message(http_t *this);
-C_API string http_get_method(http_t *this);
-C_API string http_get_body(http_t *this);
-C_API string http_get_protocol(http_t *this);
-C_API string http_get_url(http_t *this);
-C_API string http_get_path(http_t *this);
-C_API string http_get_boundary(http_t *this);
-
-C_API bool http_cookie_is_multi(http_t *this);
-C_API bool http_cookie_is_secure(http_t *this, string name);
-C_API bool http_cookie_is_httpOnly(http_t *this, string name);
-C_API size_t http_cookie_maxAge(http_t *this, string name);
-C_API size_t http_cookie_count(http_t *this);
-C_API array_t http_cookie_names(http_t *this);
-C_API string http_get_cookie(http_t *this, string name);
-C_API string http_cookie_expiries(http_t *this, string name);
-C_API string http_cookie_domain(http_t *this, string name);
-C_API string http_cookie_sameSite(http_t *this, string name);
-C_API string http_cookie_path(http_t *this, string name);
-
-C_API bool http_is_multipart(http_t *this);
-C_API bool http_multi_has(http_t *this, string name);
-C_API bool http_multi_is_file(http_t *this, string name);
-C_API string http_multi_filename(http_t *this, string name);
-C_API string http_multi_disposition(http_t *this, string name);
-C_API string http_multi_type(http_t *this, string name);
-C_API string http_multi_body(http_t *this, string name);
-C_API size_t http_multi_length(http_t *this, string name);
-C_API size_t http_multi_count(http_t *this);
-C_API array_t http_multi_names(http_t *this);
-
-#ifndef HTTP_AGENT
-#define HTTP_AGENT "http_client"
-#endif
-
-#ifndef HTTP_SERVER
-#define HTTP_SERVER "http_server"
-#endif
+/*
+ * Sets the global password file option for a context.
+ * The function returns false when an error occurs and
+ * true when successful. */
+bool http_set_gpass_option(http_ini_t *ctx);
 
 #ifdef __cplusplus
 }

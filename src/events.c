@@ -245,6 +245,9 @@ int events_init(int max_fd) {
 		abort();
 
 	deque_init(sys_event.local[0], sys_event.queue_size);
+#if !defined(_WIN32)
+	signal(SIGPIPE, SIG_IGN);
+#endif
 	return 0;
 }
 
@@ -316,6 +319,26 @@ EVENTS_INLINE int events_set_nonblocking(fds_t fd) {
 #else
 	return fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 #endif
+}
+
+int events_tcp_timeout(fds_t fd, int milliseconds) {
+	int r0;
+	int r1;
+	int r2;
+#ifdef _WIN32
+	DWORD tv = (DWORD)milliseconds;
+	r0 = 0;
+#else
+	struct timeval tv;
+	r0 = 0;
+
+	memset(&tv, 0, sizeof(tv));
+	tv.tv_sec = milliseconds / 1000;
+	tv.tv_usec = (milliseconds * 1000) % 1000000;
+#endif
+	r1 = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+	r2 = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv));
+	return (r0 || r1 || r2);
 }
 
 EVENTS_INLINE void events_set_timeout(fds_t sfd, int secs) {

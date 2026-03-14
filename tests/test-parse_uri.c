@@ -147,6 +147,22 @@ TEST(str_unbase64_ex) {
 	return 0;
 }
 
+TEST(str_is_case) {
+	ASSERT_TRUE(str_is_case("HTTPIE", "httpie"));
+	ASSERT_TRUE(str_is_case("HttPie", "hTTpIE"));
+	ASSERT_TRUE(str_is_case("SomE-HeaDer", "some-header"));
+
+	ASSERT_FALSE(str_is_case("SomE-HeaDeP", "some-header"));
+	ASSERT_FALSE(str_is_case("HttPIE", "HttPit"));
+	ASSERT_FALSE(str_is_case("HtTpIe", "hTTpiT"));
+
+	ASSERT_TRUE(str_case_equal("Host", "Host: localhost:8080", 4));
+	ASSERT_TRUE(str_case_equal("Host: localhost:8080", "Host", 4));
+	ASSERT_FALSE(str_case_equal("Host", "Hosh: not-localhost:1234", 4));
+	ASSERT_TRUE(str_case_equal("Host: something-else:443", "host: localhost:8080", 6));
+	return 0;
+}
+
 TEST(list) {
     int result = 0;
 
@@ -156,6 +172,7 @@ TEST(list) {
 	EXEC_TEST(str_pad);
 	EXEC_TEST(str_base64_ex);
 	EXEC_TEST(str_unbase64_ex);
+	EXEC_TEST(str_is_case);
 
     return result;
 }
