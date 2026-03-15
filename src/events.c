@@ -988,7 +988,7 @@ static void __thrd_init(bool is_main, uint32_t thread_id) {
 	__thrd()->main_handle = NULL;
 	__thrd()->loop = NULL;
 	__thrd()->pool = NULL;
-	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL, false)) >= 0;
+	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL, false), false) >= 0;
 }
 
 static EVENTS_INLINE void task_scheduler_switch(void) {
@@ -1065,17 +1065,20 @@ static void events_ctr_c_unwind(void) {
 
 static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
 	results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
-	if (data != NULL && is_ptr_usable(co)) {
+	if (is_ptr_usable(co)) {
 		atomic_thread_fence(memory_order_seq_cst);
-		results[co->rid]->result.object = data;
-		results[co->rid]->is_ready = true;
-		co->results = &results[co->rid]->result;
+		if (data != NULL && co->rid != NO_RESULT) {
+			results[co->rid]->result.object = data;
+			results[co->rid]->is_ready = true;
+			co->results = &results[co->rid]->result;
+		}
+
+		if (co->rid != NO_RESULT) {
+			results[co->rid]->is_terminated = true;
+			co->status = TASK_FINISH;
+		}
 	}
 
-	if (is_ptr_usable(co)) {
-		results[co->rid]->is_terminated = true;
-		co->status = TASK_FINISH;
-	}
 	atomic_store_explicit(&sys_event.results, results, memory_order_release);
 }
 
@@ -1491,7 +1494,7 @@ generator_t generator(param_func_t fn, size_t num_of, ...) {
 	va_end(ap);
 
 	tasks_t *t = create_task(Kb(32), (data_func_t)fn, params, false);
-	uint32_t rid = task_push(t);
+	uint32_t rid = task_push(t, true);
 	if (rid != TASK_ERRED && snprintf(t->name, sizeof(t->name), "Generator #%d", (int)rid)) {
 		gen = events_calloc(1, sizeof(struct generator_s));
 		if (gen != NULL) {
@@ -1653,12 +1656,12 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	return co;
 }
 
-uint32_t task_push(tasks_t *t) {
+uint32_t task_push(tasks_t *t, bool has_result) {
 	if (t && t->status == TASK_SUSPENDED && t->cid == DATA_INVALID) {
 		tasks_t *c = active_task();
 		bool is_group = false;
 		t->cid = (uint32_t)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
-		t->rid = tasks_create_result()->id;
+		t->rid = (has_result) ? tasks_create_result()->id : NO_RESULT;
 
 		if (c->group_active && c->task_group != NULL && !c->group_finish) {
 			is_group = true;
@@ -1675,14 +1678,41 @@ uint32_t task_push(tasks_t *t) {
 			enqueue(l, t);
 		} else if (!is_group) {
 			t->tid = sys_event.cpu_index[(atomic_fetch_add(&sys_event.thrd_id_count, 1) % $size(sys_event.cpu_index))].u_int;
-			results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
-			results[t->rid]->tid = t->tid;
-			atomic_store_explicit(&sys_event.results, results, memory_order_release);
+			if (has_result) {
+				results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
+				results[t->rid]->tid = t->tid;
+				atomic_store_explicit(&sys_event.results, results, memory_order_release);
+			}
+
 			enqueue_tasks(t);
 		}
 	}
 
-	return (t == NULL) ? TASK_ERRED : t->rid;
+	return (t == NULL) ? TASK_ERRED : (has_result ? t->rid : t->cid);
+}
+
+static void accept_client_handler(param_t args) {
+	int client = args[0].integer;
+	client_cb handlerFunc = (client_cb)args[1].func;
+
+	deferring(tls_closer, client);
+	handlerFunc(client);
+}
+
+EVENTS_INLINE void accept_handler(client_cb connected, int client) {
+	if (!is_data(sys_event.cpu_index)
+		&& events_tasks_pool(events_create(sys_event.cpu_count)) < 0) {
+		launch((launch_func_t)accept_client_handler, 2, client, connected);
+	} else {
+		param_t params = arrays(2, client, connected);
+		tasks_t *t = create_task(Kb(32), (data_func_t)accept_client_handler, params, true);
+		if (!is_empty(t)) {
+			task_push(t, false);
+			events_deque_t *q = sys_event.local[t->tid];
+			atomic_flag_test_and_set(&q->started);
+			yield_task();
+		}
+	}
 }
 
 static EVENTS_INLINE results_data_t task_result_get(uint32_t id) {
@@ -1819,7 +1849,7 @@ uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, .
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	return task_push(create_task(heapsize, (data_func_t)fn, params, false));
+	return task_push(create_task(heapsize, (data_func_t)fn, params, false), true);
 }
 
 uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
@@ -1829,7 +1859,7 @@ uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	return task_push(create_task(Kb(18), (data_func_t)fn, params, false));
+	return task_push(create_task(Kb(18), (data_func_t)fn, params, false), true);
 }
 
 void launch(launch_func_t fn, uint32_t num_of_args, ...) {
@@ -1839,7 +1869,7 @@ void launch(launch_func_t fn, uint32_t num_of_args, ...) {
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	task_push(create_task(Kb(18), (data_func_t)fn, params, false));
+	task_push(create_task(Kb(18), (data_func_t)fn, params, false), false);
 	yield_task();
 }
 
@@ -1899,9 +1929,9 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 		va_end(ap);
 
 #if defined(_WIN32) && defined(USE_FIBER)
-		return task_push(create_task(Kb(24), (data_func_t)fn, params, true));
+		return task_push(create_task(Kb(24), (data_func_t)fn, params, true), true);
 #else
-		return task_push(create_task(Kb(18), (data_func_t)fn, params, true));
+		return task_push(create_task(Kb(18), (data_func_t)fn, params, true), true);
 #endif
 	}
 

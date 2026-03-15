@@ -29,7 +29,8 @@ typedef void (*client_cb)(int);
 typedef defer_cb func_t;
 
 typedef enum {
-	DATA_INVALID = -1,
+	NO_RESULT = -2,
+	DATA_INVALID,
 	DATA_NULL,
 	DATA_INT,
 	DATA_ENUM,

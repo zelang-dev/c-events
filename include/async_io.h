@@ -313,6 +313,7 @@ C_API fds_t async_bind(char *address, int port, int backlog, int protocol);
 
 Returns a `connected` ~client~ `fd`, SHOULD be used in new `task` instance for handling.*/
 C_API fds_t async_accept(fds_t fd, char *server, int *port);
+C_API void accept_handler(client_cb connected, int client);
 
 /** Create a ~new~ connection to `hostname`, port, with ~protocol~.
 Protocol either:

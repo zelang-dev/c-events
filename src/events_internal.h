@@ -581,7 +581,7 @@ tasks_t *task_derive(void *memory, size_t heapsize, bool is_thread);
 void task_switch(tasks_t *co);
 uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
 void thread_result_set(os_request_t *p, void *res);
-uint32_t task_push(tasks_t *t);
+uint32_t task_push(tasks_t *t, bool has_result);
 void *task_erred(tasks_t *t, int code);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread);
 bool tasks_is_active(void);
