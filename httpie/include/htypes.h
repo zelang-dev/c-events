@@ -11,7 +11,7 @@
 #	define malloc rp_malloc
 #	define calloc rp_calloc
 #	define realloc rp_realloc
-#	define free rpfree
+#	define free(ptr) rpfree((void*)(ptr))
 #	define free_final rp_free
 #endif
 

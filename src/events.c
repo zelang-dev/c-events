@@ -35,10 +35,10 @@ sys_events_t sys_event = {0};
 C_API void(fastcall * coro_swap)(tasks_t *, tasks_t *);
 
 typedef struct {
-	malloc_func local_malloc;
-	realloc_func local_realloc;
-	calloc_func local_calloc;
-	free_func local_free;
+	malloc_cb local_malloc;
+	realloc_cb local_realloc;
+	calloc_cb local_calloc;
+	free_cb local_free;
 } events_allocator_t;
 
 static events_allocator_t events_allocators = {
@@ -129,17 +129,17 @@ EVENTS_INLINE os_worker_t *events_pool(void) {
 	return __thrd()->pool;
 }
 
-EVENTS_INLINE int events_set_allocator(malloc_func malloc_cb, realloc_func realloc_cb, calloc_func calloc_cb,
-	free_func free_cb) {
-	if (malloc_cb == NULL || realloc_cb == NULL ||
-		calloc_cb == NULL || free_cb == NULL) {
+EVENTS_INLINE int events_set_allocator(malloc_cb local_malloc, realloc_cb local_realloc, calloc_cb local_calloc,
+	free_cb local_free) {
+	if (local_malloc == NULL || local_realloc == NULL ||
+		local_calloc == NULL || local_free == NULL) {
 		return -4072;
 	}
 
-	events_allocators.local_malloc = malloc_cb;
-	events_allocators.local_realloc = realloc_cb;
-	events_allocators.local_calloc = calloc_cb;
-	events_allocators.local_free = free_cb;
+	events_allocators.local_malloc = local_malloc;
+	events_allocators.local_realloc = local_realloc;
+	events_allocators.local_calloc = local_calloc;
+	events_allocators.local_free = local_free;
 
 	return 0;
 }
@@ -381,6 +381,15 @@ EVENTS_INLINE void events_set_timeout(fds_t sfd, int secs) {
 
 EVENTS_INLINE events_fd_t *events_target(int fd) {
 	return (events_fd_t *)atomic_load_explicit(&sys_event.fds, memory_order_relaxed) + fd;
+}
+
+EVENTS_INLINE void events_set_target_data(fds_t fd, void *ptr) {
+	if (__thrd()->is_main)
+		events_target(socket2fd(fd))->user_data = ptr;
+}
+
+EVENTS_INLINE void *events_get_target_data(fds_t fd) {
+	return events_target(socket2fd(fd))->user_data;
 }
 
 EVENTS_INLINE int events_remove(int wd) {
@@ -988,7 +997,7 @@ static void __thrd_init(bool is_main, uint32_t thread_id) {
 	__thrd()->main_handle = NULL;
 	__thrd()->loop = NULL;
 	__thrd()->pool = NULL;
-	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL, false), false) >= 0;
+	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL, false, false), false) >= 0;
 }
 
 static EVENTS_INLINE void task_scheduler_switch(void) {
@@ -1493,7 +1502,7 @@ generator_t generator(param_func_t fn, size_t num_of, ...) {
 	param_t params = data_ex(num_of, ap);
 	va_end(ap);
 
-	tasks_t *t = create_task(Kb(32), (data_func_t)fn, params, false);
+	tasks_t *t = create_task(Kb(32), (data_func_t)fn, params, false, false);
 	uint32_t rid = task_push(t, true);
 	if (rid != TASK_ERRED && snprintf(t->name, sizeof(t->name), "Generator #%d", (int)rid)) {
 		gen = events_calloc(1, sizeof(struct generator_s));
@@ -1580,7 +1589,7 @@ static EVENTS_INLINE size_t _tasks_align_forward(size_t addr, size_t align) {
 }
 
 /* Create new task. */
-tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread) {
+tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping) {
 	void *memory = NULL;
 	tasks_t *co = NULL;
 	bool is_main = false;
@@ -1593,7 +1602,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 		heapsize = MINSIGSTKSZ + heapsize;
 #endif
 
-	if (atomic_load(&sys_event.id_generate) == 1) {
+	if (atomic_load(&sys_event.id_generate) == 1 && !is_skipping) {
 		is_main = true;
 		heapsize = heapsize * 4;
 	}
@@ -1705,7 +1714,7 @@ EVENTS_INLINE void accept_handler(client_cb connected, int client) {
 		launch((launch_func_t)accept_client_handler, 2, client, connected);
 	} else {
 		param_t params = arrays(2, client, connected);
-		tasks_t *t = create_task(Kb(32), (data_func_t)accept_client_handler, params, true);
+		tasks_t *t = create_task(Kb(32), (data_func_t)accept_client_handler, params, true, false);
 		if (!is_empty(t)) {
 			task_push(t, false);
 			events_deque_t *q = sys_event.local[t->tid];
@@ -1740,7 +1749,8 @@ EVENTS_INLINE bool task_is_ready(uint32_t id) {
 }
 
 EVENTS_INLINE uint32_t task_id(void) {
-	return active_task()->rid;
+	uint32_t id = active_task()->rid;
+	return  id == NO_RESULT ? active_task()->cid : id;
 }
 
 int results_tid(uint32_t rid) {
@@ -1849,7 +1859,17 @@ uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, .
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	return task_push(create_task(heapsize, (data_func_t)fn, params, false), true);
+	return task_push(create_task(heapsize, (data_func_t)fn, params, false, false), true);
+}
+
+void async_ex(size_t stacksize, launch_func_t fn, uint32_t num_args, ...) {
+	va_list ap;
+
+	va_start(ap, num_args);
+	param_t params = data_ex(num_args, ap);
+	va_end(ap);
+
+	(void)task_push(create_task(stacksize, (data_func_t)fn, params, false, true), false);
 }
 
 uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
@@ -1859,7 +1879,7 @@ uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...) {
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	return task_push(create_task(Kb(18), (data_func_t)fn, params, false), true);
+	return task_push(create_task(Kb(18), (data_func_t)fn, params, false, false), true);
 }
 
 void launch(launch_func_t fn, uint32_t num_of_args, ...) {
@@ -1869,7 +1889,7 @@ void launch(launch_func_t fn, uint32_t num_of_args, ...) {
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	task_push(create_task(Kb(18), (data_func_t)fn, params, false), false);
+	task_push(create_task(Kb(18), (data_func_t)fn, params, false, false), false);
 	yield_task();
 }
 
@@ -1929,9 +1949,9 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 		va_end(ap);
 
 #if defined(_WIN32) && defined(USE_FIBER)
-		return task_push(create_task(Kb(24), (data_func_t)fn, params, true), true);
+		return task_push(create_task(Kb(24), (data_func_t)fn, params, true, false), true);
 #else
-		return task_push(create_task(Kb(18), (data_func_t)fn, params, true), true);
+		return task_push(create_task(Kb(18), (data_func_t)fn, params, true, false), true);
 #endif
 	}
 
@@ -2549,4 +2569,17 @@ os_worker_t *events_add_pool(events_t *loop) {
 		return __thrd()->pool;
 
 	return f_work;
+}
+
+void events_shutdown_pool(void) {
+	events_deque_t **queue = sys_event.local;
+	if (!is_empty(queue) && deque_thread_set) {
+		size_t i, count = atomic_load(&sys_event.num_loops);
+		for (i = 0; i <= count; i++) {
+			if (is_ptr_usable(queue[i])) {
+				atomic_flag_test_and_set(&queue[i]->started);
+				atomic_flag_test_and_set(&queue[i]->shutdown);
+			}
+		}
+	}
 }

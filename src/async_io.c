@@ -245,7 +245,7 @@ static uint32_t async_loop(events_t *loop, size_t heapsize, param_func_t fn, uin
 	param_t params = data_ex(num_of_args, ap);
 	va_end(ap);
 
-	tasks_t *t = create_task(heapsize, (data_func_t)fn, params, false);
+	tasks_t *t = create_task(heapsize, (data_func_t)fn, params, false, false);
 	uint32_t id = task_push(t, true);
 	t->tid = loop->loop_id;
 	return id;
@@ -677,4 +677,73 @@ static EVENTS_INLINE void *_getentropy(param_t args) {
 
 EVENTS_INLINE int async_getentropy(void *buf, size_t buflen) {
 	return await_for(queue_work(events_pool(), _getentropy, 2, buf, casting(buflen))).integer;
+}
+
+static EVENTS_INLINE void *_os_fprintf(param_t args) {
+	FILE *fi;
+	if ((fi = fopen(args[0].const_char_ptr, args[1].const_char_ptr)) != NULL) {
+		flockfile(fi);
+		int count = fprintf(fi, "%s", args[2].const_char_ptr);
+		if (count > 0)
+			fflush(fi);
+
+		funlockfile(fi);
+		fclose(fi);
+		if (count > 0)
+			return casting(count);
+	}
+
+	return 0;
+}
+
+EVENTS_INLINE int async_fprintf(const char *path, const char *mode, const char *buf) {
+	return await_for(queue_work(events_pool(), _os_fprintf, 3, path, mode, buf)).integer;
+}
+
+static EVENTS_INLINE void *_os_fwrite(param_t args) {
+	FILE *fi;
+	if ((fi = fopen(args[0].const_char_ptr, args[1].const_char_ptr)) != NULL) {
+		flockfile(fi);
+		int count = fwrite((const void *)args[2].object, args[3].max_size, args[4].max_size, fi);
+		if (count > 0)
+			fflush(fi);
+
+		funlockfile(fi);
+		fclose(fi);
+		if (count > 0)
+			return casting(count);
+	}
+
+	return 0;
+}
+
+EVENTS_INLINE int async_fwriter(const char *path, const char *mode,
+	void *buf, size_t size, size_t count) {
+	return await_for(queue_work(events_pool(), _os_fwrite, 5,
+		path, mode, buf, casting(size), casting(count))).max_size;
+}
+
+static EVENTS_INLINE void *_os_fopen(param_t args) {
+	return fopen(args[0].const_char_ptr, args[1].const_char_ptr);
+}
+
+EVENTS_INLINE FILE *async_fopen(const char *path, const char *mode) {
+	return (FILE *)await_for(queue_work(events_pool(), _os_fopen, 2)).object;
+}
+
+static EVENTS_INLINE void *_os_fread(param_t args) {
+	return casting(fread(args[0].object, args[1].max_size, args[2].max_size, (FILE *)args[3].object));
+}
+
+EVENTS_INLINE size_t async_fread(void *buf, size_t buf_size, size_t buf_count, FILE *stream) {
+	return await_for(queue_work(events_pool(), _os_fread, 4,
+		buf, casting(buf_size), casting(buf_count), stream)).max_size;
+}
+
+static EVENTS_INLINE void *_os_fclose(param_t args) {
+	return casting(fclose((FILE *)args[0].object));
+}
+
+EVENTS_INLINE int async_fclose(FILE *stream) {
+	return await_for(queue_work(events_pool(), _os_fclose, 1, stream)).integer;
 }

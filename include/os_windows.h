@@ -62,9 +62,6 @@ typedef unsigned long int nfds_t;
 #ifdef __ANDROID__
 typedef uint16_t in_port_t;
 #endif
-#ifndef closesocket
-#	define closesocket(x) closesocket(x)
-#endif
 #define WNOHANG 		0
 #define P_PID 			0
 #define WEXITED 		0

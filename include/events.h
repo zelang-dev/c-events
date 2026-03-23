@@ -171,13 +171,14 @@ typedef struct ex_guard_s ex_guard_t;
 typedef struct ex_ptr_s ex_ptr_t;
 typedef struct ex_context_s ex_context_t;
 typedef struct ex_backtrace_s ex_backtrace_t;
+typedef struct server_socket_s server_socket;
 typedef void (*ex_setup_func)(ex_context_t *, const char *, const char *);
 typedef void (*ex_terminate_func)(void);
 typedef void (*ex_unwind_func)(void *);
-typedef void *(*malloc_func)(size_t);
-typedef void *(*realloc_func)(void *, size_t);
-typedef void *(*calloc_func)(size_t, size_t);
-typedef void (*free_func)(void *);
+typedef void *(*malloc_cb)(size_t);
+typedef void *(*realloc_cb)(void *, size_t);
+typedef void *(*calloc_cb)(size_t, size_t);
+typedef void (*free_cb)(void *);
 typedef void (*events_cb)(fds_t fd, int event, void *args);
 typedef void (*actor_cb)(actor_t *, void *);
 typedef void (*os_cb)(intptr_t file, int bytes, void *data);
@@ -193,6 +194,14 @@ struct ex_ptr_s {
 	void **ptr;
 };
 
+/* Unified socket address. */
+union usa {
+	struct sockaddr sa;
+	struct sockaddr_in sin;
+	struct sockaddr_in6 sin6;
+	struct sockaddr_un sun;
+};
+
 C_API sys_events_t sys_event;
 C_API volatile sig_atomic_t events_got_signal;
 
@@ -202,10 +211,17 @@ C_API bool events_is_destroy(void);
 C_API bool events_is_shutdown(void);
 
 /* Setup custom internal memory allocation handling. */
-C_API int events_set_allocator(malloc_func, realloc_func, calloc_func, free_func);
+C_API int events_set_allocator(malloc_cb, realloc_cb, calloc_cb, free_cb);
 
 /* Sets I/O on the given fd to be non-blocking. */
 C_API int events_set_nonblocking(fds_t fd);
+
+/* Set custom `user_data` to given `fd` ~internal~ table,
+ * only assignable if `main thread` caller. */
+C_API void events_set_target_data(fds_t, void *);
+
+/* Return custom `user_data` from given `fd`. */
+C_API void *events_get_target_data(fds_t);
 
 /* Sets the timeout of a socket to the specified number of milliseconds.
  *
@@ -436,6 +452,10 @@ C_API events_t *tasks_loop(void);
 for `blocking` file/cpu ~system~ handling calls. */
 C_API os_worker_t *events_add_pool(events_t *loop);
 
+/* Send `signal` for all `thread` pool ~handles~ to shutdown,
+break `async_run()` loop. */
+C_API void events_shutdown_pool(void);
+
 /* Return `current/default` ~thread~ pool `os_worker_t` handle. */
 C_API os_worker_t *events_pool(void);
 
@@ -476,6 +496,13 @@ of given `function` with `number` of args, then `arguments`.
 NOTE: The `task` will be added to `current` thread ~schedular~ `run queue`,
 same behavior as GoLang's `Go` statement. */
 C_API uint32_t async_task(param_func_t fn, uint32_t num_of_args, ...);
+
+/* Same as `async_task()`, except allows setting custom `stacksize` to use,
+and does not `return/set` a result.
+
+NOTE: `async_task()` would have resized the `default` ~stacksize~
+to `x6` larger, if ~first~ aka `main task`. */
+C_API void async_ex(size_t stacksize, launch_func_t fn, uint32_t num_args, ...);
 
 /* Same as `async_task()`, except the ~`coroutine`~ `added/executed` in ~thread~ pool.
 WILL `panic/abort`, if `events_tasks_pool()` not set. */

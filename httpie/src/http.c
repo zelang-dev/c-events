@@ -512,7 +512,8 @@ int parse_http(http_parser_type action, http_t *this, string headers) {
 				string *params = str_split_ex(line, " ", nullptr);
 				if (this->action == HTTP_REQUEST) {
 					snprintf(this->method, sizeof(this->method), "%s", trim(params[0]));
-					snprintf(this->path, sizeof(this->path), "%s", trim(params[1]));
+					this->url_to = str_dup(trim(params[1]));
+					snprintf(this->path, sizeof(this->path), "%s", this->url_to);
 					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(params[2]));
 				} else if (this->action == HTTP_RESPONSE) {
 					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(params[0]));
@@ -604,8 +605,8 @@ int parse_http(http_parser_type action, http_t *this, string headers) {
 
 		parse_multipart(this);
 		// split path and parameters string
-		if (str_has(this->path, "?")) {
-			string *param = str_split_ex(this->path, "?", nullptr);
+		if (str_has(this->url_to, "?")) {
+			string *param = str_split_ex(this->url_to, "?", nullptr);
 			snprintf(this->path, sizeof(this->path), "%s", param[0]);
 			parameters = param[1];
 			// parse the parameters
@@ -618,7 +619,7 @@ int parse_http(http_parser_type action, http_t *this, string headers) {
 		if (!is_empty(lines))
 			free(lines);
 
-		return this->request_len;
+		return this->req.request_len;
 	}
 
 	return -1;
@@ -656,20 +657,19 @@ void http_free(http_t *this) {
 
 http_t *http_for(string hostname, double protocol) {
 	http_t *this = fence(calloc(1, sizeof(http_t)), http_free);
-	if (is_empty(this))
-		panic("calloc() failed");
-
-	this->names = nullptr;
-	this->cookies = nullptr;
-	this->garbage = nullptr;
-	this->sessions = nullptr;
-	this->dispositions = nullptr;
-	this->is_multipart = false;
-    this->code = STATUS_OK;
-    this->status = STATUS_NO_CONTENT;
-    this->hostname = hostname;
-    this->version = protocol;
-	this->type = (data_types)DATA_HTTPINFO;
+	if (!is_empty(this)) {
+		this->names = nullptr;
+		this->cookies = nullptr;
+		this->garbage = nullptr;
+		this->sessions = nullptr;
+		this->dispositions = nullptr;
+		this->is_multipart = false;
+		this->code = STATUS_OK;
+		this->status = STATUS_NO_CONTENT;
+		this->hostname = hostname;
+		this->version = protocol;
+		this->type = (data_types)DATA_HTTPINFO;
+	}
 
 	return this;
 }
@@ -1117,6 +1117,10 @@ FORCEINLINE string http_get_body(http_t *this) {
 
 FORCEINLINE string http_get_url(http_t *this) {
 	return this->uri;
+}
+
+FORCEINLINE string http_get_uri(http_t *this) {
+	return this->url_to;
 }
 
 FORCEINLINE string http_get_header(http_t *this, string key) {

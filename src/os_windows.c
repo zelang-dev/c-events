@@ -24,6 +24,7 @@ static CRITICAL_SECTION events_siglock;
 static volatile sig_atomic_t signal_running = false;
 static char os_exec_command[MAX_PATH] = {0};
 volatile sig_atomic_t events_got_signal = 0;
+CRITICAL_SECTION global_events_file_lock = {0};
 
 #define events_sigblock		EnterCriticalSection(&events_siglock)
 #define events_sigunblock	LeaveCriticalSection(&events_siglock)
@@ -288,6 +289,7 @@ int os_init(void) {
 
 	InitializeCriticalSection(&fdTableCritical);
 	InitializeCriticalSection(&events_siglock);
+	InitializeCriticalSection(&global_events_file_lock);
 
 	/*
 	 * Create the I/O completion port to be used for our I/O queue.
@@ -323,6 +325,7 @@ void os_shutdown(void) {
 	events_free(fdTable);
 	DeleteCriticalSection(&fdTableCritical);
 	DeleteCriticalSection(&events_siglock);
+	DeleteCriticalSection(&global_events_file_lock);
 	os_initialized = false;
 }
 

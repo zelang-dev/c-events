@@ -230,6 +230,7 @@ struct events_fd_s {
 	intptr_t _backend; /* can be used by backends (never modified by core) */
 	events_cb callback;
 	void *cb_arg;
+	void *user_data;
 	events_t *loop;
 	uds_t uds;
 	udp_t udp;
@@ -583,7 +584,7 @@ uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, .
 void thread_result_set(os_request_t *p, void *res);
 uint32_t task_push(tasks_t *t, bool has_result);
 void *task_erred(tasks_t *t, int code);
-tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread);
+tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping);
 bool tasks_is_active(void);
 int results_tid(uint32_t rid);
 

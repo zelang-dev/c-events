@@ -80,6 +80,9 @@ typedef void (*emulate_dtor)(void *);
 #	define INFINITE -1
 #endif
 
+#define closesocket	close
+#define INVALID_SOCKET	(-1)
+
 #include <ucontext.h>
 #include <pthread.h>
 #include <sys/syscall.h>

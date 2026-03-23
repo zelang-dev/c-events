@@ -46,6 +46,7 @@ TEST(http_request) {
     ASSERT_STR("<b>hello world</b>", http_get_body(parser));
     ASSERT_STR("one", http_get_param(parser, "free"));
 	ASSERT_STR("POST", http_get_method(parser));
+	ASSERT_STR("/path?free=one&open=two", http_get_uri(parser));
 	ASSERT_STR("/path", http_get_path(parser));
 	ASSERT_STR("HTTP/1.1", http_get_protocol(parser));
 

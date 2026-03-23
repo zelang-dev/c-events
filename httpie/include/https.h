@@ -134,6 +134,12 @@ typedef enum {
 } http_parser_type;
 
 typedef enum {
+	PROTOCOL_HTTP1 = HTTP_BOTH + 1,
+	PROTOCOL_WEBSOCKET,
+	PROTOCOL_HTTP2
+} http_protocol_type;
+
+typedef enum {
     F_CHUNKED = 1 << 0,
     F_CONNECTION_KEEP_ALIVE = 1 << 1,
     F_CONNECTION_CLOSE = 1 << 2,
@@ -161,15 +167,15 @@ typedef enum {
 	head_custom,
 } header_types;
 
-/* Opcodes, from http://tools.ietf.org/html/rfc6455 */
-enum {
-	WEBSOCKET_OPCODE_CONTINUATION = 0x0,
-	WEBSOCKET_OPCODE_TEXT = 0x1,
-	WEBSOCKET_OPCODE_BINARY = 0x2,
-	WEBSOCKET_OPCODE_CONNECTION_CLOSE = 0x8,
-	WEBSOCKET_OPCODE_PING = 0x9,
-	WEBSOCKET_OPCODE_PONG = 0xa
-};
+/* Opcodes, from https://datatracker.ietf.org/doc/html/rfc6455#page-66 */
+typedef enum {
+	WS_OPS_CONTINUATION = 0x0,
+	WS_OPS_TEXT = 0x1,
+	WS_OPS_BINARY = 0x2,
+	WS_OPS_CLOSE = 0x8,
+	WS_OPS_PING = 0x9,
+	WS_OPS_PONG = 0xa
+} websocket_type;
 
 #ifdef __cplusplus
 extern "C"
@@ -297,6 +303,7 @@ C_API string http_get_method(http_t *this);
 C_API string http_get_body(http_t *this);
 C_API string http_get_protocol(http_t *this);
 C_API string http_get_url(http_t *this);
+C_API string http_get_uri(http_t *this);
 C_API string http_get_path(http_t *this);
 C_API string http_get_boundary(http_t *this);
 

@@ -34,8 +34,33 @@ option(BUILD_HTTPIE "Additional data structures, http parser and web client/serv
 message("Generated with config types: ${CMAKE_CONFIGURATION_TYPES}")
 set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
 
-include(DetermineTargetArchitecture)
-determine_target_architecture(${PROJECT_NAME}_ARCHITECTURE)
+if (MSVC)
+    if("${MSVC_C_ARCHITECTURE_ID}" STREQUAL "X86")
+      set(PROJECT__ARCH "i686")
+    elseif("${MSVC_C_ARCHITECTURE_ID}" STREQUAL "x64")
+      set(PROJECT__ARCH "x86_64")
+    elseif("${MSVC_C_ARCHITECTURE_ID}" STREQUAL "ARM")
+      set(PROJECT__ARCH "arm")
+    else()
+      message(FATAL_ERROR "Failed to determine the MSVC target architecture: ${MSVC_C_ARCHITECTURE_ID}")
+    endif()
+else()
+    execute_process(
+      COMMAND ${CMAKE_C_COMPILER} -dumpmachine
+      RESULT_VARIABLE RESULT
+      OUTPUT_VARIABLE PROJECT__ARCH
+      ERROR_QUIET
+    )
+    if (RESULT)
+      message(FATAL_ERROR "Failed to determine target architecture triplet: ${RESULT}")
+    endif()
+    string(REGEX MATCH "([^-]+).*" ARCH_MATCH ${PROJECT__ARCH})
+    if (NOT CMAKE_MATCH_1 OR NOT ARCH_MATCH)
+      message(FATAL_ERROR "Failed to match the target architecture triplet: ${PROJECT__ARCH}")
+    endif()
+    set(PROJECT__ARCH ${CMAKE_MATCH_1})
+endif()
+message(STATUS "Target architecture - ${PROJECT__ARCH}")
 
 set(ev_sources
 	${CMAKE_CURRENT_SOURCE_DIR}/src/rpmalloc.c
@@ -184,7 +209,7 @@ set(CPACK_PACKAGE_DEPENDS "openssl")
 
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Lawrence Stubbs <${CPACK_PACKAGE_CONTACT}>")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${PROJECT_NAME}_ARCHITECTURE")
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${PROJECT__ARCH}")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://zelang-dev.github.io/c-events/")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_PACKAGE_DEPENDS}")
 
@@ -201,7 +226,7 @@ set(CPACK_PACKAGE_DESCRIPTION ${PROJECT_DESCRIPTION})
 
 set(CPACK_RPM_PACKAGE_LICENSE "MIT")
 set(CPACK_RPM_PACKAGE_URL "https://zelang-dev.github.io/c-events/")
-set(CPACK_RPM_PACKAGE_ARCHITECTURE "${PROJECT_NAME}_ARCHITECTURE")
+set(CPACK_RPM_PACKAGE_ARCHITECTURE "${PROJECT__ARCH}")
 set(CPACK_RPM_PACKAGE_REQUIRES "${CPACK_PACKAGE_DEPENDS}")
 
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/eventsConfig.cmake

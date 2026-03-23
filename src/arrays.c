@@ -22,7 +22,7 @@ typedef struct array_metadata_s {
 	data_types type;
 	size_t size;
 	size_t capacity;
-	free_func destructor;
+	free_cb destructor;
 	events_cacheline_t _pad;
 	atomic_spinlock lock;
 } array_metadata_t;
@@ -137,7 +137,7 @@ EVENTS_INLINE void data_remove(array_t arr, size_t i) {
 	if (arr) {
 		const size_t cv_sz__ = array_length(arr);
 		if ((i) < cv_sz__) {
-			free_func destructor__ = array_destructor(arr);
+			free_cb destructor__ = array_destructor(arr);
 			if (destructor__) {
 				destructor__(&(arr)[i]);
 			}
@@ -151,7 +151,7 @@ EVENTS_INLINE void data_remove(array_t arr, size_t i) {
 EVENTS_INLINE void data_delete(array_t arr) {
 	if (arr && is_ptr_usable(arr)) {
 		void *p1__ = array_address(arr);
-		free_func destructor__ = array_destructor(arr);
+		free_cb destructor__ = array_destructor(arr);
 		if (destructor__) {
 			size_t i__;
 			for (i__ = 0; i__ < array_length(arr); ++i__) {
@@ -249,7 +249,7 @@ EVENTS_INLINE array_t data_copy(array_t des, array_t src) {
 
 EVENTS_INLINE array_t data_reset(array_t vec) {
 	if (vec) {
-		free_func destructor__ = array_destructor(vec);
+		free_cb destructor__ = array_destructor(vec);
 		if (destructor__) {
 			size_t i__;
 			for (i__ = 0; i__ < array_length(vec); ++i__) {
@@ -756,6 +756,23 @@ EVENTS_INLINE bool str_is_case(const char *s1, const char *s2) {
 
 EVENTS_INLINE bool str_is_empty(const char *str) {
 	return is_empty(str) || strlen(str) == 0;
+}
+
+void str_lcpy(char *dest, const char *src, size_t len) {
+	if (is_empty(dest) || len == 0)
+		return;
+
+	if (str_is_empty(src)) {
+		*dest = '\0';
+		return;
+	}
+
+	while (len > 1 && *src != '\0') {
+		*dest++ = *src++;
+		len--;
+	}
+
+	*dest = '\0';
 }
 
 static data_types scheme_type(char *scheme) {

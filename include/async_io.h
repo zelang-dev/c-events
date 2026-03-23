@@ -60,8 +60,15 @@
 #include <async_tls.h>
 #ifdef _WIN32
 #	include <os_windows.h>
+extern CRITICAL_SECTION global_events_file_lock;
+#	define flockfile(x) (EnterCriticalSection(&global_events_file_lock))
+#	define funlockfile(x) (LeaveCriticalSection(&global_events_file_lock))
+#	define INT64_FMT "I64d"
+#	define UINT64_FMT "I64u"
 #else
 #	include <os_unix.h>
+#	define INT64_FMT PRId64
+#	define UINT64_FMT PRIu64
 #endif
 
 /*
@@ -417,6 +424,9 @@ C_API void uds_handler(uds_unix_cb connected, int client);
 C_API bool socket_is_uds(int socket);
 
 C_API int async_getentropy(void *buf, size_t buflen);
+C_API int async_fwriter(const char *path, const char *mode, void *buf, size_t size, size_t count);
+C_API int async_fprintf(const char *path, const char *mode, const char *buf);
+C_API FILE *async_fopen(const char *path, const char *mode);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

@@ -1,7 +1,35 @@
 #include "httpie_internal.h"
 
+unsigned short sockaddr_in_port(union usa *s) {
+	if (s->sa.sa_family == AF_INET)
+		return s->sin.sin_port;
+#if defined(USE_IPV6)
+	if (s->sa.sa_family == AF_INET6)
+		return s->sin6.sin6_port;
+#endif
+	return 0;
+}
+
+void sockaddr_to_str(char *buf, size_t len, const union usa *usa) {
+	buf[0] = '\0';
+
+	if (!usa) {
+		return;
+	}
+
+	if (usa->sa.sa_family == AF_INET) {
+		getnameinfo(&usa->sa, sizeof(usa->sin), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
+	} else if (usa->sa.sa_family == AF_INET6) {
+		getnameinfo(&usa->sa, sizeof(usa->sin6), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
+	} else if (usa->sa.sa_family == AF_UNIX) {
+		/* TODO: Define a remote address for unix domain sockets.
+		* This code will always return "localhost", identical to http+tcp:*/
+		getnameinfo(&usa->sa, sizeof(usa->sun), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
+	}
+}
+
 /* Return null terminated string `buf` of given maximum length. */
-void http_vsnprintf(http_t *conn, bool *truncated, char *buf, size_t buflen, const char *fmt, va_list ap) {
+void http_vsnprintf(http_t *conn, bool *truncated, string buf, size_t buflen, string_t fmt, va_list ap) {
 	int n;
 	bool ok;
 
@@ -31,7 +59,7 @@ void http_vsnprintf(http_t *conn, bool *truncated, char *buf, size_t buflen, con
 	buf[n] = '\0';
 }
 
-void http_snprintf(http_t *conn, bool *truncated, char *buf, size_t buflen, const char *fmt, ...) {
+void http_snprintf(http_t *conn, bool *truncated, string buf, size_t buflen, string_t fmt, ...) {
 	va_list ap;
 
 	va_start(ap, fmt);
@@ -50,13 +78,13 @@ FORCEINLINE int http_printf_no_cache(http_t *conn) {
 		"Expires: 0\r\n");
 }
 
-void http_error(http_t *conn, int status, const char *fmt, ...) {
+void http_error(http_t *conn, int status, string_t fmt, ...) {
 	char buf[Kb(8)];
 	va_list ap;
 	int has_body;
 	char date[64];
 	time_t curtime;
-	const char *status_text;
+	string_t status_text;
 
 	if (is_empty(conn)) return;
 
@@ -72,7 +100,7 @@ void http_error(http_t *conn, int status, const char *fmt, ...) {
 	 * Errors 1xx, 204 and 304 MUST NOT send a body
 	 */
 	has_body = (status > 199 && status != 204 && status != 304);
-	conn->must_close = true;
+	conn->req.must_close = true;
 	http_printf(conn, "HTTP/1.1 %d %s\r\n", status, status_text);
 	http_printf_no_cache(conn);
 	if (has_body)
@@ -96,12 +124,82 @@ void http_error(http_t *conn, int status, const char *fmt, ...) {
 	}
 }
 
+static void http_cors_header(http_t *conn) {
+	const char *origin_hdr = http_get_header(conn, "Origin");
+	const char *cors_orig_cfg =
+		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_ORIGIN];
+	const char *cors_cred_cfg =
+		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_CREDENTIALS];
+	const char *cors_hdr_cfg =
+		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_HEADERS];
+	const char *cors_exphdr_cfg =
+		conn->ctx->host.config[ACCESS_CONTROL_EXPOSE_HEADERS];
+	const char *cors_meth_cfg =
+		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_METHODS];
+	const char *cors_repl_asterisk_with_orig_cfg =
+		conn->ctx->host.config[REPLACE_ASTERISK_WITH_ORIGIN];
+
+	if (cors_orig_cfg && *cors_orig_cfg && origin_hdr && *origin_hdr
+		&& cors_repl_asterisk_with_orig_cfg
+		&& *cors_repl_asterisk_with_orig_cfg) {
+		int cors_repl_asterisk_with_orig =
+			str_is_case(cors_repl_asterisk_with_orig_cfg, "yes");
+
+		/* Cross-origin resource sharing (CORS), see
+		 * http://www.html5rocks.com/en/tutorials/cors/,
+		 * http://www.html5rocks.com/static/images/cors_server_flowchart.png
+		 * CORS preflight is not supported for files. */
+		if (cors_repl_asterisk_with_orig && cors_orig_cfg[0] == '*') {
+			mg_response_header_add(conn,
+				"Access-Control-Allow-Origin",
+				origin_hdr,
+				-1);
+		} else {
+			mg_response_header_add(conn,
+				"Access-Control-Allow-Origin",
+				cors_orig_cfg,
+				-1);
+		}
+	}
+
+	if (cors_cred_cfg && *cors_cred_cfg && origin_hdr && *origin_hdr) {
+		/* Cross-origin resource sharing (CORS), see
+		 * https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Credentials
+		 */
+		mg_response_header_add(conn,
+			"Access-Control-Allow-Credentials",
+			cors_cred_cfg,
+			-1);
+	}
+
+	if (cors_hdr_cfg && *cors_hdr_cfg) {
+		mg_response_header_add(conn,
+			"Access-Control-Allow-Headers",
+			cors_hdr_cfg,
+			-1);
+	}
+
+	if (cors_exphdr_cfg && *cors_exphdr_cfg) {
+		mg_response_header_add(conn,
+			"Access-Control-Expose-Headers",
+			cors_exphdr_cfg,
+			-1);
+	}
+
+	if (cors_meth_cfg && *cors_meth_cfg) {
+		mg_response_header_add(conn,
+			"Access-Control-Allow-Methods",
+			cors_meth_cfg,
+			-1);
+	}
+}
+
 /*
  * Print message to buffer. If buffer is large enough to hold the message,
  * return buffer. If buffer is to small, allocate large enough buffer on heap,
  * and return allocated buffer.
  */
-static int alloc_vprintf(char **out_buf, char *prealloc_buf, size_t prealloc_size, const char *fmt, va_list ap) {
+static int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap) {
 	va_list ap_copy;
 	int len;
 
@@ -142,9 +240,9 @@ static int alloc_vprintf(char **out_buf, char *prealloc_buf, size_t prealloc_siz
 	return len;
 }
 
-static int http_vprintf(http_t *conn, const char *fmt, va_list ap) {
+static int http_vprintf(http_t *conn, string_t fmt, va_list ap) {
 	char mem[Kb(8)];
-	char *buf;
+	string buf;
 	int len;
 
 	buf = NULL;
@@ -160,7 +258,7 @@ static int http_vprintf(http_t *conn, const char *fmt, va_list ap) {
 
 }
 
-int http_printf(http_t *conn, const char *fmt, ...) {
+int http_printf(http_t *conn, string_t fmt, ...) {
 	va_list ap;
 	int result;
 
@@ -171,14 +269,21 @@ int http_printf(http_t *conn, const char *fmt, ...) {
 	return result;
 }
 
+/* Used to construct an etag which can be used to identify a file on a specific moment. */
+void http_construct_etag(http_t *ctx, string buf, size_t buf_len, const struct file *filep) {
+	if (filep != NULL && buf != NULL && buf_len > 0) {
+		http_snprintf(ctx, NULL, buf, buf_len, "\"%lx.%" INT64_FMT "\"", (unsigned long)filep->last_modified, filep->size);
+	}
+}
+
 static int http_read_inner(http_t *conn, void *buffie, size_t len) {
 	int64_t n;
 	int64_t buffered_len;
 	int64_t nread;
 	/* since the return value is * int, we may not read more * bytes */
 	int64_t len64 = (int64_t)((len > INT_MAX) ? INT_MAX : len);
-	const char *body;
-	char *buf;
+	string_t body;
+	string buf;
 
 	if (is_empty(conn))
 		return 0;
@@ -188,17 +293,17 @@ static int http_read_inner(http_t *conn, void *buffie, size_t len) {
 	 * If Content-Length is not set for a PUT or POST request, read until
 	 * socket is closed
 	 */
-	if (conn->consumed_content == 0 && conn->content_len == -1) {
-		conn->content_len = INT64_MAX;
-		conn->must_close = true;
+	if (conn->req.consumed_content == 0 && conn->req.content_len == -1) {
+		conn->req.content_len = INT64_MAX;
+		conn->req.must_close = true;
 	}
 
 	nread = 0;
-	if (conn->consumed_content < conn->content_len) {
+	if (conn->req.consumed_content < conn->req.content_len) {
 		/*
 		 * Adjust number of bytes to read.
 		 */
-		int64_t left_to_read = conn->content_len - conn->consumed_content;
+		int64_t left_to_read = conn->req.content_len - conn->req.consumed_content;
 		if (left_to_read < len64) {
 			/*
 			 * Do not read more than the total content length of the request.
@@ -209,15 +314,15 @@ static int http_read_inner(http_t *conn, void *buffie, size_t len) {
 		/*
 		 * Return buffered data
 		 */
-		buffered_len = (int64_t)(conn->data_len) - (int64_t)conn->request_len - conn->consumed_content;
+		buffered_len = (int64_t)(conn->req.data_len) - (int64_t)conn->req.request_len - conn->req.consumed_content;
 		if (buffered_len > 0) {
 			if (len64 < buffered_len)
 				buffered_len = len64;
 
-			body = conn->buf + conn->request_len + conn->consumed_content;
+			body = conn->req.buf + conn->req.request_len + conn->req.consumed_content;
 			memcpy(buf, body, (size_t)buffered_len);
 			len64 -= buffered_len;
-			conn->consumed_content += buffered_len;
+			conn->req.consumed_content += buffered_len;
 			nread += buffered_len;
 			buf += buffered_len;
 		}
@@ -242,42 +347,42 @@ static FORCEINLINE char http_getc(http_t *conn) {
 	if (is_empty(conn))
 		return 0;
 
-	conn->content_len++;
+	conn->req.content_len++;
 	if (http_read_inner(conn, &c, 1) <= 0)
 		return '\0';
 
 	return c;
 }
 
-int http_read(http_t *conn, void *buf, size_t len) {
+int http_read(http_t *conn, void_t buf, size_t len) {
 	if (len > INT_MAX)
 		len = INT_MAX;
 
 	if (is_empty(conn))
 		return 0;
 
-	if (conn->is_chunked) {
+	if (conn->req.is_chunked) {
 		size_t all_read;
 		all_read = 0;
 		while (len > 0) {
 			/*
 			 * No more data left to read
 			 */
-			if (conn->is_chunked == 2)
+			if (conn->req.is_chunked == 2)
 				return 0;
 
-			if (conn->chunk_remainder) {
+			if (conn->req.chunk_remainder) {
 				/* copy from the remainder of the last received chunk */
 				long read_ret;
-				size_t read_now = ((conn->chunk_remainder > len) ? (len) : (conn->chunk_remainder));
-				conn->content_len += (int)read_now;
+				size_t read_now = ((conn->req.chunk_remainder > len) ? (len) : (conn->req.chunk_remainder));
+				conn->req.content_len += (int)read_now;
 
-				read_ret = http_read_inner(conn, (char *)buf + all_read, read_now);
+				read_ret = http_read_inner(conn, (string)buf + all_read, read_now);
 				all_read += (size_t)read_ret;
 
-				conn->chunk_remainder -= read_now;
+				conn->req.chunk_remainder -= read_now;
 				len -= read_now;
-				if (conn->chunk_remainder == 0) {
+				if (conn->req.chunk_remainder == 0) {
 					/*
 					 * the rest of the data in the current chunk has been read
 					 */
@@ -294,7 +399,7 @@ int http_read(http_t *conn, void *buf, size_t len) {
 				 */
 				int i;
 				char lenbuf[64];
-				char *end;
+				string end;
 				unsigned long chunkSize;
 
 				i = 0;
@@ -312,7 +417,7 @@ int http_read(http_t *conn, void *buf, size_t len) {
 						 * regular end of content
 						 */
 						if (chunkSize == 0)
-							conn->is_chunked = 2;
+							conn->req.is_chunked = 2;
 						break;
 					}
 
@@ -332,7 +437,7 @@ int http_read(http_t *conn, void *buf, size_t len) {
 				if (chunkSize == 0)
 					break;
 
-				conn->chunk_remainder = chunkSize;
+				conn->req.chunk_remainder = chunkSize;
 			}
 		}
 
@@ -343,8 +448,8 @@ int http_read(http_t *conn, void *buf, size_t len) {
 }
 
 bool http_forward_body(http_t *conn, FILE *fp) {
-	const char *expect;
-	const char *body;
+	string_t expect;
+	string_t body;
 	char buf[Kb(8)];
 	int to_read;
 	int nread;
@@ -362,7 +467,7 @@ bool http_forward_body(http_t *conn, FILE *fp) {
 		return false;
 	}
 
-	if (conn->content_len == -1 && !conn->is_chunked) {
+	if (conn->req.content_len == -1 && !conn->req.is_chunked) {
 		/*
 		 * Content length is not specified by the client.
 		 */
@@ -379,32 +484,32 @@ bool http_forward_body(http_t *conn, FILE *fp) {
 		} else
 			conn->status = 200;
 
-		buffered_len = (int64_t)(conn->data_len) - (int64_t)conn->request_len - conn->consumed_content;
-		if (buffered_len < 0 || conn->consumed_content != 0) {
+		buffered_len = (int64_t)(conn->req.data_len) - (int64_t)conn->req.request_len - conn->req.consumed_content;
+		if (buffered_len < 0 || conn->req.consumed_content != 0) {
 			http_error(conn, 500, "%s", "Error: Size mismatch");
 			return false;
 		}
 
 		if (buffered_len > 0) {
-			if ((int64_t)buffered_len > conn->content_len)
-				buffered_len = (int)conn->content_len;
+			if ((int64_t)buffered_len > conn->req.content_len)
+				buffered_len = (int)conn->req.content_len;
 
-			body = conn->buf + conn->request_len + conn->consumed_content;
+			body = conn->req.buf + conn->req.request_len + conn->req.consumed_content;
 			tls_writer(conn->fd, (string)body, (int64_t)buffered_len);
-			conn->consumed_content += buffered_len;
+			conn->req.consumed_content += buffered_len;
 		}
 
 		nread = 0;
-		while (conn->consumed_content < conn->content_len) {
+		while (conn->req.consumed_content < conn->req.content_len) {
 			to_read = sizeof(buf);
-			if ((int64_t)to_read > conn->content_len - conn->consumed_content) to_read = (int)(conn->content_len - conn->consumed_content);
+			if ((int64_t)to_read > conn->req.content_len - conn->req.consumed_content) to_read = (int)(conn->req.content_len - conn->req.consumed_content);
 
 			nread = tls_reader(conn->fd, buf, to_read);
 			if (nread <= 0 || tls_writer(conn->fd, buf, nread) != nread) break;
-			conn->consumed_content += nread;
+			conn->req.consumed_content += nread;
 		}
 
-		if (conn->consumed_content == conn->content_len)
+		if (conn->req.consumed_content == conn->req.content_len)
 			success = (nread >= 0);
 
 		/*
@@ -424,24 +529,24 @@ bool http_forward_body(http_t *conn, FILE *fp) {
 }
 
 bool http_should_keep_alive(http_t *conn) {
-	const char *http_version;
-	const char *header;
+	string_t http_version;
+	string_t header;
 
 	if (is_empty(conn)) return false;
 
 	http_version = conn->protocol;
 	header = http_get_header(conn, "Connection");
 
-	if (conn->must_close) return false;
+	if (conn->req.must_close) return false;
 	if (conn->status == 401) return false;
-	if (!conn->enable_keep_alive) return false;
+	if (!conn->req.enable_keep_alive) return false;
 	if (!is_empty(header) && !http_has_flag(conn, "Connection", "keep-alive")) return false;
 	if (is_empty(header) && !str_is_empty(http_version) && str_is(http_version, "1.1")) return false;
 
 	return true;
 }
 
-FORCEINLINE const char *http_suggest_connection_header(http_t *conn) {
+FORCEINLINE string_t http_suggest_connection_header(http_t *conn) {
 	return http_should_keep_alive(conn) ? "keep-alive" : "close";
 }
 
@@ -450,11 +555,11 @@ void http_options(http_t *conn) {
 	time_t curtime;
 
 	if (is_empty(conn)) return;
-	if (is_empty(conn->document_root)) return;
+	if (is_empty(conn->ctx->document_root)) return;
 
 	curtime = time(NULL);
 	conn->status = 200;
-	conn->must_close = true;
+	conn->req.must_close = true;
 
 	http_gmt_time_str(date, sizeof(date), &curtime);
 	http_printf(conn,
@@ -469,60 +574,67 @@ void http_options(http_t *conn) {
 		http_suggest_connection_header(conn));
 }
 
-void http_logger(enum http_dbg debug_level, http_t *conn, const char *fmt, ...) {
-	char buf[Kb(8)];
-	char clientbuf[ARRAY_SIZE];
+static string_t logger_level_str(enum http_dbg debug_level) {
+	string_t level;
+	switch (debug_level) {
+		case DEBUG_NONE:
+			level = " ";
+			break;
+		case DEBUG_CRASH:
+			level = " [FATAL] ";
+			break;
+		case DEBUG_ERROR:
+			level = " [ERROR] ";
+			break;
+		case DEBUG_WARNING:
+			level = " [WARN] ";
+			break;
+		case DEBUG_INFO:
+			level = " [INFO] ";
+			break;
+		default:
+			level = " [unknown] ";
+			break;
+	}
+
+	return level;
+}
+
+void http_logger(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
+	char buf[Kb(4)] = {0};
+	char clientbuf[ARRAY_SIZE] = {0};
 	va_list ap;
 	FILE *fi;
 	time_t timestamp;
 
 	/*
-	 * Check if we have a context. Without a context there is no callback
-	 * and also other important information like the path to the error file
-	 * is missing. No need to continue if that information cannot be
-	 * retrieved.
-	 */
-	//if (is_empty(conn)) return;
-
-	/*
 	 * Check if the message is severe enough to display. This is controlled
-	 * with a context specific debug level.
-	 */
-	if (debug_level > conn->debug_level) return;
-
-	/*
-	 * We now try to open the error log file. If this succeeds the error is
-	 * appended to the file. On failure there is no way to log the message
-	 * without disrupting the user's flow of control so we just return and
-	 * logging anything. This is IMHO better than printing to stderr which
-	 * may not even be available on all platforms (Windows etc).
-	 */
-	if (is_empty(conn->error_log_file)) return;
+	 * with a context specific debug level. */
+	if (debug_level > conn->ctx->debug_level) return;
 
 	/*
 	 * Gather all the information from the parameters of this function and
-	 * create a NULL terminated string buffer with the error message.
-	 */
+	 * create a NULL terminated string buffer with the error message. */
 	va_start(ap, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, ap);
+	vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
 	va_end(ap);
-	buf[sizeof(buf) - 1] = 0;
-
 	timestamp = time(NULL);
-	if (is_empty(conn))
-		snprintf(clientbuf, sizeof(clientbuf), "[%010lu] [error] : ", (unsigned long)timestamp);
-	else
-		snprintf(clientbuf, sizeof(clientbuf), "[%010lu] [error] [client %s] %s %s: ",
-			(unsigned long)timestamp, conn->addr, conn->method, conn->uri);
 
-	if ((fi = fopen(conn->error_log_file, "a+")) != NULL) {
-		flockfile(fi);
-		fprintf(fi, "%s %s", clientbuf, buf);
-		fputc('\n', fi);
-		fflush(fi);
-		funlockfile(fi);
+	/*
+	 * We now try to open the error log file. If this succeeds the error is
+	 * appended to the file. */
+	if (is_empty(conn) || is_empty(conn->ctx->error_log_file)) {
+		cerr("[%010lu]%s: %s"CLR_LN, (unsigned long)timestamp, logger_level_str(debug_level), buf);
+		return;
+	}
 
-		fclose(fi);
+	yield_task();
+	snprintf(clientbuf, sizeof(clientbuf), "[%010lu]%s[client %s] %s %s: ",
+		(unsigned long)timestamp, logger_level_str(debug_level), "conn->remote_addr", conn->method, conn->uri);
+	string_t data = str_cat_ex(4, clientbuf, " ", buf, "\n");
+	if (!is_empty(data)) {
+		async_fprintf((string_t)conn->ctx->error_log_file, "a+", data);
+		str_free((void_t)data);
 	}
 }
 
@@ -530,11 +642,10 @@ void http_logger(enum http_dbg debug_level, http_t *conn, const char *fmt, ...) 
  * Check whether full request is buffered. Return:
  * -1  if request is malformed
  *  0  if request is not yet fully buffered
- * >0  actual request length, including last \r\n\r\n
- */
-static int http_get_request_len(const char *buf, int buflen) {
-	const char *s;
-	const char *e;
+ * >0  actual request length, including last \r\n\r\n */
+static int http_get_request_len(string_t buf, int buflen) {
+	string_t s;
+	string_t e;
 	int len;
 
 	len = 0;
@@ -558,7 +669,7 @@ static int http_get_request_len(const char *buf, int buflen) {
 	return len;
 }
 
-int http_read_request(http_t *conn, char *buf, int bufsiz, int *nread) {
+int http_read_request(http_t *conn, string buf, int bufsiz, int *nread) {
 	int request_len;
 	int n;
 
@@ -579,8 +690,15 @@ int http_read_request(http_t *conn, char *buf, int bufsiz, int *nread) {
 	return (request_len <= 0 && n <= 0) ? -1 : request_len;
 }
 
-bool http_get_request(http_t *conn, int *err) {
-	const char *cl;
+FORCEINLINE uint32_t http_get_remote_ip(const http_t *conn) {
+	if (conn == NULL)
+		return 0;
+
+	return ntohl(*(const uint32_t *)&conn->client.rsa.sin.sin_addr);
+}
+
+bool http_get_request(http_ini_t *ctx, http_t *conn, int *err) {
+	string_t cl;
 	uint32_t remote_ip;
 	char remote_ip_str[16];
 
@@ -593,73 +711,139 @@ bool http_get_request(http_t *conn, int *err) {
 		return false;
 	}
 
-	conn->request_len = http_read_request(conn, conn->buf, conn->buf_size, &conn->data_len);
-	remote_ip = XX_httplib_get_remote_ip(conn);
+	conn->req.request_len = http_read_request(conn, conn->req.buf, conn->req.buf_size, &conn->req.data_len);
+	remote_ip = http_get_remote_ip(conn);
 	snprintf(remote_ip_str, 16, "%d.%d.%d.%d", (remote_ip >> 24), (remote_ip >> 16) & 0xff, (remote_ip >> 8) & 0xff, remote_ip & 0xff);
 
-	if (conn->request_len >= 0 && conn->data_len < conn->request_len) {
+	if (conn->req.request_len >= 0 && conn->req.data_len < conn->req.request_len) {
 		http_logger(DEBUG_ERROR, conn, "%s: %s invalid request size", __func__, remote_ip_str);
 		*err = 500;
 		return false;
 	}
 
-	if (conn->request_len == 0 && conn->data_len == conn->buf_size) {
-		http_logger(DEBUG_ERROR, conn, "%s: %s request too large", __func__, remote_ip_str);
+	if (conn->req.request_len == 0 && conn->req.data_len == conn->req.buf_size) {
+		http_logger(DEBUG_ERROR, conn, "%s: %s request too large",
+			__func__, remote_ip_str);
 		*err = 413;
 		return false;
-	} else if (conn->request_len <= 0) {
-		if (conn->data_len > 0) {
-			http_logger(DEBUG_ERROR, conn, "%s: %s client sent malformed request", __func__, remote_ip_str);
+	} else if (conn->req.request_len <= 0) {
+		if (conn->req.data_len > 0) {
+			http_logger(DEBUG_ERROR, conn, "%s: %s client sent malformed request",
+				__func__, remote_ip_str);
 			*err = 400;
 		} else {
-			/*
-			 * Server did not send anything -> just close the connection
-			 */
-			conn->must_close = true;
-			http_logger(DEBUG_WARNING, conn, "%s: %s client did not send a request", __func__, remote_ip_str);
+			/* Server did not send anything -> just close the connection */
+			conn->req.must_close = true;
+			http_logger(DEBUG_WARNING, conn, "%s: %s client did not send a request",
+				__func__, remote_ip_str);
 			*err = 0;
 		}
 		return false;
-	} else if (parse_http(HTTP_REQUEST, conn, conn->buf) <= 0) {
+	} else if (parse_http(HTTP_REQUEST, conn, conn->req.buf) <= 0) {
 		http_logger(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
 		*err = 400;
 		return false;
 	} else {
-		/*
-		 * Message is a valid request or response
-		 */
+		if (!http_switch_domain(conn)) {
+			http_logger(DEBUG_ERROR, conn, "%s: Bad request: Host mismatch", __func__);
+			*err = 400;
+			return false;
+		}
+
+		/* Message is a valid request or response */
+		if (((cl = http_get_header(conn, "Accept-Encoding")) != NULL)
+			&& str_has(cl, "gzip")) {
+			conn->req.accept_gzip = 1;
+		}
+
+		/* Message is a valid request or response */
 		if ((cl = http_get_header(conn, "Content-Length")) != NULL) {
-			/*
-			 * Request/response has content length set
-			 */
-			char *endptr = NULL;
-			conn->content_len = strtoll(cl, &endptr, 10);
+			/* Request/response has content length set */
+			string endptr = NULL;
+			conn->req.content_len = strtoll(cl, &endptr, 10);
 			if (endptr == cl) {
 				http_logger(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
 				*err = 411;
 				return false;
 			}
-		} else if ((cl = http_get_header(conn, "Transfer-Encoding")) != NULL && str_is(cl, "chunked")) {
-			conn->is_chunked = 1;
-		} else if (!str_is(conn->method, "POST") || !str_is(conn->method, "PUT")) {
-			/*
-			 * POST or PUT request without content length set
-			 */
-			conn->content_len = -1;
+		} else if ((cl = http_get_header(conn, "Transfer-Encoding")) != NULL
+			&& str_is_case(cl, "chunked")) {
+			conn->req.is_chunked = 1;
+		} else if (str_is_case(conn->method, "POST") || str_is_case(conn->method, "PUT")) {
+			/* POST or PUT request without content length set */
+			conn->req.content_len = -1;
 		} else if (str_has(conn->protocol, "HTTP/")) {
-			/*
-			 * Response without content length set
-			 */
-			conn->content_len = -1;
+			/* Response without content length set */
+			conn->req.content_len = -1;
 		} else {
-			/*
-			 * Other request
-			 */
-			conn->content_len = 0;
+			/* Other request */
+			conn->req.content_len = 0;
 		}
 	}
 
 	return true;
+}
+
+/* Returns true, if a file defined by a specific path is located in memory. */
+bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep) {
+	size_t size;
+
+	if (ctx == NULL || conn == NULL || filep == NULL)
+		return false;
+
+	size = 0;
+	if (ctx->callbacks.open_file) {
+		filep->membuf = ctx->callbacks.open_file(conn, path, &size);
+		/*
+		 * NOTE: override filep->size only on success. Otherwise, it might
+		 * break constructs like if (!http_stat() || !http_fopen()) ...
+		 */
+		if (!is_empty(filep->membuf))
+			filep->size = size;
+	}
+
+	return !is_empty(filep->membuf);
+}
+
+int http_stat(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep) {
+	struct stat st;
+
+	if (is_empty(filep))
+		return 0;
+
+	memset(filep, 0, sizeof(*filep));
+	if (!is_empty(conn) && ctx != NULL && http_is_file_in_memory(ctx, conn, path, filep))
+		return 1;
+
+	if (fs_stat(path, &st) == 0) {
+		filep->size = (uint64_t)(st.st_size);
+		filep->last_modified = st.st_mtime;
+		filep->is_directory = S_ISDIR(st.st_mode);
+		return 1;
+	}
+
+	return 0;
+}
+
+bool http_is_file_opened(const struct file *filep) {
+	return (filep != NULL && (filep->membuf != NULL || filep->fp != NULL));
+}
+
+bool http_fopen(http_ini_t *ctx, const http_t *conn, const char *path, const char *mode, struct file *filep) {
+	struct stat st;
+
+	if (ctx == NULL || filep == NULL)
+		return false;
+
+	memset(filep, 0, sizeof(*filep));
+	if (fs_stat(path, &st) == 0)
+		filep->size = (uint64_t)st.st_size;
+
+	if (!http_is_file_in_memory(ctx, (http_t *)conn, path, filep)) {
+		filep->fp = async_fopen(path, mode);
+	}
+
+	return http_is_file_opened(filep);
 }
 
 FORCEINLINE bool http_get_random(uint64_t *out) {
@@ -675,120 +859,143 @@ FORCEINLINE bool http_get_random(uint64_t *out) {
 	return true;
 }
 
-FORCEINLINE void *http_free_ex(void *memory) {
+FORCEINLINE void_t http_free_ex(void_t memory) {
 	if (!is_empty(memory) && is_ptr_usable(memory))
 		free(memory);
 
 	return null;
 }
 
-void http_free_config_options(http_ini_t *ctx) {
-	if (is_empty(ctx))
+void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_type, bool is_delete_request,
+	route_cb handler,
+	ws_connect_cb connect_handler,
+	ws_ready_cb ready_handler,
+	ws_data_cb data_handler,
+	ws_close_cb close_handler,
+	auth_cb auth_handler,
+	void_t cbdata) {
+	struct http_cb_info *tmp_rh;
+	struct http_cb_info **lastref;
+	size_t urilen;
+
+	if (uri == NULL)
 		return;
 
-	ctx->access_control_allow_origin = http_free_ex(ctx->access_control_allow_origin);
-	ctx->access_control_list = http_free_ex(ctx->access_control_list);
-	ctx->access_log_file = http_free_ex(ctx->access_log_file);
-	ctx->authentication_domain = http_free_ex(ctx->authentication_domain);
-	ctx->cgi_environment = http_free_ex(ctx->cgi_environment);
-	ctx->cgi_interpreter = http_free_ex(ctx->cgi_interpreter);
-	ctx->cgi_pattern = http_free_ex(ctx->cgi_pattern);
-	ctx->document_root = http_free_ex(ctx->document_root);
-	ctx->error_log_file = http_free_ex(ctx->error_log_file);
-	ctx->error_pages = http_free_ex(ctx->error_pages);
-	ctx->extra_mime_types = http_free_ex(ctx->extra_mime_types);
-	ctx->global_auth_file = http_free_ex(ctx->global_auth_file);
-	ctx->hide_file_pattern = http_free_ex(ctx->hide_file_pattern);
-	ctx->index_files = http_free_ex(ctx->index_files);
-	ctx->listening_ports = http_free_ex(ctx->listening_ports);
-	ctx->protect_uri = http_free_ex(ctx->protect_uri);
-	ctx->put_delete_auth_file = http_free_ex(ctx->put_delete_auth_file);
-	ctx->run_as_user = http_free_ex(ctx->run_as_user);
-	ctx->ssi_pattern = http_free_ex(ctx->ssi_pattern);
-	ctx->ssl_ca_file = http_free_ex(ctx->ssl_ca_file);
-	ctx->ssl_ca_path = http_free_ex(ctx->ssl_ca_path);
-	ctx->ssl_certificate = http_free_ex(ctx->ssl_certificate);
-	ctx->ssl_cipher_list = http_free_ex(ctx->ssl_cipher_list);
-	ctx->throttle = http_free_ex(ctx->throttle);
-	ctx->url_rewrite_patterns = http_free_ex(ctx->url_rewrite_patterns);
-	ctx->websocket_root = http_free_ex(ctx->websocket_root);
+	urilen = strlen(uri);
+	if (handler_type == WEBSOCKET_HANDLER) {
+		if (handler != NULL) return;
+		if (!is_delete_request && connect_handler == NULL && ready_handler == NULL && data_handler == NULL && close_handler == NULL) return;
+		if (auth_handler != NULL) return;
+	} else if (handler_type == REQUEST_HANDLER) {
+		if (connect_handler != NULL || ready_handler != NULL || data_handler != NULL || close_handler != NULL) return;
+		if (!is_delete_request && handler == NULL) return;
+		if (auth_handler != NULL) return;
+	} else { /* AUTH_HANDLER */
+		if (handler != NULL) return;
+		if (connect_handler != NULL || ready_handler != NULL || data_handler != NULL || close_handler != NULL) return;
+		if (!is_delete_request && auth_handler == NULL) return;
+	}
+
+	if (ctx == NULL)
+		return;
+	atomic_lock(&ctx->host.nonce_mutex);
+
+	/*
+	 * first try to find an existing handler
+	 */
+	lastref = &ctx->handlers;
+	for (tmp_rh = ctx->handlers; tmp_rh != NULL; tmp_rh = tmp_rh->next) {
+		if (tmp_rh->handler_type == handler_type) {
+			if (urilen == tmp_rh->uri_len && !strcmp(tmp_rh->uri, uri)) {
+				if (!is_delete_request) {
+					/*
+					 * update existing handler
+					 */
+					if (handler_type == REQUEST_HANDLER) {
+						tmp_rh->handler = handler;
+					} else if (handler_type == WEBSOCKET_HANDLER) {
+						tmp_rh->connect_handler = connect_handler;
+						tmp_rh->ready_handler = ready_handler;
+						tmp_rh->data_handler = data_handler;
+						tmp_rh->close_handler = close_handler;
+					} else { /* AUTH_HANDLER */
+						tmp_rh->auth_handler = auth_handler;
+					}
+
+					tmp_rh->cbdata = cbdata;
+				} else {
+					/*
+					 * remove existing handler
+					 */
+					*lastref = tmp_rh->next;
+					tmp_rh->uri = http_free_ex(tmp_rh->uri);
+					tmp_rh = http_free_ex(tmp_rh);
+				}
+
+				atomic_unlock(&ctx->host.nonce_mutex);
+				return;
+			}
+		}
+		lastref = &tmp_rh->next;
+	}
+
+	if (is_delete_request) {
+		/*
+		 * no handler to set, this was a remove request to a non-existing
+		 * handler
+		 */
+		atomic_unlock(&ctx->host.nonce_mutex);
+		return;
+	}
+
+	tmp_rh = calloc(sizeof(struct http_cb_info), 1);
+	if (tmp_rh == NULL) {
+		atomic_unlock(&ctx->host.nonce_mutex);
+		http_logger(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
+		return;
+	}
+
+	tmp_rh->uri = str_dup_ex(uri);
+	if (tmp_rh->uri == NULL) {
+		atomic_unlock(&ctx->host.nonce_mutex);
+		tmp_rh = http_free_ex(tmp_rh);
+		http_logger(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
+		return;
+	}
+
+	tmp_rh->uri_len = urilen;
+	if (handler_type == REQUEST_HANDLER) {
+		tmp_rh->handler = handler;
+	} else if (handler_type == WEBSOCKET_HANDLER) {
+		tmp_rh->connect_handler = connect_handler;
+		tmp_rh->ready_handler = ready_handler;
+		tmp_rh->data_handler = data_handler;
+		tmp_rh->close_handler = close_handler;
+	} else { /* AUTH_HANDLER */
+		tmp_rh->auth_handler = auth_handler;
+	}
+	tmp_rh->cbdata = cbdata;
+	tmp_rh->handler_type = handler_type;
+	tmp_rh->next = NULL;
+
+	*lastref = tmp_rh;
+	atomic_unlock(&ctx->host.nonce_mutex);
 }
 
-bool http_init_options(http_ini_t *ctx) {
-	if (ctx == NULL) return true;
+FORCEINLINE void http_route(http_ini_t *ctx, string_t uri, route_cb handler, void_t cbdata) {
+	http_set_handler(ctx, uri, REQUEST_HANDLER, (handler == NULL), handler,
+		NULL, NULL, NULL, NULL, NULL, cbdata);
+}
 
-	ctx->access_control_allow_origin = NULL;
-	ctx->access_control_list = NULL;
-	ctx->access_log_file = NULL;
-	ctx->allow_sendfile_call = true;
-	ctx->authentication_domain = NULL;
-	ctx->cgi_environment = NULL;
-	ctx->cgi_interpreter = NULL;
-	ctx->cgi_pattern = NULL;
-	ctx->debug_level = DEBUG_WARNING;
-	ctx->decode_url = true;
-	ctx->document_root = NULL;
-	ctx->enable_directory_listing = true;
-	ctx->enable_keep_alive = false;
-	ctx->error_log_file = NULL;
-	ctx->error_pages = NULL;
-	ctx->extra_mime_types = NULL;
-	ctx->global_auth_file = NULL;
-	ctx->hide_file_pattern = NULL;
-	ctx->index_files = NULL;
-	ctx->listening_ports = NULL;
-	ctx->num_threads = 50;
-	ctx->protect_uri = NULL;
-	ctx->put_delete_auth_file = NULL;
-	ctx->request_timeout = 30000;
-	ctx->run_as_user = NULL;
-	ctx->ssi_include_depth = 10;
-	ctx->ssi_pattern = NULL;
-	ctx->ssl_ca_file = NULL;
-	ctx->ssl_ca_path = NULL;
-	ctx->ssl_certificate = NULL;
-	ctx->ssl_cipher_list = NULL;
-	ctx->ssl_protocol_version = 0;
-	ctx->ssl_short_trust = false;
-	ctx->ssl_verify_depth = 9;
-	ctx->ssl_verify_paths = true;
-	ctx->ssl_verify_peer = false;
-	ctx->static_file_max_age = 0;
-	ctx->throttle = NULL;
-	ctx->tcp_nodelay = false;
-	ctx->url_rewrite_patterns = NULL;
-	ctx->websocket_root = NULL;
-	ctx->websocket_timeout = 30000;
+FORCEINLINE void http_websocket_route(http_ini_t *ctx, const char *uri,
+	ws_connect_cb connect_handler,
+	ws_ready_cb ready_handler,
+	ws_data_cb data_handler,
+	ws_close_cb close_handler,
+	void_t cbdata) {
+	bool is_delete_request = (connect_handler == NULL) && (ready_handler == NULL)
+		&& (data_handler == NULL) && (close_handler == NULL);
 
-	if ((ctx->access_control_allow_origin = str_dup_ex("*")) == NULL) {
-		http_abort_start(ctx, "Out of memory creating context allocating \"access_control_allow_origin\"");
-		return true;
-	}
-
-	if ((ctx->authentication_domain = str_dup_ex("example.com")) == NULL) {
-		http_abort_start(ctx, "Out of memory creating context allocating \"authentication_domain\"");
-		return true;
-	}
-
-	if ((ctx->cgi_pattern = str_dup_ex("**.cgi$|**.pl$|**.php$")) == NULL) {
-		http_abort_start(ctx, "Out of memory creating context allocating \"cgi_pattern\"");
-		return true;
-	}
-
-	if ((ctx->index_files = str_dup_ex("index.xhtml,index.html,index.htm,index.cgi,index.shtml,index.php")) == NULL) {
-		http_abort_start(ctx, "Out of memory creating context allocating \"index_files\"");
-		return true;
-	}
-
-	if ((ctx->listening_ports = str_dup_ex("8080")) == NULL) {
-		http_abort_start(ctx, "Out of memory creating context allocating \"listening_ports\"");
-		return true;
-	}
-
-	if ((ctx->ssi_pattern = str_dup_ex("**.shtml$|**.shtm$")) == NULL) {
-		http_abort_start(ctx, "Out of memory creating context allocating \"ssi_pattern\"");
-		return true;
-	}
-
-	return false;
+	http_set_handler(ctx, uri, WEBSOCKET_HANDLER, is_delete_request, NULL,
+		connect_handler, ready_handler, data_handler, close_handler, NULL, cbdata);
 }
