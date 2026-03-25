@@ -405,14 +405,18 @@ struct http_s {
 	int is_multipart;
 	/* The protocol version */
 	double version;
-	string hostname;
+	/* The raw headers and body junction position from server */
+	size_t raw_pos;
 	/* The unchanged data from server */
 	string raw;
-	/* The current response body */
+	string hostname;
+	/* The current request body */
 	string body;
-	/* The requested uri */
 	string uri;
+	/* The requested uri */
 	string url_to;
+	/* The requested path */
+	string path;
 	/* The multi-part `boundary` name */
 	string boundary;
 	/* Array of multi-part `disposition` names */
@@ -439,8 +443,6 @@ struct http_s {
 	char method[32];
 	/* The requested status message */
 	char message[64];
-	/* The requested path */
-	char path[128];
 	char variable[256];
 	httpie_t req;
 };

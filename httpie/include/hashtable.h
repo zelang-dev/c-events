@@ -37,11 +37,13 @@ C_API void hash_lp_idx(hash_t *, size_t *idx);
 C_API bool hash_string_eq(const_t, const_t, void_t arg);
 /* General string copy */
 C_API void_t hash_string_cp(const_t, void_t arg);
+C_API void_t hash_str_autofree(const_t, void_t arg);
 
 C_API void hashmap_set(hash_t *);
 C_API hash_t *hashtable_init(key_ops_t key_ops, val_ops_t val_ops, probe_func probing, u32 cap);
 C_API hash_t *hash_create(void);
 C_API hash_t *hash_create_ex(u32);
+C_API hash_t *hash_create_auto(u32);
 
 C_API void_t hash_put(hash_t *, const_t key, const_t value);
 C_API void_t hash_put_str(hash_t *htable, const_t key, string value);
@@ -81,5 +83,8 @@ C_API bool is_union(void_t self);
 C_API key_ops_t key_ops_string;
 C_API val_ops_t val_ops_value;
 C_API val_ops_t val_ops_string;
+
+C_API key_ops_t key_ops_auto;
+C_API val_ops_t val_ops_auto;
 
 #endif

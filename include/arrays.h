@@ -239,6 +239,7 @@ C_API range_t range_char(const char *text);
 #define $reserve(arr, cap)				data_reserve((array_t)arr, (size_t)cap)
 #endif
 
+#define trim_at(str, pos) (char *)((uintptr_t)(str) + (pos))
 #ifndef is_empty
 #	define is_empty(ptr) 				((void *)(ptr) == null)
 #endif

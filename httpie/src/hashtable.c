@@ -51,8 +51,12 @@ static FORCEINLINE void hash_put_tombstone(hash_t *htable, size_t idx);
 
 static u32 hash_initial_capacity = HASH_INIT_CAPACITY;
 static bool hash_initial_override = false;
+static FORCEINLINE void plain_free(void_t data) {}
+
 key_ops_t key_ops_string = {djb2_hash, hash_string_eq, hash_string_cp, free, nullptr};
 val_ops_t val_ops_string = {hash_string_eq, hash_string_cp, free, nullptr};
+key_ops_t key_ops_auto = {djb2_hash, hash_string_eq, hash_str_autofree, plain_free, nullptr};
+val_ops_t val_ops_auto = {hash_string_eq, hash_str_autofree, plain_free, nullptr};
 
 static template_t *value_create(const_t data, data_types op) {
 	template_t *value = calloc(1, sizeof(template_t));
@@ -241,7 +245,7 @@ hash_pair_t *hash_operation(hash_t *hash, const_t key, const_t value, data_types
 		} else {
 			// Update the existing value
 			// Free the old values
-            if (buckets[idx]->type == DATA_PTR)
+            if (buckets[idx]->type != DATA_PTR)
 				hash->key_ops._free(buckets[idx]->value);
 
 			free(buckets[idx]->extended);
@@ -533,6 +537,11 @@ FORCEINLINE void_t hash_string_cp(const_t data, void_t arg) {
 	return (void_t)str_dup_ex((string_t)data);
 }
 
+FORCEINLINE void_t hash_str_autofree(const_t data, void_t arg) {
+	(void)arg;
+	return (void_t)str_dup((string_t)data);
+}
+
 // String operations
 static FORCEINLINE uint32_t hash_fmix32(uint32_t h) {
     h ^= h >> 16;
@@ -564,9 +573,6 @@ static FORCEINLINE bool plain_eq(const_t data1, const_t data2, void_t arg) {
     return memcmp(data1, data2, sizeof(data2)) == 0;
 }
 
-static FORCEINLINE void plain_free(void_t data) {
-}
-
 val_ops_t val_ops_value = {plain_eq, plain_cp, plain_free, nullptr};
 
 FORCEINLINE hash_t *hash_create(void) {
@@ -575,6 +581,10 @@ FORCEINLINE hash_t *hash_create(void) {
 
 FORCEINLINE hash_t *hash_create_ex(u32 size) {
     return (hash_t *)hashtable_init(key_ops_string, val_ops_value, hash_lp_idx, size);
+}
+
+FORCEINLINE hash_t *hash_create_auto(u32 size) {
+    return (hash_t *)hashtable_init(key_ops_auto, val_ops_auto, hash_lp_idx, size);
 }
 
 FORCEINLINE void hash_set_capacity(u32 buckets) {

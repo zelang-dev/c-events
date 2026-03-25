@@ -206,9 +206,9 @@ C_API string http_date_ahead(u32 days, u32 hours, u32 minutes, u32 seconds);
  *
  * @param action either HTTP_RESPONSE or HTTP_REQUEST
  * @param this current `http_t` instance
- * @param headers raw message
+ * @param raw full message
  */
-C_API int parse_http(http_parser_type action, http_t *this, string headers);
+C_API int parse_http(http_parser_type action, http_t *this, string raw);
 
 /**
  * Returns `http_t` instance, for simple generic handling/constructing

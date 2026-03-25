@@ -351,7 +351,7 @@ string url_decode(string str, size_t len) {
 
 void parse_str(http_t *this, string lines, string sep, string part) {
 	if (is_empty(this->parameters)) {
-		this->parameters = hashtable_init(key_ops_string, val_ops_string, hash_lp_idx, ARRAY_SIZE);
+		this->parameters = hash_create_auto(ARRAY_SIZE);
 		defer_free(this->parameters);
 	}
 
@@ -376,14 +376,16 @@ void parse_str(http_t *this, string lines, string sep, string part) {
 static void parse_multipart(http_t *this) {
 	if (this->is_multipart) {
 		string key, value, line, delim = nullptr, keyname = nullptr,
-			*boundary = nullptr, *boundaries = nullptr, *parts = nullptr, *params = nullptr,
+			*boundary = nullptr, *boundaries = nullptr, *params = nullptr,
 			*lines = nullptr, *filenames = nullptr, *filename = nullptr;
-		int x, y, sects = 0, names = 0, count = 0, pieces = 0;
+		int s_pos, s_pos1, x, y, sects = 0, names = 0, count = 0, pieces = 0;
 		form_data_t *multipart;
 		char scrape[ARRAY_SIZE];
 		bool found;
 
 		snprintf(scrape, ARRAY_SIZE, "--%s", this->boundary);
+		this->raw[this->raw_pos] = '\n';
+		this->raw[this->raw_pos + 1] = '\n';
 		boundary = str_split_ex(this->raw, scrape, &count);
 		$append(this->garbage, boundary);
 		if (--count >= 2 && str_is(boundary[count], "--")) {
@@ -392,7 +394,7 @@ static void parse_multipart(http_t *this) {
 				this->dispositions = nullptr;
 			}
 
-			this->dispositions = hash_create_ex(ARRAY_SIZE);
+			this->dispositions = hashtable_init(key_ops_auto, val_ops_value, hash_lp_idx, ARRAY_SIZE);
 			if (!is_data(this->names))
 				this->names = array();
 			else
@@ -417,15 +419,15 @@ static void parse_multipart(http_t *this) {
 						for (y = 0; y < sects; y++) {
 							line = lines[y];
 							found = false;
-							if (str_has(line, ":")) {
-								delim = str_has(line, ": ") ? ": " : ":";
+							s_pos = str_pos(line, ":");
+							if (s_pos != DATA_INVALID) {
 								found = true;
-								parts = str_split_ex(line, delim, nullptr);
+								line[s_pos] = '\0';
+								key = trim(line);
+								value = trim(trim_at(line, s_pos + 1));
 							}
 
-							if (found && !is_empty(parts)) {
-								key = trim(parts[0]);
-								value = trim(parts[1]);
+							if (found) {
 								if (str_is(key, "Content-Disposition")) {
 									params = str_split_ex(value, "; ", &names);
 									$append(this->garbage, params);
@@ -444,9 +446,6 @@ static void parse_multipart(http_t *this) {
 								} else if (str_is(key, "Content-Transfer-Encoding")) {
 									multipart->encoding = value;
 								}
-
-								free(parts);
-								parts = nullptr;
 							}
 						}
 
@@ -462,10 +461,9 @@ static void parse_multipart(http_t *this) {
 	}
 }
 
-int parse_http(http_parser_type action, http_t *this, string headers) {
-	string key, value, line, parameters, delim = nullptr,
-		*sessions = nullptr, *messages, *lines = nullptr, *parts = nullptr;
-	int i = 0, x = 0, z = 0, count = 0;
+int parse_http(http_parser_type action, http_t *this, string raw) {
+	string messages, key, value, line, parameters, *sessions = nullptr, *lines = nullptr;
+	int i = 0, x = 0, z = 0, s_pos = 0, count = 0;
 	bool is_multi_set = false, is_cookie_set = false, found = false;
 	if (is_data(this->garbage))
 		http_clear(this);
@@ -478,24 +476,20 @@ int parse_http(http_parser_type action, http_t *this, string headers) {
 		this->sessions = nullptr;
 	}
 
-	messages = str_split_ex(headers, LFLF, &count);
-	if (is_empty(messages))
+	s_pos = str_pos(raw, LFLF);
+	if (s_pos == DATA_INVALID)
 		return -1;
 
-	defer_free(messages);
-	this->raw = headers;
 	this->action = action;
-	this->body = count > 1 && !is_empty(messages[1])
-		? trim(messages[1])
-		: nullptr;
-
-	lines = (count > 0 && !is_empty(messages[0]))
-		? str_split_ex(messages[0], "\n", &count)
-		: nullptr;
-
+	this->raw = raw;
+	this->raw_pos = s_pos;
+	this->raw[s_pos] = '\0';
+	messages = this->raw;
+	this->body = trim(trim_at(messages, s_pos + 2));
+	lines = str_has(messages, "\n") ? str_split_ex(messages, "\n", &count) : nullptr;
 	if (count >= 1) {
 		if (is_empty(this->headers)) {
-			this->headers = hashtable_init(key_ops_string, val_ops_string, hash_lp_idx, ARRAY_SIZE);
+			this->headers = hashtable_init(key_ops_auto, val_ops_auto, hash_lp_idx, ARRAY_SIZE);
 			defer_free(this->headers);
 		}
 
@@ -504,29 +498,42 @@ int parse_http(http_parser_type action, http_t *this, string headers) {
 			line = lines[x];
 			found = false;
 			is_cookie_set = false;
-			if (str_has(line, ": ") || str_has(line, ":")) {
-				delim = str_has(line, ": ") ? ": " : ":";
+			s_pos = str_pos(line, ":");
+			if (s_pos != DATA_INVALID) {
 				found = true;
-				parts = str_split_ex(line, delim, nullptr);
+				line[s_pos] = '\0';
+				key = trim(line);
+				value = trim(trim_at(line, s_pos + 1));
 			} else if (str_has(line, "HTTP/")) {
-				string *params = str_split_ex(line, " ", nullptr);
+				s_pos = str_pos(line, " ");
+				line[s_pos] = '\0';
+				string params1 = trim_at(line, (s_pos + 1));
+				s_pos = str_pos(params1, " ");
+				params1[s_pos] = '\0';
+				string params2 = trim_at(params1, (s_pos + 1));
 				if (this->action == HTTP_REQUEST) {
-					snprintf(this->method, sizeof(this->method), "%s", trim(params[0]));
-					this->url_to = str_dup(trim(params[1]));
-					snprintf(this->path, sizeof(this->path), "%s", this->url_to);
-					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(params[2]));
+					snprintf(this->method, sizeof(this->method), "%s", trim(line));
+					this->url_to = str_dup(trim(params1));
+					this->path = this->url_to;
+					// split path and parameters string
+					if (str_has(this->url_to, "?")) {
+						s_pos = str_pos(this->url_to, "?");
+						this->url_to[s_pos] = '\0';
+						this->path = str_dup(this->url_to);
+						parameters = trim_at(this->url_to, (s_pos + 1));
+						// parse the parameters
+						parse_str(this, parameters, "&", nullptr);
+						this->url_to[s_pos] = '?';
+					}
+					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(params2));
 				} else if (this->action == HTTP_RESPONSE) {
-					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(params[0]));
-					this->code = (http_status)atoi(params[1]);
-					snprintf(this->message, sizeof(this->message), "%s", trim(params[2]));
+					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(line));
+					this->code = (http_status)atoi(params1);
+					snprintf(this->message, sizeof(this->message), "%s", trim(params2));
 				}
-				free(params);
-				params = nullptr;
 			}
 
-			if (found && !is_empty(parts)) {
-				key = trim(parts[0]);
-				value = trim(parts[1]);
+			if (found) {
 				if (!is_multi_set && str_is(key, "Content-Type")
 					&& str_has(value, "multipart/form-data; boundary=")) {
 					if (!is_data(this->garbage))
@@ -540,7 +547,7 @@ int parse_http(http_parser_type action, http_t *this, string headers) {
 					$append(this->garbage, para);
 				} else if (str_is(key, "Set-Cookie")) {
 					if (is_empty(this->sessions))
-						this->sessions = hash_create_ex(ARRAY_SIZE);
+						this->sessions = hashtable_init(key_ops_auto, val_ops_value, hash_lp_idx, ARRAY_SIZE);
 
 					is_cookie_set = true;
 					cookie_t *cookie = calloc(1, sizeof(cookie_t));
@@ -596,26 +603,9 @@ int parse_http(http_parser_type action, http_t *this, string headers) {
 
 				hash_put_str(this->headers, key, value);
 			}
-
-			if (!is_empty(parts)) {
-				free(parts);
-				parts = nullptr;
-			}
 		}
 
 		parse_multipart(this);
-		// split path and parameters string
-		if (str_has(this->url_to, "?")) {
-			string *param = str_split_ex(this->url_to, "?", nullptr);
-			snprintf(this->path, sizeof(this->path), "%s", param[0]);
-			parameters = param[1];
-			// parse the parameters
-			if (!is_empty(parameters))
-				parse_str(this, parameters, "&", nullptr);
-
-			free(param);
-		}
-
 		if (!is_empty(lines))
 			free(lines);
 
@@ -1169,7 +1159,7 @@ FORCEINLINE string http_get_param(http_t *this, string key) {
 void http_put_header(http_t *this, string key, string value, bool force_cap) {
     string temp = key;
     if (is_empty(this->headers)) {
-        this->headers = hashtable_init(key_ops_string, val_ops_string, hash_lp_idx, ARRAY_SIZE);
+		this->headers = hashtable_init(key_ops_auto, val_ops_auto, hash_lp_idx, ARRAY_SIZE);
         defer_free(this->headers);
     }
 
