@@ -82,9 +82,7 @@ static void http_clear(http_t *this) {
 	}
 }
 
-/* Make first character uppercase in string/word, remainder lowercase,
-a word is represented by separator character provided. */
-static string word_toupper(string str, char sep) {
+string word_toupper(string str, char sep) {
 	size_t i, length = 0;
 
 	length = strlen(str);
@@ -526,8 +524,10 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 						this->url_to[s_pos] = '?';
 					}
 					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(params2));
+					this->req.http_version = (const char *)trim_at(this->protocol, 5);
 				} else if (this->action == HTTP_RESPONSE) {
 					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(line));
+					this->req.http_version = (const char *)trim_at(this->protocol, 5);
 					this->code = (http_status)atoi(params1);
 					snprintf(this->message, sizeof(this->message), "%s", trim(params2));
 				}
@@ -672,7 +672,7 @@ FORCEINLINE void http_server_agent(string name) {
 	if (snprintf(http_server_name, sizeof(http_server_name), "%s", name)) return;
 }
 
-string http_response(http_t *this, string body, http_status status,
+string http_response_str(http_t *this, string body, http_status status,
 	string type, u32 header_pairs, ...) {
 	va_list extras;
 	header_types k;
@@ -788,7 +788,7 @@ string http_response(http_t *this, string body, http_status status,
 	return resp;
 }
 
-string http_request(http_t *this, http_method_type method, string path, string type,
+string http_request_str(http_t *this, http_method_type method, string path, string type,
 	string body_data, u32 header_pairs, ...) {
 	va_list extras;
 	header_types k;

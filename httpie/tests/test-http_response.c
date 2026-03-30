@@ -1,7 +1,7 @@
 #include <httpie.h>
 #include "test_assert.h"
 
-TEST(http_response) {
+TEST(http_response_str) {
 	http_t *parser = http_for(nullptr, 1.1);
     ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
 
@@ -12,7 +12,7 @@ TEST(http_response) {
                                  "Server: http_server" CRLF
                                  "X-Powered-By: Ze" CRLF CRLF
                                  "hello world");
-	ASSERT_STR(response, http_response(parser, "hello world", STATUS_OK, nullptr, 1,
+	ASSERT_STR(response, http_response_str(parser, "hello world", STATUS_OK, nullptr, 1,
 		kv(head_by, "Ze"))
 	);
 
@@ -23,7 +23,7 @@ TEST(http_response) {
 TEST(list) {
     int result = 0;
 
-    EXEC_TEST(http_response);
+    EXEC_TEST(http_response_str);
 
     return result;
 }

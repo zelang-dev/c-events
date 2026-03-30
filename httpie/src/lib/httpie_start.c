@@ -13,6 +13,28 @@ static void http_ctrl_c_exit(void) {
 	http_stop(ctx);
 }
 
+/*
+ * Checks if the method in a request is a valid method.
+ *
+ * PTRACE is not supported for security reasons. Further more the following
+ * WEBDAV methods have not been implemented:
+ *
+ * PROPPATCH, COPY, MOVE, LOCK, UNLOCK (RFC 2518)
+ * + 11 methods from RFC 3253
+ * ORDERPATCH (RFC 3648)
+ * ACL (RFC 3744)
+ * SEARCH (RFC 5323)
+ * + MicroSoft extensions
+ * https://msdn.microsoft.com/en-us/library/aa142917.aspx
+ *
+ * The PATCH method is only supported for CGI and other scripts and for callbacks. */
+FORCEINLINE bool http_is_valid_method(string_t method) {
+	return (!strcmp(method, "GET") || !strcmp(method, "POST") || !strcmp(method, "HEAD")
+		|| !strcmp(method, "PUT")|| !strcmp(method, "DELETE") || !strcmp(method, "OPTIONS")
+		|| !strcmp(method, "CONNECT") || !strcmp(method, "PROPFIND") || !strcmp(method, "MKCOL")
+		|| !strcmp(method, "PATCH"));
+}
+
 /* Verify given socket address against the ACL.
  * Return -1 if ACL is malformed, 0 if address is disallowed, 1 if allowed. */
 static int http_check_acl(http_ini_t *phys_ctx, const union usa *sa) {
@@ -20,7 +42,7 @@ static int http_check_acl(http_ini_t *phys_ctx, const union usa *sa) {
 	struct vec vec;
 
 	if (phys_ctx) {
-		const char *list = phys_ctx->host.config[ACCESS_CONTROL_LIST];
+		string_t list = phys_ctx->host.config[ACCESS_CONTROL_LIST];
 		/* If any ACL is set, deny by default */
 		allowed = (list == nullptr) ? '+' : '-';
 		while ((list = http_next_option(list, &vec, nullptr)) != nullptr) {
@@ -53,10 +75,8 @@ static int http_check_acl(http_ini_t *phys_ctx, const union usa *sa) {
 static FORCEINLINE void http_handler(int client) {
 	guard {
 		http_t *conn = (http_t *)events_get_target_data(client);
-	defer(http_free, conn);
-
-	//http_get_request(conn, ebuf, ebuf_len, err);
-
+		defer(http_free, conn);
+		http_process_connection(conn->ctx, conn);
 	} guarded;
 }
 
@@ -64,6 +84,7 @@ static FORCEINLINE void http_handler(int client) {
 http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 	http_socket so;
 	http_t *conn = nullptr;
+	time_t conn_birth_time;
 	char src_addr[IP_ADDR_STR_LEN];
 	char error_string[ERROR_STRING_LEN];
 	socklen_t len = sizeof(so.rsa);
@@ -78,6 +99,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 	if (so.sock == INVALID_SOCKET)
 		return nullptr;
 
+	conn_birth_time = time(null);
 	if (!http_check_acl(ctx, (const union usa *)&so.rsa)) {
 		sockaddr_to_str(src_addr, sizeof(src_addr), &so.rsa);
 		http_logger(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
@@ -102,7 +124,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		 * Thanks to Igor Klopov who suggested the patch. */
 		if ((so.lsa.sa.sa_family == AF_INET)
 			|| (so.lsa.sa.sa_family == AF_INET6)) {
-			if (setsockopt(so.sock, SOL_SOCKET, SO_KEEPALIVE, (const char *)&on, sizeof(on)) != 0) {
+			if (setsockopt(so.sock, SOL_SOCKET, SO_KEEPALIVE, (string_t)&on, sizeof(on)) != 0) {
 				http_logger(DEBUG_ERROR, nullptr, "%s: setsockopt(SOL_SOCKET SO_KEEPALIVE) failed: %s",
 					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 			}
@@ -111,7 +133,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		on = 1;
 		if ((so.lsa.sa.sa_family == AF_INET)
 			|| (so.lsa.sa.sa_family == AF_INET6)) {
-			if (setsockopt(so.sock, IPPROTO_TCP, TCP_NODELAY, (char *)&on, sizeof(on)) != 0) {
+			if (setsockopt(so.sock, IPPROTO_TCP, TCP_NODELAY, (string_t)&on, sizeof(on)) != 0) {
 				http_logger(DEBUG_ERROR, nullptr, "%s: setsockopt(IPPROTO_TCP TCP_NODELAY) failed: %s",
 					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 			}
@@ -133,6 +155,10 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 			conn->fd = so.sock;
 			conn->client = so;
 			conn->version = 1.1;
+			conn->req.conn_birth_time = conn_birth_time;
+			conn->req.remote_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client.rsa));
+			conn->req.server_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client.lsa));
+			sockaddr_to_str(conn->req.remote_addr, sizeof(conn->req.remote_addr), &conn->client.rsa);
 			conn->type = (data_types)DATA_HTTPINFO;
 			events_set_target_data(so.sock, (void *)conn);
 		} else {
@@ -205,9 +231,10 @@ http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...) {
 	return nullptr;
 }
 
-FORCEINLINE http_clb_t http_callbacks(log_message_cb message, log_access_cb log,
-	open_file_cb file, http_error_cb error, init_context_cb init) {
+FORCEINLINE http_clb_t http_callbacks(request_cb begin, log_message_cb message,
+	log_access_cb log, open_file_cb file, http_error_cb error, init_context_cb init) {
 	http_clb_t callbacks = {0};
+	callbacks.start = begin;
 	callbacks.http_error = error;
 	callbacks.init_context = init;
 	callbacks.log_access = log;
@@ -287,7 +314,7 @@ static void http_server_task(param_t args) {
 	const http_socket *listener = (const http_socket *)args[0].object;
 	http_ini_t *ctx = (http_ini_t *)args[1].object;
 	http_t *conn = null;
-	while (!is_empty(ctx) && ctx->status != HTTP_STATUS_TERMINATED) {
+	while (!is_empty(ctx) && ctx->status == HTTP_STATUS_RUNNING) {
 		if (!is_empty(conn = http_accept(listener, ctx))) {
 			conn->ctx = ctx;
 			accept_handler(http_handler, socket2fd(conn->fd));

@@ -700,7 +700,7 @@ EVENTS_INLINE int async_fprintf(const char *path, const char *mode, const char *
 	return await_for(queue_work(events_pool(), _os_fprintf, 3, path, mode, buf)).integer;
 }
 
-static EVENTS_INLINE void *_os_fwrite(param_t args) {
+static EVENTS_INLINE void *_os_fwriter(param_t args) {
 	FILE *fi;
 	if ((fi = fopen(args[0].const_char_ptr, args[1].const_char_ptr)) != NULL) {
 		flockfile(fi);
@@ -717,17 +717,25 @@ static EVENTS_INLINE void *_os_fwrite(param_t args) {
 	return 0;
 }
 
-EVENTS_INLINE int async_fwriter(const char *path, const char *mode,
+EVENTS_INLINE int async_fwrite(const char *path, const char *mode,
 	void *buf, size_t size, size_t count) {
-	return await_for(queue_work(events_pool(), _os_fwrite, 5,
+	return await_for(queue_work(events_pool(), _os_fwriter, 5,
 		path, mode, buf, casting(size), casting(count))).max_size;
+}
+
+static EVENTS_INLINE void *_os_fwrite(param_t args) {
+	return casting(fwrite((const void *)args[0].object, args[1].max_size, args[2].max_size, (FILE *)args[3].object));
+}
+
+EVENTS_INLINE size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream) {
+	return await_for(queue_work(events_pool(), _os_fwrite, 4, buf, casting(items_size), casting(items_count), stream)).max_size;
 }
 
 static EVENTS_INLINE void *_os_fopen(param_t args) {
 	return fopen(args[0].const_char_ptr, args[1].const_char_ptr);
 }
 
-EVENTS_INLINE FILE *async_fopen(const char *path, const char *mode) {
+EVENTS_INLINE FILE *fs_fopen(const char *path, const char *mode) {
 	return (FILE *)await_for(queue_work(events_pool(), _os_fopen, 2)).object;
 }
 
@@ -735,15 +743,15 @@ static EVENTS_INLINE void *_os_fread(param_t args) {
 	return casting(fread(args[0].object, args[1].max_size, args[2].max_size, (FILE *)args[3].object));
 }
 
-EVENTS_INLINE size_t async_fread(void *buf, size_t buf_size, size_t buf_count, FILE *stream) {
+EVENTS_INLINE size_t fs_fread(void *buf, size_t items_size, size_t items_count, FILE *stream) {
 	return await_for(queue_work(events_pool(), _os_fread, 4,
-		buf, casting(buf_size), casting(buf_count), stream)).max_size;
+		buf, casting(items_size), casting(items_count), stream)).max_size;
 }
 
 static EVENTS_INLINE void *_os_fclose(param_t args) {
 	return casting(fclose((FILE *)args[0].object));
 }
 
-EVENTS_INLINE int async_fclose(FILE *stream) {
+EVENTS_INLINE int fs_fclose(FILE *stream) {
 	return await_for(queue_work(events_pool(), _os_fclose, 1, stream)).integer;
 }

@@ -8,7 +8,7 @@
 static void *zalloc(void *opaque, uInt items, uInt size) {
 	http_t *conn = (http_t *)opaque;
 	void *ret = calloc(items, size);
-	(void)conn; /* mg_calloc_ctx macro might not need it */
+	(void)conn; /* macro might not need it */
 
 	return ret;
 }
@@ -20,41 +20,7 @@ static void zfree(void *opaque, void *address) {
 	free(address);
 }
 
-int http_send_chunk(http_t *conn,
-	const char *chunk,
-	unsigned int chunk_len) {
-	char lenbuf[16];
-	size_t lenbuf_len;
-	int ret;
-	int t;
-
-	/* First store the length information in a text buffer. */
-	sprintf(lenbuf, "%x\r\n", chunk_len);
-	lenbuf_len = strlen(lenbuf);
-
-	/* Then send length information, chunk and terminating \r\n. */
-	ret = tls_writer(conn->fd, lenbuf, lenbuf_len);
-	if (ret != (int)lenbuf_len) {
-		return -1;
-	}
-	t = ret;
-
-	ret = tls_writer(conn->fd, (string)chunk, chunk_len);
-	if (ret != (int)chunk_len) {
-		return -1;
-	}
-	t += ret;
-
-	ret = tls_writer(conn->fd, "\r\n", 2);
-	if (ret != 2) {
-		return -1;
-	}
-	t += ret;
-
-	return t;
-}
-
-static void send_compressed_data(http_t *conn, struct file *filep) {
+void http_compressed_data(http_t *conn, struct file *filep) {
 	int zret;
 	z_stream zstream;
 	int do_flush;
@@ -88,7 +54,7 @@ static void send_compressed_data(http_t *conn, struct file *filep) {
 
 	/* Read until end of file */
 	do {
-		zstream.avail_in = fread(in_buf, 1, Kb(8), in_file);
+		zstream.avail_in = fs_fread(in_buf, 1, Kb(8), in_file);
 		if (ferror(in_file)) {
 			http_logger(DEBUG_ERROR, conn, "fread failed: %s", strerror(os_geterror()));
 			(void)deflateEnd(&zstream);
@@ -113,12 +79,11 @@ static void send_compressed_data(http_t *conn, struct file *filep) {
 
 			bytes_avail = Kb(8) - zstream.avail_out;
 			if (bytes_avail) {
-				if (http_send_chunk(conn, (char *)out_buf, bytes_avail) < 0) {
+				if (http_chunk(conn, (char *)out_buf, bytes_avail) < 0) {
 					zret = -98;
 					break;
 				}
 			}
-
 		} while (zstream.avail_out == 0);
 
 		if (zret < -90) {
@@ -146,7 +111,7 @@ static void send_compressed_data(http_t *conn, struct file *filep) {
 	deflateEnd(&zstream);
 
 	/* Send "end of chunked data" marker */
-	tls_writer(conn->fd	, "0\r\n\r\n", 5);
+	http_write(conn, "0\r\n\r\n", 5);
 }
 
 int http_websocket_deflate_init(http_t *conn, int server) {
@@ -195,7 +160,7 @@ int http_websocket_deflate_init(http_t *conn, int server) {
 }
 
 void http_websocket_deflate_negotiate(http_t *conn) {
-	const char *extensions = (string_t)hash_get(conn->headers, "Sec-WebSocket-Extensions");
+	string_t extensions = (string_t)hash_get(conn->headers, "Sec-WebSocket-Extensions");
 	int val;
 	if (extensions && str_has(extensions, "permessage-deflate")) {
 		conn->req.accept_gzip = 1;

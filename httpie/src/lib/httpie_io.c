@@ -1,5 +1,433 @@
 #include "httpie_internal.h"
 
+/* Directory entry */
+struct de {
+	char *file_name;
+	struct file file;
+};
+
+struct dir_scan_data {
+	struct de *entries;
+	size_t num_entries;
+	size_t arr_size;
+};
+
+static int _stat_ex(http_t *conn, string_t path, struct file *filep) {
+	struct stat st;
+
+	if (is_empty(filep))
+		return 0;
+
+	memset(filep, 0, sizeof(*filep));
+	if (!is_empty(conn) && conn->ctx != NULL && http_is_file_in_memory(conn->ctx, conn, path, filep))
+		return 1;
+
+	if (stat(path, &st) == 0) {
+		filep->size = (uint64_t)(st.st_size);
+		filep->last_modified = st.st_mtime;
+		filep->is_directory = S_ISDIR(st.st_mode);
+		return 1;
+	}
+
+	return 0;
+}
+
+static int print_dir_entry(http_t *conn, struct de *de) {
+	size_t namesize, escsize, i;
+	char *href, *esc, *p;
+	char size[64], mod[64];
+	struct tm *tm;
+
+	/* Estimate worst case size for encoding and escaping */
+	namesize = strlen(de->file_name) + 1;
+	escsize = de->file_name[strcspn(de->file_name, "&<>")] ? namesize * 5 : 0;
+	href = (char *)malloc(namesize * 3 + escsize);
+	if (href == NULL) {
+		return -1;
+	}
+	http_url_encode(de->file_name, href, namesize * 3);
+	esc = NULL;
+	if (escsize > 0) {
+		/* HTML escaping needed */
+		esc = href + namesize * 3;
+		for (i = 0, p = esc; de->file_name[i]; i++, p += strlen(p)) {
+			str_lcpy(p, de->file_name + i, 2);
+			if (*p == '&') {
+				strcpy(p, "&amp;");
+			} else if (*p == '<') {
+				strcpy(p, "&lt;");
+			} else if (*p == '>') {
+				strcpy(p, "&gt;");
+			}
+		}
+	}
+
+	if (de->file.is_directory) {
+		http_snprintf(conn,
+			NULL, /* Buffer is big enough */
+			size,
+			sizeof(size),
+			"%s",
+			"[DIRECTORY]");
+	} else {
+		/* We use (signed) cast below because MSVC 6 compiler cannot
+		 * convert unsigned __int64 to double. Sigh. */
+		if (de->file.size < 1024) {
+			http_snprintf(conn,
+				NULL, /* Buffer is big enough */
+				size,
+				sizeof(size),
+				"%d",
+				(int)de->file.size);
+		} else if (de->file.size < 0x100000) {
+			http_snprintf(conn,
+				NULL, /* Buffer is big enough */
+				size,
+				sizeof(size),
+				"%.1fk",
+				(double)de->file.size / 1024.0);
+		} else if (de->file.size < 0x40000000) {
+			http_snprintf(conn,
+				NULL, /* Buffer is big enough */
+				size,
+				sizeof(size),
+				"%.1fM",
+				(double)de->file.size / 1048576);
+		} else {
+			http_snprintf(conn,
+				NULL, /* Buffer is big enough */
+				size,
+				sizeof(size),
+				"%.1fG",
+				(double)de->file.size / 1073741824);
+		}
+	}
+
+	/* Note: http_snprintf will not cause a buffer overflow above.
+	 * So, string truncation checks are not required here. */
+	tm = localtime(&de->file.last_modified);
+	if (tm != NULL) {
+		strftime(mod, sizeof(mod), "%d-%b-%Y %H:%M", tm);
+	} else {
+		str_lcpy(mod, "01-Jan-1970 00:00", sizeof(mod));
+	}
+	http_printf(conn,
+		"<tr><td><a href=\"%s%s\">%s%s</a></td>"
+		"<td>&nbsp;%s</td><td>&nbsp;&nbsp;%s</td></tr>\n",
+		href,
+		de->file.is_directory ? "/" : "",
+		esc ? esc : de->file_name,
+		de->file.is_directory ? "/" : "",
+		mod,
+		size);
+	free(href);
+	return 0;
+}
+
+
+/* This function is called from send_directory() and used for
+ * sorting directory entries by size, name, or modification time. */
+static int compare_dir_entries(const void *p1, const void *p2, void *arg) {
+	const char *query_string = (const char *)(arg != NULL ? arg : "");
+	if (p1 && p2) {
+		const struct de *a = (const struct de *)p1, *b = (const struct de *)p2;
+		int cmp_result = 0;
+
+		if ((query_string == NULL) || (query_string[0] == '\0')) {
+			query_string = "n";
+		}
+
+		/* Sort Directories vs Files */
+		if (a->file.is_directory && !b->file.is_directory) {
+			return -1; /* Always put directories on top */
+		} else if (!a->file.is_directory && b->file.is_directory) {
+			return 1; /* Always put directories on top */
+		}
+
+		/* Sort by size or date */
+		if (*query_string == 's') {
+			cmp_result = (a->file.size == b->file.size)
+				? 0
+				: ((a->file.size > b->file.size) ? 1 : -1);
+		} else if (*query_string == 'd') {
+			cmp_result =
+				(a->file.last_modified == b->file.last_modified)
+				? 0
+				: ((a->file.last_modified > b->file.last_modified) ? 1
+					: -1);
+		}
+
+		/* Sort by name:
+		 * if (*query_string == 'n')  ...
+		 * but also sort files of same size/date by name as secondary criterion.
+		 */
+		if (cmp_result == 0) {
+			cmp_result = strcmp(a->file_name, b->file_name);
+		}
+
+		/* For descending order, invert result */
+		return (query_string[1] == 'd') ? -cmp_result : cmp_result;
+	}
+	return 0;
+}
+
+
+static int remove_directory(http_t *conn, const char *dir) {
+	char path[UTF8_PATH_MAX];
+	struct dirent *dp;
+	DIR *dirp;
+	struct de de;
+	int truncated;
+	int ok = 1;
+
+	if ((dirp = opendir(dir)) == NULL) {
+		return 0;
+	} else {
+
+		while ((dp = readdir(dirp)) != NULL) {
+			/* Do not show current dir (but show hidden files as they will
+			 * also be removed) */
+			if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")) {
+				continue;
+			}
+
+			http_snprintf(
+				conn, &truncated, path, sizeof(path), "%s/%s", dir, dp->d_name);
+
+			/* If we don't memset stat structure to zero, mtime will have
+			 * garbage and strftime() will segfault later on in
+			 * print_dir_entry(). memset is required only if http_stat()
+			 * fails. For more details, see
+			 * http://code.google.com/p/mongoose/issues/detail?id=79 */
+			memset(&de.file, 0, sizeof(de.file));
+
+			if (truncated) {
+				/* Do not delete anything shorter */
+				ok = 0;
+				continue;
+			}
+
+			if (!_stat_ex(conn, path, &de.file)) {
+				http_logger(DEBUG_ERROR, null,
+					"%s: _stat_ex(%s) failed: %s",
+					__func__,
+					path,
+					strerror(os_geterror()));
+				ok = 0;
+			}
+
+			if (de.file.is_directory) {
+				if (remove_directory(conn, path) == 0) {
+					ok = 0;
+				}
+			} else {
+				/* This will fail file is the file is in memory */
+				if (unlink(path) == 0) {
+					ok = 0;
+				}
+			}
+		}
+		(void)closedir(dirp);
+
+		(void)(rmdir(dir));
+	}
+
+	return ok;
+}
+
+static int scan_directory(http_t *conn,
+	const char *dir,
+	void *data,
+	int (*cb)(struct de *, void *)) {
+	char path[UTF8_PATH_MAX];
+	struct dirent *dp;
+	DIR *dirp;
+	struct de de;
+	int truncated;
+
+	if ((dirp = opendir(dir)) == NULL) {
+		return 0;
+	} else {
+
+		while ((dp = readdir(dirp)) != NULL) {
+			/* Do not show current dir and hidden files */
+			if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")
+				|| http_must_hide_file(conn->ctx, dp->d_name)) {
+				continue;
+			}
+
+			http_snprintf(
+				conn, &truncated, path, sizeof(path), "%s/%s", dir, dp->d_name);
+
+			/* If we don't memset stat structure to zero, mtime will have
+			 * garbage and strftime() will segfault later on in
+			 * print_dir_entry(). memset is required only if mg_stat()
+			 * fails. For more details, see
+			 * http://code.google.com/p/mongoose/issues/detail?id=79 */
+			memset(&de.file, 0, sizeof(de.file));
+
+			if (truncated) {
+				/* If the path is not complete, skip processing. */
+				continue;
+			}
+
+			if (!_stat_ex(conn, path, &de.file)) {
+				http_logger(DEBUG_ERROR, null,
+					"%s: _stat_ex(%s) failed: %s",
+					__func__,
+					path,
+					strerror(os_geterror()));
+			}
+			de.file_name = dp->d_name;
+			if (cb(&de, data)) {
+				/* stopped */
+				break;
+			}
+		}
+		(void)closedir(dirp);
+	}
+	return 1;
+}
+
+static int dir_scan_callback(struct de *de, void *data) {
+	struct dir_scan_data *dsd = (struct dir_scan_data *)data;
+	struct de *entries = dsd->entries;
+
+	if ((entries == NULL) || (dsd->num_entries >= dsd->arr_size)) {
+		/* Here "entries" is a temporary pointer and can be replaced,
+		 * "dsd->entries" is the original pointer */
+		entries =
+			(struct de *)realloc(entries,
+				dsd->arr_size * 2 * sizeof(entries[0]));
+		if (entries == NULL) {
+			/* stop scan */
+			return 1;
+		}
+		dsd->entries = entries;
+		dsd->arr_size *= 2;
+	}
+
+	entries[dsd->num_entries].file_name = str_dup_ex(de->file_name);
+	if (entries[dsd->num_entries].file_name == NULL) {
+		/* stop scan */
+		return 1;
+	}
+
+	entries[dsd->num_entries].file = de->file;
+	dsd->num_entries++;
+
+	return 0;
+}
+
+static FORCEINLINE void *_scan_directory(param_t args) {
+	return casting(scan_directory((http_t *)args[0].object, args[1].const_char_ptr, args[2].object, (int (*)(struct de *, void *))args[3].func));
+}
+
+FORCEINLINE int fs_scan_directory(http_t *conn, const char *dir, void *data, int (*cb)(struct de *, void *)) {
+	return await_for(queue_work(events_pool(), _scan_directory, 4, conn, dir, data, cb)).integer;
+}
+
+static void handle_directory_request(http_t *conn, const char *dir) {
+	size_t i;
+	int sort_direction;
+	struct dir_scan_data data = {NULL, 0, 128};
+	char date[64], *esc, *p;
+	const char *title;
+	time_t curtime = time(NULL);
+
+	if (!conn) {
+		return;
+	}
+
+	if (!fs_scan_directory(conn, dir, &data, dir_scan_callback)) {
+		http_error(conn, 500, "Error: Cannot open directory\nopendir(%s): %s", dir, strerror(os_geterror()));
+		return;
+	}
+
+	http_gmt_time_str(date, sizeof(date), &curtime);
+
+	esc = NULL;
+	title = conn->req.local_uri;
+	if (title[strcspn(title, "&<>")]) {
+		/* HTML escaping needed */
+		esc = (char *)malloc(strlen(title) * 5 + 1);
+		if (esc) {
+			for (i = 0, p = esc; title[i]; i++, p += strlen(p)) {
+				str_lcpy(p, title + i, 2);
+				if (*p == '&') {
+					strcpy(p, "&amp;");
+				} else if (*p == '<') {
+					strcpy(p, "&lt;");
+				} else if (*p == '>') {
+					strcpy(p, "&gt;");
+				}
+			}
+		} else {
+			title = "";
+		}
+	}
+
+	sort_direction = ((conn->req.query_string != NULL)
+		&& (conn->req.query_string[0] != '\0')
+		&& (conn->req.query_string[1] == 'd'))
+		? 'a'
+		: 'd';
+
+	conn->req.must_close = 1;
+
+	/* Create 200 OK response */
+	http_response_start(conn, 200);
+	http_static_cache_header(conn);
+	http_domain_header(conn);
+	http_response_add(conn, "Content-Type", "text/html; charset=utf-8", -1);
+
+	/* Send all headers */
+	http_response_send(conn);
+
+	/* Body */
+	http_printf(conn,
+		"<!DOCTYPE html>"
+		"<html><head><title>Index of %s</title>"
+		"<style>th {text-align: left;}</style></head>"
+		"<body><h1>Index of %s</h1><pre><table cellpadding=\"0\">"
+		"<tr><th><a href=\"?n%c\">Name</a></th>"
+		"<th><a href=\"?d%c\">Modified</a></th>"
+		"<th><a href=\"?s%c\">Size</a></th></tr>"
+		"<tr><td colspan=\"3\"><hr></td></tr>",
+		esc ? esc : title,
+		esc ? esc : title,
+		sort_direction,
+		sort_direction,
+		sort_direction);
+	free(esc);
+
+	/* Print first entry - link to a parent directory */
+	http_printf(conn,
+		"<tr><td><a href=\"%s\">%s</a></td>"
+		"<td>&nbsp;%s</td><td>&nbsp;&nbsp;%s</td></tr>\n",
+		"..",
+		"Parent directory",
+		"-",
+		"-");
+
+/* Sort and print directory entries */
+	if (data.entries != NULL) {
+		memsort(data.entries,
+			data.num_entries,
+			sizeof(data.entries[0]),
+			compare_dir_entries,
+			(void *)conn->req.query_string);
+		for (i = 0; i < data.num_entries; i++) {
+			print_dir_entry(conn, &data.entries[i]);
+			free(data.entries[i].file_name);
+		}
+		free(data.entries);
+	}
+
+	http_printf(conn, "%s", "</table></pre></body></html>");
+	conn->status = 200;
+}
+
 unsigned short sockaddr_in_port(union usa *s) {
 	if (s->sa.sa_family == AF_INET)
 		return s->sin.sin_port;
@@ -25,11 +453,12 @@ void sockaddr_to_str(char *buf, size_t len, const union usa *usa) {
 		/* TODO: Define a remote address for unix domain sockets.
 		* This code will always return "localhost", identical to http+tcp:*/
 		getnameinfo(&usa->sa, sizeof(usa->sun), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
+		//str_lcpy(buf, UNIX_DOMAIN_SOCKET_SERVER_NAME, len);
 	}
 }
 
 /* Return null terminated string `buf` of given maximum length. */
-void http_vsnprintf(http_t *conn, bool *truncated, string buf, size_t buflen, string_t fmt, va_list ap) {
+void http_vsnprintf(int *truncated, string buf, size_t buflen, string_t fmt, va_list ap) {
 	int n;
 	bool ok;
 
@@ -59,85 +488,235 @@ void http_vsnprintf(http_t *conn, bool *truncated, string buf, size_t buflen, st
 	buf[n] = '\0';
 }
 
-void http_snprintf(http_t *conn, bool *truncated, string buf, size_t buflen, string_t fmt, ...) {
+void http_snprintf(http_t *conn, int *truncated, string buf, size_t buflen, string_t fmt, ...) {
 	va_list ap;
+	(void)conn;
 
 	va_start(ap, fmt);
-	http_vsnprintf(conn, truncated, buf, buflen, fmt, ap);
+	http_vsnprintf(truncated, buf, buflen, fmt, ap);
 	va_end(ap);
 }
 
-FORCEINLINE int http_printf_no_cache(http_t *conn) {
-	/*
-	 * Send all current and obsolete cache opt-out directives.
-	 */
-	return http_printf(conn,
-		"Cache-Control: no-cache, no-store, "
-		"must-revalidate, private, max-age=0\r\n"
-		"Pragma: no-cache\r\n"
-		"Expires: 0\r\n");
-}
-
-void http_error(http_t *conn, int status, string_t fmt, ...) {
-	char buf[Kb(8)];
+static int http_error_send(http_t *conn, int status, const char *fmt, va_list args) {
+	char errmsg_buf[MG_BUF_LEN];
 	va_list ap;
 	int has_body;
-	char date[64];
-	time_t curtime;
-	string_t status_text;
+	char path_buf[UTF8_PATH_MAX];
+	int len, i, page_handler_found, scope, truncated;
+	const char *error_handler = NULL;
+	struct file error_page_file = STRUCT_FILE_INITIALIZER;
+	const char *error_page_file_ext, *tstr;
+	int handled_by_callback = 0;
 
-	if (is_empty(conn)) return;
+	if ((conn == NULL) || (fmt == NULL)) {
+		return -2;
+	}
 
-	curtime = time(NULL);
-	status_text = http_status_str(status);
+	/* Set status (for log) */
+	conn->status = status;
 
-	/*
-	* No custom error page. Send default error page.
-	*/
-	http_gmt_time_str(date, sizeof(date), &curtime);
+	/* Errors 1xx, 204 and 304 MUST NOT send a body */
+	has_body = ((status > 199) && (status != 204) && (status != 304));
 
-	/*
-	 * Errors 1xx, 204 and 304 MUST NOT send a body
+	/* Prepare message in buf, if required */
+	if (has_body
+		|| (!conn->req.in_error_handler
+			&& (conn->ctx->callbacks.http_error != NULL))) {
+		/* Store error message in errmsg_buf */
+		va_copy(ap, args);
+		http_vsnprintf(NULL, errmsg_buf, sizeof(errmsg_buf), fmt, ap);
+		va_end(ap);
+		/* In a debug build, print all html errors */
+		//DEBUG_TRACE("Error %i - [%s]", status, errmsg_buf);
+	}
+
+	/* If there is a http_error callback, call it.
+	 * But don't do it recursively, if callback calls `http_error()` again.
 	 */
-	has_body = (status > 199 && status != 204 && status != 304);
-	conn->req.must_close = true;
-	http_printf(conn, "HTTP/1.1 %d %s\r\n", status, status_text);
-	http_printf_no_cache(conn);
-	if (has_body)
-		http_printf(conn, "%s", "Content-Type: text/plain; charset=utf-8\r\n");
+	if (!conn->req.in_error_handler
+		&& (conn->ctx->callbacks.http_error != NULL)) {
+		/* Mark in_error_handler to avoid recursion and call user callback. */
+		conn->req.in_error_handler = 1;
+		handled_by_callback =
+			(conn->ctx->callbacks.http_error(conn, status)	== 0);
+		conn->req.in_error_handler = 0;
+	}
 
-	http_printf(conn, "Date: %s\r\n" "Connection: close\r\n\r\n", date);
+	if (!handled_by_callback) {
+		/* Check for recursion */
+		if (conn->req.in_error_handler) {
+			//DEBUG_TRACE("Recursion when handling error %u - fall back to default", status);
+		} else {
+			/* Send user defined error pages, if defined */
+			error_handler = conn->domain->config[ERROR_PAGES];
+			error_page_file_ext = conn->domain->config[INDEX_FILES];
+			page_handler_found = 0;
 
-	/*
-	 * Errors 1xx, 204 and 304 MUST NOT send a body
-	 */
-	if (has_body) {
-		http_printf(conn, "Error %d: %s\n", status, status_text);
-		if (!is_empty(fmt)) {
-			va_start(ap, fmt);
-			http_vsnprintf(conn, NULL, buf, sizeof(buf), fmt, ap);
-			va_end(ap);
-			tls_writer(conn->fd, buf, 0);
+			if (error_handler != NULL) {
+				for (scope = 1; (scope <= 3) && !page_handler_found; scope++) {
+					switch (scope) {
+						case 1: /* Handler for specific error, e.g. 404 error */
+							http_snprintf(conn,
+								&truncated,
+								path_buf,
+								sizeof(path_buf) - 32,
+								"%serror%03u.",
+								error_handler,
+								status);
+							break;
+						case 2: /* Handler for error group, e.g., 5xx error
+								 * handler
+								 * for all server errors (500-599) */
+							http_snprintf(conn,
+								&truncated,
+								path_buf,
+								sizeof(path_buf) - 32,
+								"%serror%01uxx.",
+								error_handler,
+								status / 100);
+							break;
+						default: /* Handler for all errors */
+							http_snprintf(conn,
+								&truncated,
+								path_buf,
+								sizeof(path_buf) - 32,
+								"%serror.",
+								error_handler);
+							break;
+					}
+
+					/* String truncation in buf may only occur if
+					 * error_handler is too long. This string is
+					 * from the config, not from a client. */
+					(void)truncated;
+
+					/* The following code is redundant, but it should avoid
+					 * false positives in static source code analyzers and
+					 * vulnerability scanners.
+					 */
+					path_buf[sizeof(path_buf) - 32] = 0;
+					len = (int)strlen(path_buf);
+					if (len > (int)sizeof(path_buf) - 32) {
+						len = (int)sizeof(path_buf) - 32;
+					}
+
+					/* Start with the file extension from the configuration. */
+					tstr = strchr(error_page_file_ext, '.');
+
+					while (tstr) {
+						for (i = 1;
+							(i < 32) && (tstr[i] != 0) && (tstr[i] != ',');
+							i++) {
+						   /* buffer overrun is not possible here, since
+							* (i < 32) && (len < sizeof(path_buf) - 32)
+							* ==> (i + len) < sizeof(path_buf) */
+							path_buf[len + i - 1] = tstr[i];
+						}
+						/* buffer overrun is not possible here, since
+						 * (i <= 32) && (len < sizeof(path_buf) - 32)
+						 * ==> (i + len) <= sizeof(path_buf) */
+						path_buf[len + i - 1] = 0;
+
+						if (http_stat(conn, path_buf, &error_page_file)) {
+							//DEBUG_TRACE("Check error page %s - found", path_buf);
+							page_handler_found = 1;
+							break;
+						}
+						//DEBUG_TRACE("Check error page %s - not found", path_buf);
+
+						/* Continue with the next file extension from the
+						 * configuration (if there is a next one). */
+						tstr = strchr(tstr + i, '.');
+					}
+				}
+			}
+
+			if (page_handler_found) {
+				conn->req.in_error_handler = 1;
+				handle_file_based_request(conn, path_buf, &error_page_file);
+				conn->req.in_error_handler = 0;
+				return 0;
+			}
 		}
-	} else {
-		/* No body allowed. Close the connection. */
+
+		/* No custom error page. Send default error page. */
+		conn->req.must_close = 1;
+		http_response_start(conn, status);
+		http_no_cache_header(conn);
+		http_domain_header(conn);
+		http_cors_header(conn);
+		if (has_body) {
+			http_response_add(conn,
+				"Content-Type",
+				"text/plain; charset=utf-8",
+				-1);
+		}
+		http_response_send(conn);
+
+		/* HTTP responses 1xx, 204 and 304 MUST NOT send a body */
+		if (has_body) {
+			/* For other errors, send a generic error message. */
+			const char *status_text = http_status_str(status);
+			http_printf(conn, "Error %d: %s\n", status, status_text);
+			http_write(conn, errmsg_buf, strlen(errmsg_buf));
+
+		} else {
+			/* No body allowed. Close the connection. */
+			//DEBUG_TRACE("Error %i", status);
+		}
+	}
+	return 0;
+}
+
+
+int http_error(http_t *conn, int status, string_t fmt, ...) {
+	va_list ap;
+	int ret;
+
+	va_start(ap, fmt);
+	ret = http_error_send(conn, status, fmt, ap);
+	va_end(ap);
+
+	return ret;
+}
+
+void http_domain_header(http_t *conn) {
+	const char *header = conn->domain->config[ADDITIONAL_HEADER];
+
+	if (conn->domain->config[STRICT_HTTPS_MAX_AGE]) {
+		long max_age = atol(conn->domain->config[STRICT_HTTPS_MAX_AGE]);
+		if (max_age >= 0) {
+			char val[64];
+			http_snprintf(conn,
+				NULL,
+				val,
+				sizeof(val),
+				"max-age=%lu",
+				(unsigned long)max_age);
+			http_response_add(conn, "Strict-Transport-Security", val, -1);
+		}
+	}
+
+	// Content-Security-Policy
+	if (header && header[0]) {
+		http_response_multi(conn, (string)header);
 	}
 }
 
-static void http_cors_header(http_t *conn) {
-	const char *origin_hdr = http_get_header(conn, "Origin");
-	const char *cors_orig_cfg =
-		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_ORIGIN];
-	const char *cors_cred_cfg =
-		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_CREDENTIALS];
-	const char *cors_hdr_cfg =
-		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_HEADERS];
-	const char *cors_exphdr_cfg =
-		conn->ctx->host.config[ACCESS_CONTROL_EXPOSE_HEADERS];
-	const char *cors_meth_cfg =
-		conn->ctx->host.config[ACCESS_CONTROL_ALLOW_METHODS];
-	const char *cors_repl_asterisk_with_orig_cfg =
-		conn->ctx->host.config[REPLACE_ASTERISK_WITH_ORIGIN];
+void http_cors_header(http_t *conn) {
+	string_t origin_hdr = http_get_header(conn, "Origin");
+	string_t cors_orig_cfg =
+		conn->domain->config[ACCESS_CONTROL_ALLOW_ORIGIN];
+	string_t cors_cred_cfg =
+		conn->domain->config[ACCESS_CONTROL_ALLOW_CREDENTIALS];
+	string_t cors_hdr_cfg =
+		conn->domain->config[ACCESS_CONTROL_ALLOW_HEADERS];
+	string_t cors_exphdr_cfg =
+		conn->domain->config[ACCESS_CONTROL_EXPOSE_HEADERS];
+	string_t cors_meth_cfg =
+		conn->domain->config[ACCESS_CONTROL_ALLOW_METHODS];
+	string_t cors_repl_asterisk_with_orig_cfg =
+		conn->domain->config[REPLACE_ASTERISK_WITH_ORIGIN];
 
 	if (cors_orig_cfg && *cors_orig_cfg && origin_hdr && *origin_hdr
 		&& cors_repl_asterisk_with_orig_cfg
@@ -150,12 +729,12 @@ static void http_cors_header(http_t *conn) {
 		 * http://www.html5rocks.com/static/images/cors_server_flowchart.png
 		 * CORS preflight is not supported for files. */
 		if (cors_repl_asterisk_with_orig && cors_orig_cfg[0] == '*') {
-			mg_response_header_add(conn,
+			http_response_add(conn,
 				"Access-Control-Allow-Origin",
 				origin_hdr,
 				-1);
 		} else {
-			mg_response_header_add(conn,
+			http_response_add(conn,
 				"Access-Control-Allow-Origin",
 				cors_orig_cfg,
 				-1);
@@ -166,28 +745,28 @@ static void http_cors_header(http_t *conn) {
 		/* Cross-origin resource sharing (CORS), see
 		 * https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Credentials
 		 */
-		mg_response_header_add(conn,
+		http_response_add(conn,
 			"Access-Control-Allow-Credentials",
 			cors_cred_cfg,
 			-1);
 	}
 
 	if (cors_hdr_cfg && *cors_hdr_cfg) {
-		mg_response_header_add(conn,
+		http_response_add(conn,
 			"Access-Control-Allow-Headers",
 			cors_hdr_cfg,
 			-1);
 	}
 
 	if (cors_exphdr_cfg && *cors_exphdr_cfg) {
-		mg_response_header_add(conn,
+		http_response_add(conn,
 			"Access-Control-Expose-Headers",
 			cors_exphdr_cfg,
 			-1);
 	}
 
 	if (cors_meth_cfg && *cors_meth_cfg) {
-		mg_response_header_add(conn,
+		http_response_add(conn,
 			"Access-Control-Allow-Methods",
 			cors_meth_cfg,
 			-1);
@@ -247,7 +826,7 @@ static int http_vprintf(http_t *conn, string_t fmt, va_list ap) {
 
 	buf = NULL;
 	if ((len = alloc_vprintf(&buf, mem, sizeof(mem), fmt, ap)) > 0)
-		len = tls_writer(conn->fd, buf, (size_t)len);
+		len = http_write(conn, (const void *)buf, (size_t)len);
 
 	if (buf != mem) {
 		free(buf);
@@ -269,182 +848,465 @@ int http_printf(http_t *conn, string_t fmt, ...) {
 	return result;
 }
 
-/* Used to construct an etag which can be used to identify a file on a specific moment. */
 void http_construct_etag(http_t *ctx, string buf, size_t buf_len, const struct file *filep) {
 	if (filep != NULL && buf != NULL && buf_len > 0) {
 		http_snprintf(ctx, NULL, buf, buf_len, "\"%lx.%" INT64_FMT "\"", (unsigned long)filep->last_modified, filep->size);
 	}
 }
 
-static int http_read_inner(http_t *conn, void *buffie, size_t len) {
-	int64_t n;
-	int64_t buffered_len;
-	int64_t nread;
-	/* since the return value is * int, we may not read more * bytes */
-	int64_t len64 = (int64_t)((len > INT_MAX) ? INT_MAX : len);
-	string_t body;
-	string buf;
+string_t xx_http_fgets_xx(char *buf, size_t size, struct file *filep, char **p) {
+	string_t eof;
+	size_t len;
+	string_t memend;
 
-	if (is_empty(conn))
+	if (filep == NULL)
+		return NULL;
+
+	if (filep->membuf != NULL && *p != NULL) {
+		memend = (string_t)&filep->membuf[filep->size];
+		/* Search for \n from p till the end of stream */
+		eof = (char *)memchr(*p, '\n', (size_t)(memend - *p));
+
+		if (eof != NULL)
+			eof += 1;		/* Include \n */
+		else
+			eof = memend;	/* Copy remaining data */
+
+		len = ((size_t)(eof - *p) > (size - 1)) ? (size - 1) : (size_t)(eof - *p);
+		memcpy(buf, *p, len);
+		buf[len] = '\0';
+		*p += len;
+
+		return (len) ? eof : NULL;
+	}
+
+	if (filep->fp != NULL) return
+		fgets(buf, (int)size, filep->fp);
+
+	return NULL;
+}
+
+static int _read_inner(http_t *conn, void *buf, size_t len) {
+	int64_t content_len, n, buffered_len, nread;
+	int64_t len64 =
+		(int64_t)((len > INT_MAX) ? INT_MAX : len); /* since the return value is
+													 * int, we may not read more
+													 * bytes */
+	const char *body;
+
+	if (conn == NULL) {
 		return 0;
+	}
 
-	buf = buffie;
-	/*
-	 * If Content-Length is not set for a PUT or POST request, read until
-	 * socket is closed
-	 */
-	if (conn->req.consumed_content == 0 && conn->req.content_len == -1) {
-		conn->req.content_len = INT64_MAX;
-		conn->req.must_close = true;
+	/* If Content-Length is not set for a response with body data,
+	 * we do not know in advance how much data should be read. */
+	content_len = conn->req.content_len;
+	if (content_len < 0) {
+		/* The body data is completed when the connection is closed. */
+		content_len = INT64_MAX;
 	}
 
 	nread = 0;
-	if (conn->req.consumed_content < conn->req.content_len) {
-		/*
-		 * Adjust number of bytes to read.
-		 */
-		int64_t left_to_read = conn->req.content_len - conn->req.consumed_content;
+	if (conn->req.consumed_content < content_len) {
+		/* Adjust number of bytes to read. */
+		int64_t left_to_read = content_len - conn->req.consumed_content;
 		if (left_to_read < len64) {
-			/*
-			 * Do not read more than the total content length of the request.
+			/* Do not read more than the total content length of the
+			 * request.
 			 */
 			len64 = left_to_read;
 		}
 
-		/*
-		 * Return buffered data
-		 */
-		buffered_len = (int64_t)(conn->req.data_len) - (int64_t)conn->req.request_len - conn->req.consumed_content;
+		/* Return buffered data */
+		buffered_len = (int64_t)(conn->req.data_len) - (int64_t)conn->req.request_len
+			- conn->req.consumed_content;
 		if (buffered_len > 0) {
-			if (len64 < buffered_len)
+			if (len64 < buffered_len) {
 				buffered_len = len64;
-
+			}
 			body = conn->req.buf + conn->req.request_len + conn->req.consumed_content;
 			memcpy(buf, body, (size_t)buffered_len);
 			len64 -= buffered_len;
 			conn->req.consumed_content += buffered_len;
 			nread += buffered_len;
-			buf += buffered_len;
+			buf = (char *)buf + buffered_len;
 		}
 
-		/*
-		 * We have returned all buffered data. Read new data from the remote
-		 * socket.
-		 */
-		n = tls_reader(conn->fd, buf, (size_t)len64);
-
-		if (n >= 0) nread += n;
-		else
-			nread = (nread > 0) ? nread : n;
+		/* We have returned all buffered data. Read new data from the remote socket. */
+		if ((n = tls_reader(socket2fd(conn->fd), (char *)buf, len64)) >= 0) {
+			conn->req.consumed_content += n;
+			nread += n;
+		} else {
+			nread = ((nread > 0) ? nread : n);
+		}
 	}
-
 	return (int)nread;
 }
 
-static FORCEINLINE char http_getc(http_t *conn) {
-	char c;
-
-	if (is_empty(conn))
-		return 0;
-
-	conn->req.content_len++;
-	if (http_read_inner(conn, &c, 1) <= 0)
-		return '\0';
-
-	return c;
-}
-
 int http_read(http_t *conn, void_t buf, size_t len) {
-	if (len > INT_MAX)
+	if (len > INT_MAX) {
 		len = INT_MAX;
+	}
 
-	if (is_empty(conn))
+	if (conn == NULL) {
 		return 0;
+	}
 
 	if (conn->req.is_chunked) {
-		size_t all_read;
-		all_read = 0;
+		size_t all_read = 0;
 		while (len > 0) {
-			/*
-			 * No more data left to read
-			 */
-			if (conn->req.is_chunked == 2)
+			if (conn->req.is_chunked >= 3) {
+				/* No more data left to read */
 				return 0;
+			}
+			if (conn->req.is_chunked != 1) {
+				/* Has error */
+				return -1;
+			}
 
-			if (conn->req.chunk_remainder) {
-				/* copy from the remainder of the last received chunk */
-				long read_ret;
-				size_t read_now = ((conn->req.chunk_remainder > len) ? (len) : (conn->req.chunk_remainder));
-				conn->req.content_len += (int)read_now;
+			if (conn->req.consumed_content != conn->req.content_len) {
+				/* copy from the current chunk */
+				int read_ret = _read_inner(conn, (char *)buf + all_read, len);
 
-				read_ret = http_read_inner(conn, (string)buf + all_read, read_now);
+				if (read_ret < 1) {
+					/* read error */
+					conn->req.is_chunked = 2;
+					return -1;
+				}
+
 				all_read += (size_t)read_ret;
+				len -= (size_t)read_ret;
 
-				conn->req.chunk_remainder -= read_now;
-				len -= read_now;
-				if (conn->req.chunk_remainder == 0) {
-					/*
-					 * the rest of the data in the current chunk has been read
-					 */
-					if (http_getc(conn) != '\r' || http_getc(conn) != '\n') {
-						/*
-						 * Protocol violation
-						 */
+				if (conn->req.consumed_content == conn->req.content_len) {
+					/* Add data bytes in the current chunk have been read,
+					 * so we are expecting \r\n now. */
+					char x[2];
+					conn->req.content_len += 2;
+					if ((_read_inner(conn, x, 2) != 2) || (x[0] != '\r')
+						|| (x[1] != '\n')) {
+						/* Protocol violation */
+						conn->req.is_chunked = 2;
 						return -1;
 					}
 				}
+
 			} else {
-				/*
-				 * fetch a new chunk
-				 */
-				int i;
+				/* fetch a new chunk */
+				size_t i;
 				char lenbuf[64];
-				string end;
-				unsigned long chunkSize;
+				char *end = NULL;
+				unsigned long chunkSize = 0;
 
-				i = 0;
-				end = NULL;
-				chunkSize = 0;
-				for (i = 0; i < ((int)sizeof(lenbuf) - 1); i++) {
-					lenbuf[i] = http_getc(conn);
-					if (i > 0 && lenbuf[i] == '\r' && lenbuf[i - 1] != '\r')
+				for (i = 0; i < (sizeof(lenbuf) - 1); i++) {
+					conn->req.content_len++;
+					if (_read_inner(conn, lenbuf + i, 1) != 1) {
+						lenbuf[i] = 0;
+					}
+
+					if ((i > 0) && (lenbuf[i] == ';')) {
+						// chunk extension --> skip chars until next CR
+						//
+						// RFC 2616, 3.6.1 Chunked Transfer Coding
+						// (https://www.rfc-editor.org/rfc/rfc2616#page-25)
+						//
+						// chunk          = chunk-size [ chunk-extension ] CRLF
+						//                  chunk-data CRLF
+						// ...
+						// chunk-extension= *( ";" chunk-ext-name [ "="
+						// chunk-ext-val ] )
+						do
+							++conn->req.content_len;
+						while (_read_inner(conn, lenbuf + i, 1) == 1
+							&& lenbuf[i] != '\r');
+					}
+
+					if ((i > 0) && (lenbuf[i] == '\r')
+						&& (lenbuf[i - 1] != '\r')) {
 						continue;
+					}
 
-					if (i > 1 && lenbuf[i] == '\n' && lenbuf[i - 1] == '\r') {
+					if ((i > 1) && (lenbuf[i] == '\n')
+						&& (lenbuf[i - 1] == '\r')) {
 						lenbuf[i + 1] = 0;
 						chunkSize = strtoul(lenbuf, &end, 16);
-						/*
-						 * regular end of content
-						 */
-						if (chunkSize == 0)
-							conn->req.is_chunked = 2;
+						if (chunkSize == 0) {
+							/* regular end of content */
+							conn->req.is_chunked = 3;
+						}
 						break;
 					}
-
-					/*
-					 * illegal character for chunk length
-					 */
-					if (!isalnum(lenbuf[i]))
+					if (!isxdigit((unsigned char)lenbuf[i])) {
+						/* illegal character for chunk length */
+						conn->req.is_chunked = 2;
 						return -1;
+					}
+				}
+				if ((end == NULL) || (*end != '\r')) {
+					/* chunksize not set correctly */
+					conn->req.is_chunked = 2;
+					return -1;
+				}
+				if (conn->req.is_chunked == 3) {
+					/* try discarding trailer for keep-alive */
+
+					// We found the last chunk (length 0) including the
+					// CRLF that terminates that chunk. Now follows a possibly
+					// empty trailer and a final CRLF.
+					//
+					// see RFC 2616, 3.6.1 Chunked Transfer Coding
+					// (https://www.rfc-editor.org/rfc/rfc2616#page-25)
+					//
+					// Chunked-Body   = *chunk
+					// 	                last-chunk
+					// 	                trailer
+					// 	                CRLF
+					// ...
+					// last-chunk     = 1*("0") [ chunk-extension ] CRLF
+					// ...
+					// trailer        = *(entity-header CRLF)
+
+					int crlf_count = 2; // one CRLF already determined
+					while (crlf_count < 4 && conn->req.is_chunked == 3) {
+						++conn->req.content_len;
+						if (_read_inner(conn, lenbuf, 1) == 1) {
+							if ((crlf_count == 0 || crlf_count == 2)) {
+								if (lenbuf[0] == '\r')
+									++crlf_count;
+								else
+									crlf_count = 0;
+							} else {
+								// previous character was a CR
+								// --> next character must be LF
+
+								if (lenbuf[0] == '\n')
+									++crlf_count;
+								else
+									conn->req.is_chunked = 2;
+							}
+						} else
+							// premature end of trailer
+							conn->req.is_chunked = 2;
+					}
+
+					if (conn->req.is_chunked == 2)
+						return -1;
+					else
+						conn->req.is_chunked = 4;
+
+					break;
 				}
 
-				/*
-				 * chunksize not set correctly
-				 */
-				if (is_empty(end) || *end != '\r')
-					return -1;
-
-				if (chunkSize == 0)
-					break;
-
-				conn->req.chunk_remainder = chunkSize;
+				/* append a new chunk */
+				conn->req.content_len += (int64_t)chunkSize;
 			}
 		}
 
 		return (int)all_read;
 	}
+	return _read_inner(conn, buf, len);
+}
 
-	return http_read_inner(conn, buf, len);
+int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len) {
+	char lenbuf[16];
+	size_t lenbuf_len;
+	int ret;
+	int t;
+
+	/* First store the length information in a text buffer. */
+	sprintf(lenbuf, "%x\r\n", chunk_len);
+	lenbuf_len = strlen(lenbuf);
+
+	/* Then send length information, chunk and terminating \r\n. */
+	ret = http_write(conn, lenbuf, lenbuf_len);
+	if (ret != (int)lenbuf_len) {
+		return -1;
+	}
+	t = ret;
+
+	ret = http_write(conn, chunk, chunk_len);
+	if (ret != (int)chunk_len) {
+		return -1;
+	}
+	t += ret;
+
+	ret = http_write(conn, "\r\n", 2);
+	if (ret != 2) {
+		return -1;
+	}
+	t += ret;
+
+	return t;
+}
+
+int http_write(http_t *conn, const void *buf, size_t len) {
+	if (conn == NULL) {
+		return 0;
+	}
+
+	if (len > INT_MAX) {
+		return -1;
+	}
+	int timeout;
+	/* Mark connection as "data sent" */
+	conn->req.state = 10;
+	if (conn->req.proto == PROTOCOL_HTTP2) {
+	//	http2_data_frame_head(conn, len, 0);
+	}
+
+	if (conn->ctx->host.config[REQUEST_TIMEOUT]) {
+		timeout = atoi(conn->ctx->host.config[REQUEST_TIMEOUT]) / 1000.0;
+	}
+
+	if (timeout <= 0.0) {
+		timeout = strtod(http_get_default_option(REQUEST_TIMEOUT), NULL)
+			/ 1000.0;
+	}
+
+	events_tcp_timeout(conn->client.sock, timeout);
+	int total = tls_writer(socket2fd(conn->client.sock), (string)buf, len);
+	if (total > 0) {
+		conn->req.num_bytes_sent += total;
+	}
+
+	return total;
+}
+
+int http_file_body(http_t *conn, string_t path) {
+	struct file file = STRUCT_FILE_INITIALIZER;
+	if (!http_fopen(conn->ctx, conn, path, "rb", &file)) {
+		return -1;
+	}
+
+	http_set_close_on_exec(fd2socket(fileno(file.fp)));
+	http_send_file_data(conn, &file, 0, INT64_MAX, 0); /* send static file */
+	(void)http_fclose(&file); /* Ignore errors for readonly files */
+	return 0;                      /* >= 0 for OK */
+}
+
+int http_ok(http_t *conn, string_t mime_type, long long content_length) {
+	if ((mime_type == NULL) || (*mime_type == 0)) {
+		/* No content type defined: default to text/html */
+		mime_type = "text/html";
+	}
+
+	http_response_start(conn, 200);
+	http_no_cache_header(conn);
+	http_domain_header(conn);
+	http_cors_header(conn);
+	http_response_add(conn, "Content-Type", mime_type, -1);
+	if (content_length < 0) {
+		/* Size not known. Use chunked encoding (HTTP/1.x) */
+		if (conn->req.proto == PROTOCOL_HTTP1) {
+			/* Only HTTP/1.x defines "chunked" encoding, HTTP/2 does not*/
+			http_response_add(conn, "Transfer-Encoding", "chunked", -1);
+		}
+	} else {
+		char len[32];
+		int trunc = 0;
+		http_snprintf(conn,
+			&trunc,
+			len,
+			sizeof(len),
+			"%" UINT64_FMT,
+			(uint64_t)content_length);
+		if (!trunc) {
+			/* Since 32 bytes is enough to hold any 64 bit decimal number,
+			 * !trunc is always true */
+			http_response_add(conn, "Content-Length", len, -1);
+		}
+	}
+
+	http_response_send(conn);
+	return 0;
+}
+
+int http_redirect(http_t *conn, string_t target_url, int redirect_code) {
+	/* In case redirect_code=0, use 307. */
+	if (redirect_code == 0) {
+		redirect_code = 307;
+	}
+
+	/* In case redirect_code is none of the above, return error. */
+	if ((redirect_code != 301) && (redirect_code != 302)
+		&& (redirect_code != 303) && (redirect_code != 307)
+		&& (redirect_code != 308)) {
+		/* Parameter error */
+		return -2;
+	}
+
+	/* If target_url is not defined, redirect to "/". */
+	if ((target_url == NULL) || (*target_url == 0)) {
+		target_url = "/";
+	}
+
+	/* Send all required headers */
+	http_response_start(conn, redirect_code);
+	http_response_add(conn, "Location", target_url, -1);
+	if ((redirect_code == 301) || (redirect_code == 308)) {
+		/* Permanent redirect */
+		http_static_cache_header(conn);
+	} else {
+		/* Temporary redirect */
+		http_no_cache_header(conn);
+	}
+
+	http_domain_header(conn);
+	http_cors_header(conn);
+	http_response_add(conn, "Content-Length", "0", 1);
+	http_response_send(conn);
+	return 1;
+}
+
+void http_no_cache_header(http_t *conn) {
+	http_response_add(conn,
+		"Cache-Control",
+		"no-cache, no-store, "
+		"must-revalidate, private, max-age=0",
+		-1);
+	http_response_add(conn, "Expires", "0", -1);
+
+	if (conn->req.proto == PROTOCOL_HTTP1) {
+		/* Obsolete, but still send it for HTTP/1.0 */
+		http_response_add(conn, "Pragma", "no-cache", -1);
+	}
+}
+
+ void http_static_cache_header(http_t *conn) {
+	int max_age;
+	char val[64];
+	const char *cache_control =
+		conn->domain->config[STATIC_FILE_CACHE_CONTROL];
+
+	/* If there is a full cache-control option configured,0 use it */
+	if (cache_control != NULL) {
+		http_response_add(conn, "Cache-Control", cache_control, -1);
+		return;
+	}
+
+	/* Read the server config to check how long a file may be cached.
+	 * The configuration is in seconds. */
+	max_age = atoi(conn->domain->config[STATIC_FILE_MAX_AGE]);
+	if (max_age <= 0) {
+		/* 0 means "do not cache". All values <0 are reserved
+		 * and may be used differently in the future. */
+		/* If a file should not be cached, do not only send
+		 * max-age=0, but also pragmas and Expires headers. */
+		http_no_cache_header(conn);
+		return;
+	}
+
+	/* Use "Cache-Control: max-age" instead of "Expires" header.
+	 * Reason: see https://www.mnot.net/blog/2007/05/15/expires_max-age */
+	/* See also https://www.mnot.net/cache_docs/ */
+	/* According to RFC 2616, Section 14.21, caching times should not exceed
+	 * one year. A year with 365 days corresponds to 31536000 seconds, a
+	 * leap
+	 * year to 31622400 seconds. For the moment, we just send whatever has
+	 * been configured, still the behavior for >1 year should be considered
+	 * as undefined. */
+	http_snprintf(
+		conn, NULL, val, sizeof(val), "max-age=%lu", (unsigned long)max_age);
+	http_response_add(conn, "Cache-Control", val, -1);
 }
 
 bool http_forward_body(http_t *conn, FILE *fp) {
@@ -504,7 +1366,7 @@ bool http_forward_body(http_t *conn, FILE *fp) {
 			to_read = sizeof(buf);
 			if ((int64_t)to_read > conn->req.content_len - conn->req.consumed_content) to_read = (int)(conn->req.content_len - conn->req.consumed_content);
 
-			nread = tls_reader(conn->fd, buf, to_read);
+			nread = http_read(conn, buf, to_read);
 			if (nread <= 0 || tls_writer(conn->fd, buf, nread) != nread) break;
 			conn->req.consumed_content += nread;
 		}
@@ -528,26 +1390,47 @@ bool http_forward_body(http_t *conn, FILE *fp) {
 	return success;
 }
 
-bool http_should_keep_alive(http_t *conn) {
+/* HTTP 1.1 assumes keep alive if "Connection:" header is not set
+ * This function must tolerate situations when connection info is not
+ * set up, for example if request parsing failed. */
+static int should_keep_alive(http_t *conn) {
 	string_t http_version;
 	string_t header;
 
-	if (is_empty(conn)) return false;
+	/* First satisfy needs of the server */
+	if ((conn == NULL) || conn->req.must_close) {
+		/* Close, if `httpie` framework needs to close */
+		return 0;
+	}
 
-	http_version = conn->protocol;
+	if (!str_is_case(conn->domain->config[ENABLE_KEEP_ALIVE], "yes") != 0) {
+		/* Close, if keep alive is not enabled */
+		return 0;
+	}
+
+	/* Check explicit wish of the client */
 	header = http_get_header(conn, "Connection");
+	if (header) {
+		/* If there is a connection header from the client, obey */
+		if (http_has_flag(conn, "Connection", "keep-alive")) {
+			return true;
+		}
+		return 0;
+	}
 
-	if (conn->req.must_close) return false;
-	if (conn->status == 401) return false;
-	if (!conn->req.enable_keep_alive) return false;
-	if (!is_empty(header) && !http_has_flag(conn, "Connection", "keep-alive")) return false;
-	if (is_empty(header) && !str_is_empty(http_version) && str_is(http_version, "1.1")) return false;
+	/* Use default of the standard */
+	http_version = conn->req.http_version;
+	if (http_version && (0 == strcmp(http_version, "1.1"))) {
+		/* HTTP 1.1 default is keep alive */
+		return 1;
+	}
 
-	return true;
+	/* HTTP 1.0 (and earlier) default is to close the connection */
+	return 0;
 }
 
 FORCEINLINE string_t http_suggest_connection_header(http_t *conn) {
-	return http_should_keep_alive(conn) ? "keep-alive" : "close";
+	return should_keep_alive(conn) ? "keep-alive" : "close";
 }
 
 void http_options(http_t *conn) {
@@ -784,7 +1667,6 @@ bool http_get_request(http_ini_t *ctx, http_t *conn, int *err) {
 	return true;
 }
 
-/* Returns true, if a file defined by a specific path is located in memory. */
 bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep) {
 	size_t size;
 
@@ -805,14 +1687,75 @@ bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct
 	return !is_empty(filep->membuf);
 }
 
-int http_stat(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep) {
+int http_put_dir(http_ini_t *ctx, http_t *conn, string_t path) {
+	char buf[PATH_MAX];
+	string_t s;
+	string_t p;
+	struct file file = STRUCT_FILE_INITIALIZER;
+	size_t len;
+	int res;
+
+	if (ctx == NULL)
+		return -2;
+
+	res = 1;
+	s = path+2;
+	p = path+2;
+	while ( (p = strchr(s, '/')) != NULL ) {
+		len = (size_t)(p - path);
+		if (len >= sizeof(buf)) {
+			/* path too long */
+			res = -1;
+			break;
+		}
+
+		memcpy(buf, path, len);
+		buf[len] = '\0';
+		/* Try to create intermediate directory */
+		if (!http_stat(conn, buf, &file) && fs_mkdir(buf, 0755) != 0 ) {
+			/* path does not exist and can not be created */
+			res = -2;
+			break;
+		}
+
+		/* Is path itself a directory? */
+		if (p[1] == '\0')
+			res = 0;
+
+		s = ++p;
+	}
+
+	return res;
+}
+
+void http_remove_bad_file(http_ini_t *ctx, http_t *conn, string_t path ) {
+	int r = fs_unlink(path);
+	if (r != 0 && ctx != NULL && conn != NULL)
+		http_logger(DEBUG_ERROR, conn, "%s: Cannot remove invalid file %s", __func__, path);
+}
+
+int http_fclose(struct file *filep) {
+	int retval;
+
+	if (filep == NULL || filep->fp == NULL) {
+		errno = EINVAL;
+		return EOF;
+	}
+
+	retval = fs_fclose(filep->fp);
+	filep->fp = NULL;
+
+	return retval;
+}
+
+int http_stat(http_t *conn, string_t path, struct file *filep) {
 	struct stat st;
 
 	if (is_empty(filep))
 		return 0;
 
 	memset(filep, 0, sizeof(*filep));
-	if (!is_empty(conn) && ctx != NULL && http_is_file_in_memory(ctx, conn, path, filep))
+	if (!is_empty(conn) && conn->ctx != NULL && http_is_file_in_memory(conn->ctx, conn, path, filep))
 		return 1;
 
 	if (fs_stat(path, &st) == 0) {
@@ -829,7 +1772,7 @@ bool http_is_file_opened(const struct file *filep) {
 	return (filep != NULL && (filep->membuf != NULL || filep->fp != NULL));
 }
 
-bool http_fopen(http_ini_t *ctx, const http_t *conn, const char *path, const char *mode, struct file *filep) {
+bool http_fopen(http_ini_t *ctx, const http_t *conn, string_t path, string_t mode, struct file *filep) {
 	struct stat st;
 
 	if (ctx == NULL || filep == NULL)
@@ -840,10 +1783,94 @@ bool http_fopen(http_ini_t *ctx, const http_t *conn, const char *path, const cha
 		filep->size = (uint64_t)st.st_size;
 
 	if (!http_is_file_in_memory(ctx, (http_t *)conn, path, filep)) {
-		filep->fp = async_fopen(path, mode);
+		filep->fp = fs_fopen(path, mode);
 	}
 
 	return http_is_file_opened(filep);
+}
+
+void http_file(http_t *conn, const char *path, const char *mime_type,
+	const char *additional_headers) {
+	struct file file = STRUCT_FILE_INITIALIZER;
+
+	if (!conn) {
+		/* No conn */
+		return;
+	}
+
+	if (http_stat(conn, path, &file)) {
+		if (is_not_modified(conn, &file)) {
+			/* Send 304 "Not Modified" - this must not send any body data */
+			handle_not_modified_static_file_request(conn, &file);
+		} else
+			if (file.is_directory) {
+				if (str_is_case(conn->domain->config[ENABLE_DIRECTORY_LISTING],
+					"yes")) {
+					handle_directory_request(conn, path);
+				} else {
+					http_error(conn,
+						403,
+						"%s",
+						"Error: Directory listing denied");
+				}
+			} else {
+				handle_static_file_request(conn, path, &file, mime_type, additional_headers);
+			}
+	} else {
+		http_error(conn, 404, "%s", "Error: File not found");
+	}
+}
+
+int64_t http_store_body(http_ini_t *ctx, http_t *conn, string_t path) {
+	char buf[MG_BUF_LEN];
+	int64_t len;
+	int ret;
+	int n;
+	struct file fi;
+
+	if (ctx == NULL)
+		return -1;
+
+	len = 0;
+	if (conn->req.consumed_content != 0) {
+		http_logger(DEBUG_ERROR, conn, "%s: Contents already consumed", __func__);
+		return -11;
+	}
+
+	ret = http_put_dir(ctx, conn, path);
+	if (ret < 0) {
+		/*
+		 * -1 for path too long,
+		 * -2 for path can not be created. */
+		return ret;
+	}
+
+	if (ret != 1) {
+		/* Return 0 means, path itself is a directory. */
+		return 0;
+	}
+
+	if (http_fopen(ctx, (const http_t *)conn, path, "w", &fi) == 0)
+		return -12;
+
+	ret = http_read(conn, buf, sizeof(buf));
+	while (ret > 0) {
+		n = (int)fs_fwrite(buf, 1, (size_t)ret, fi.fp);
+		if (n != ret) {
+			http_fclose(&fi);
+			http_remove_bad_file(ctx, conn, path);
+			return -13;
+		}
+
+		ret = http_read(conn, buf, sizeof(buf));
+	}
+
+	if (http_fclose(&fi) != 0) {
+		http_remove_bad_file(ctx, conn, path);
+		return -14;
+	}
+
+	return len;
 }
 
 FORCEINLINE bool http_get_random(uint64_t *out) {
@@ -864,6 +1891,265 @@ FORCEINLINE void_t http_free_ex(void_t memory) {
 		free(memory);
 
 	return null;
+}
+
+static string_t header_val(http_t *conn, string_t header) {
+	string_t header_value;
+	if ((header_value = http_get_header(conn, (string)header)) == NULL) {
+		return "-";
+	} else {
+		return header_value;
+	}
+}
+
+static void http_log_access(http_t *conn) {
+	const httpie_t *ri;
+	struct file fi;
+	char date[64], src_addr[IP_ADDR_STR_LEN];
+	struct tm *tm;
+	string_t referer, user_agent, log_name;;
+	char log_buf[4096];
+
+	if (!conn || !conn->ctx) {
+		return;
+	}
+
+	/* Set log message to "empty" */
+	log_buf[0] = 0;
+	log_name = conn->domain->config[ACCESS_LOG_FILE];
+	/* Log is written to a file and/or a callback. If both are not set,
+	 * executing the rest of the function is pointless. */
+	if ((str_is_empty(log_name)) && (conn->ctx->callbacks.log_access == NULL)) {
+		return;
+	}
+
+	if (!log_buf[0]) {
+		tm = localtime(&conn->req.conn_birth_time);
+		if (tm != NULL) {
+			strftime(date, sizeof(date), "%d/%b/%Y:%H:%M:%S %z", tm);
+		} else {
+			str_lcpy(date, "01/Jan/1970:00:00:00 +0000", sizeof(date));
+		}
+
+		ri = &conn->req;
+		sockaddr_to_str(src_addr, sizeof(src_addr), &conn->client.rsa);
+		referer = header_val(conn, "Referer");
+		user_agent = header_val(conn, "User-Agent");
+		http_snprintf(conn,
+			NULL, /* Ignore truncation in access log */
+			log_buf,
+			sizeof(log_buf),
+			"%s - %s [%s] \"%s %s HTTP/%s\" %d %" INT64_FMT
+			" %s %s\n",
+			src_addr,
+			(ri->remote_user == NULL) ? "-" : ri->remote_user,
+			date,
+			conn->method,
+			conn->url_to,
+			ri->http_version,
+			conn->status,
+			conn->req.num_bytes_sent,
+			referer,
+			user_agent);
+	}
+
+	/* Here we have a log message in log_buf. Call the callback */
+	if (conn->ctx->callbacks.log_access) {
+		if (conn->ctx->callbacks.log_access(conn, log_buf)) {
+			/* do not log if callback returns non-zero */
+			return;
+		}
+	}
+
+	/* Store in file */
+	if (!str_is_empty(log_name)) {
+		int ok = async_fprintf(log_name, "a+", log_buf);
+		if (!ok) {
+			cerr("Error writing log file %s", conn->domain->config[ACCESS_LOG_FILE]);
+		}
+	}
+}
+
+/* Is upgrade request:
+ *   0 = regular HTTP/1.0 or HTTP/1.1 request
+ *   1 = upgrade to websocket
+ *   2 = upgrade to HTTP/2
+ * -1 = upgrade to unknown protocol */
+static int should_switch_to_protocol(http_t *conn) {
+	string_t connection_headers;
+	string_t upgrade_to;
+	int should_upgrade;
+
+	/* A websocket protocol has the following HTTP headers:
+	 *
+	 * Connection: Upgrade
+	 * Upgrade: Websocket */
+	connection_headers = http_get_header(conn, "Connection");
+	should_upgrade = 0;
+	if (str_is_case(connection_headers, "upgrade"))
+		should_upgrade = 1;
+
+	if (!should_upgrade) {
+		return PROTOCOL_HTTP1;
+	}
+
+	upgrade_to = http_get_header(conn, "Upgrade");
+	if (upgrade_to == NULL) {
+		/* "Connection: Upgrade" without "Upgrade" Header --> Error */
+		return -1;
+	}
+
+	/* Upgrade to ... */
+	if (str_is_case(upgrade_to, "websocket")) {
+		/* The headers "Host", "Sec-WebSocket-Key", "Sec-WebSocket-Protocol" and
+		 * "Sec-WebSocket-Version" are also required.
+		 * Don't check them here, since even an unsupported websocket protocol
+		 * request still IS a websocket request (in contrast to a standard HTTP
+		 * request). It will fail later in handle_websocket_request.
+		 */
+		return PROTOCOL_WEBSOCKET; /* Websocket */
+	}
+	if (str_is_case(upgrade_to, "h2")) {
+		return PROTOCOL_HTTP2; /* Websocket */
+	}
+
+	/* Upgrade to another protocol */
+	return -1;
+}
+
+void http_process_connection(http_ini_t *ctx, http_t *conn) {
+	httpie_t *ri;
+	int keep_alive;
+	int discard_len;
+	bool was_error;
+	string_t uri, hostend;
+	int reqerr;
+	enum uri_type_t uri_type;
+	union {
+		const void *con;
+		void *var;
+	} ptr;
+
+	if (ctx == NULL || conn == NULL)
+		return;
+
+	/* Is keep alive allowed by the server */
+	int keep_alive_enabled = str_is_case(conn->domain->config[ENABLE_KEEP_ALIVE], "yes");
+	ri = &conn->req;
+	if (!keep_alive_enabled)
+		conn->req.must_close = 1;
+
+	/* Important: on new connection, reset the receiving buffer. Credit
+	 * goes to crule42. */
+	conn->req.data_len = 0;
+	was_error = false;
+	do {
+		if (!http_get_request(ctx, conn, &reqerr)) {
+			/*
+			 * The request sent by the client could not be understood by
+			 * the server, or it was incomplete or a timeout. Send an
+			 * error message and close the connection. */
+			if (reqerr > 0)
+				http_error(conn, reqerr, "%s", http_status_str(reqerr));
+			was_error = true;
+		} else if (strcmp(ri->http_version, "1.0") && strcmp(ri->http_version, "1.1")) {
+			http_logger(DEBUG_ERROR, conn, "%s: bad HTTP version \"%s\"", __func__, ri->http_version);
+			http_error(conn, 505, "%s", http_status_str(505));
+			was_error = true;
+		}
+
+		if (!was_error) {
+			uri = http_get_uri(conn);
+			uri_type = http_get_uri_type(uri);
+			switch (uri_type) {
+				case URI_TYPE_ASTERISK:
+					conn->req.local_uri = NULL;
+					break;
+				case URI_TYPE_RELATIVE:
+					conn->req.local_uri = uri;
+					break;
+				case URI_TYPE_ABS_NOPORT:
+				case URI_TYPE_ABS_PORT:
+					hostend = http_get_rel_url_at_current_server(uri, conn);
+					if (hostend != NULL)
+						conn->req.local_uri = hostend;
+					else
+						conn->req.local_uri = NULL;
+					break;
+				default:
+					http_logger(DEBUG_ERROR, conn, "%s: invalid URI", __func__);
+					http_error(conn, 400, "%s", http_status_str(400));
+
+					conn->req.local_uri = NULL;
+					was_error = true;
+					break;
+			}
+		}
+
+		if (!was_error) {
+			/* HTTP/1 allows protocol upgrade */
+			conn->req.proto = should_switch_to_protocol(conn);
+			if (conn->req.proto == PROTOCOL_HTTP2) {
+				/* This will occur, if a HTTP/1.1 request should be upgraded
+				 * to HTTP/2 - but not if HTTP/2 is negotiated using ALPN.
+				 * Since most (all?) major browsers only support HTTP/2 using
+				 * ALPN, this is hard to test and very low priority.
+				 * Deactivate it (at least for now).
+				 */
+				conn->req.proto = PROTOCOL_HTTP1;
+			}
+
+			if (conn->req.local_uri != NULL) {
+				/* handle request to local server */
+				http_handle_request(conn);
+				http_log_access(conn);
+			} else {
+				/* TODO: handle non-local request (PROXY) */
+				conn->req.must_close = true;
+			}
+		} else
+			conn->req.must_close = true;
+
+		if (ri->remote_user != NULL) {
+			ptr.con = ri->remote_user;
+			http_free_ex(ptr.var);
+
+			/*
+			 * Important! When having connections with and without auth
+			 * would cause double free and then crash */
+			ri->remote_user = NULL;
+		}
+
+
+		/* NOTE(lsm): order is important here. should_keep_alive() call
+		 * is using parsed request, which will be invalid after memmove's below.
+		 * Therefore, memorize should_keep_alive() result now for later
+		 * use in loop exit condition. */
+		/* Enable it only if this request is completely discardable. */
+		keep_alive = ctx->status == HTTP_STATUS_RUNNING
+			&& should_keep_alive(conn)
+			&& (conn->req.content_len >= 0) && (conn->req.request_len > 0)
+			&& ((conn->req.is_chunked == 4) ||
+				(!conn->req.is_chunked && ((conn->req.consumed_content == conn->req.content_len) || ((conn->req.request_len + conn->req.content_len) <= conn->req.data_len))))
+			&& (conn->req.proto == PROTOCOL_HTTP1);
+
+		/** Discard all buffered data for this request */
+		discard_len = ((conn->req.content_len >= 0) && (conn->req.request_len > 0)
+			&& ((conn->req.request_len + conn->req.content_len)
+				< (int64_t)conn->req.data_len))
+			? (int)(conn->req.request_len + conn->req.content_len)
+			: conn->req.data_len;
+
+		if (discard_len < 0)
+			break;
+
+		conn->req.data_len -= discard_len;
+		if (conn->req.data_len > 0)
+			memmove(conn->req.buf, conn->req.buf + discard_len, (size_t)conn->req.data_len);
+
+		if (conn->req.data_len < 0 || conn->req.data_len > conn->req.buf_size)
+			break;
+	} while (keep_alive);
 }
 
 void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_type, bool is_delete_request,
@@ -987,7 +2273,7 @@ FORCEINLINE void http_route(http_ini_t *ctx, string_t uri, route_cb handler, voi
 		NULL, NULL, NULL, NULL, NULL, cbdata);
 }
 
-FORCEINLINE void http_websocket_route(http_ini_t *ctx, const char *uri,
+FORCEINLINE void http_websocket_route(http_ini_t *ctx, string_t uri,
 	ws_connect_cb connect_handler,
 	ws_ready_cb ready_handler,
 	ws_data_cb data_handler,

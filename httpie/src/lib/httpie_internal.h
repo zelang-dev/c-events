@@ -5,10 +5,40 @@
 #undef in
 #ifdef _WIN32
 #	include "zlib.h"
+#ifndef timegm
+#	define timegm(x) (_mkgmtime(x))
+#endif
 #else
 #	include <zlib.h>
 #endif
 #define in ,
+
+/* For a detailed description of these *_PATH_MAX defines, see
+ * https://github.com/civetweb/civetweb/issues/937. */
+
+/* UTF8_PATH_MAX is a char buffer size for 259 BMP characters in UTF-8 plus
+ * null termination, rounded up to the next 4 bytes boundary */
+#define UTF8_PATH_MAX (3 * 260)
+/* UTF16_PATH_MAX is the 16-bit wchar_t buffer size required for 259 BMP
+ * characters plus termination. (Note: wchar_t is 16 bit on Windows) */
+#define UTF16_PATH_MAX (260)
+
+#define USA_IN_PORT_UNSAFE(s)                                                  \
+	(((s)->sa.sa_family == AF_INET6) ? (s)->sin6.sin6_port : (s)->sin.sin_port)
+#define IP_ADDR_STR_LEN (50) /* IPv6 hex string is 46 chars */
+
+#define CGI_ENVIRONMENT_SIZE	(4096)
+#define MAX_CGI_ENVIR_VARS		(256)
+#define MG_BUF_LEN				(8192)
+
+/* Do not try to compress files smaller than this limit. */
+#if !defined(MG_FILE_COMPRESSION_SIZE_LIMIT)
+#define MG_FILE_COMPRESSION_SIZE_LIMIT (1024) /* in bytes */
+#endif
+
+#if !defined(UNIX_DOMAIN_SOCKET_SERVER_NAME)
+#define UNIX_DOMAIN_SOCKET_SERVER_NAME "*"
+#endif
 
 #define PASSWORDS_FILE_NAME	".htpasswd"
 #define PROXY_CONNECTION 	"proxy-connection"
@@ -104,7 +134,7 @@ enum route_type_t {
  * This is tested in the unit test (test/private.c)
  * "Private Config Options"
  */
-enum {
+typedef enum {
 	/* Once for each server */
 	LISTENING_PORTS,
 	NUM_THREADS,
@@ -186,7 +216,7 @@ enum {
 	ALLOW_INDEX_SCRIPT_SUB_RES,
 
 	NUM_OPTIONS
-};
+} ini_options_type;
 
 /* Configuration types */
 enum {
@@ -202,19 +232,37 @@ enum {
 	INI_TYPE_YES_NO_OPTIONAL = 0x9
 };
 
+struct h2_header {
+	string_t name;  /* HTTP header name */
+	string_t value; /* HTTP header value */
+};
+
+struct http2_s {
+	uint32_t stream_id;
+	uint32_t dyn_table_size;
+	h2_header_t dyn_table[HTTP2_DYN_TABLE_SIZE];
+};
+
 /* Describes a string (chunk of memory). */
 struct vec {
 	string_t ptr;
 	size_t len;
 };
 
+struct ws_subprotocols_s {
+	int nb_subprotocols;
+	string_t *subprotocols;
+};
+
 struct http_cb_info {
+	/* handler type */
+	int handler_type;
+	int removing;
+	unsigned int refcount;
 	/* Name/Pattern of the URI. */
 	char *uri;
 	size_t uri_len;
 
-	/* handler type */
-	int handler_type;
 
 	/* Handler for http/https or authorization requests. */
 	route_cb handler;
@@ -230,6 +278,9 @@ struct http_cb_info {
 
 	/* User supplied argument for the handler function. */
 	void_t cbdata;
+
+	/* accepted subprotocols for ws/wss requests. */
+	struct ws_subprotocols_s *subprotocols;
 
 	/* next handler in a linked list */
 	struct http_cb_info *next;
@@ -275,6 +326,7 @@ struct ini_option {
 /* This structure needs to be passed to http_start(),
  * to let `httpie` know which callbacks to invoke. */
 struct http_clb_s {
+	request_cb start;
 	log_message_cb log_message;
 	log_access_cb log_access;
 	open_file_cb open_file;
@@ -308,6 +360,7 @@ struct http_ini_s {
 	/* HTTP_TYPE_SERVER or HTTP_TYPE_CLIENT */
 	enum http_type_t http_type;
 	enum http_dbg debug_level;
+	int enable_keep_alive;
 	unsigned int num_listening_sockets;
 	/* Memory related */
 	/* The max request size */
@@ -347,6 +400,12 @@ typedef struct httpie_s {
 	int64_t content_len;
 	/* How many bytes of content have been read */
 	int64_t	consumed_content;
+	/* 0: nothing sent,
+	 * 1: header partially sent,
+	 * 2: header fully sent */
+	int state;
+	/* 1 if in handler for user defined error pages */
+	int in_error_handler;
 	/* Buffer size */
 	int buf_size;
 	/* Size of the request + headers in a buffer */
@@ -364,9 +423,10 @@ typedef struct httpie_s {
 	 * 3 = chunked, all data read except trailer,
 	 * 4 = chunked, all data read */
 	int is_chunked;
-	int enable_keep_alive;
 	/* Port at client side */
 	int remote_port;
+	/* Port at server side (one of the listening ports) */
+	int server_port;
 	/* 1 if in read_websocket */
 	int in_websocket_handling;
 	/* Parameters for websocket data compression according to rfc7692 */
@@ -376,8 +436,23 @@ typedef struct httpie_s {
 	int websocket_deflate_client_no_context_takeover;
 	int websocket_deflate_initialized;
 	int websocket_deflate_flush;
+	/* Time (wall clock) when connection was established */
+	time_t conn_birth_time;
 	/* Unread data from the last chunk */
 	size_t chunk_remainder;
+	/* User data pointer passed to `http_start()` */
+	void_t user_data;
+	/* Connection-specific user data */
+	void_t conn_data;
+	/* E.g. "1.0", "1.1" */
+	string_t http_version;
+	/* Authenticated user, or NULL if no auth used */
+	string_t remote_user;
+	/* URL-decoded URI (relative).
+	Can be NULL if request_uri is not a resource at the server host */
+	string_t local_uri;
+	/* URL part after '?', not including '?', or NULL */
+	string_t query_string;
 	/* websocket subprotocol, accepted during handshake */
 	string_t acceptedWebSocketSubprotocol;
 	/* Buffer for received data */
@@ -445,10 +520,96 @@ struct http_s {
 	char message[64];
 	char variable[256];
 	httpie_t req;
+	http2_t http2;
 };
+
+/*
+ * This structure helps to create an environment for the spawned CGI program.
+ * Environment is an array of "VARIABLE=VALUE\0" ASCIIZ strings,
+ * last element must be NULL.
+ * However, on Windows there is a requirement that all these VARIABLE=VALUE\0
+ * strings must reside in a contiguous buffer. The end of the buffer is
+ * marked by two '\0' characters.
+ * We satisfy both worlds: we create an envp array (which is vars), all
+ * entries are actually pointers inside buf.  */
+struct cgi_environment {
+	http_t *conn;
+	/* Data block */
+	char *buf;      /* Environment buffer */
+	size_t buflen;  /* Space available in buf */
+	size_t bufused; /* Space taken in buf */
+					/* Index block */
+	char **var;     /* char **envp */
+	size_t varlen;  /* Number of variables available in var */
+	size_t varused; /* Number of variables stored in var */
+};
+
+/* Parsed Authorization header */
+struct auth_header {
+	char *user;
+	int type;             /* 1 = basic, 2 = digest */
+	char *plain_password; /* Basic only */
+	char *uri, *cnonce, *response, *qop, *nc, *nonce; /* Digest only */
+};
+
+struct read_auth_file_struct {
+	http_t *conn;
+	struct auth_header auth_header;
+	const char *domain;
+	char buf[256 + 256 + 40];
+	const char *f_user;
+	const char *f_domain;
+	const char *f_ha1;
+};
+
+bool http_fopen(http_ini_t *ctx, const http_t *conn,
+	string_t path, string_t mode, struct file *filep);
 
 /* Used to process new incoming connections to the server. */
 http_t *http_accept(const http_socket *listener, http_ini_t *ctx);
+
+/*
+ * Closed a file associated with a filep structure.
+ * If the function succeeds, the value 0 is returned.
+ * Otherwise the return value is EOF and errno is set. */
+int http_fclose(struct file *filep);
+
+/*
+ * Creates a directory mentioned in a PUT
+ * request including all intermediate subdirectories. The following values can
+ * be returned:
+ * Return  0  if the path itself is a directory.
+ * Return  1  if the path leads to a file.
+ * Return -1  for if the path is too long.
+ * Return -2  if path can not be created. */
+int http_put_dir(http_ini_t *ctx, http_t *conn, string_t path);
+
+/*
+ * Removes an invalid file and throws
+ * an error message if this does not succeed. */
+void http_remove_bad_file(http_ini_t *ctx, http_t *conn, string_t path);
+
+/* Used to construct an etag which can be used to identify a file on a specific moment. */
+void http_construct_etag(http_t *ctx, string buf, size_t buf_len, const struct file *filep);
+
+/*
+ * Return true, if a resource has not been modified since a given datetime
+ * and a 304 response should therefore be sufficient. */
+bool http_is_not_modified(http_ini_t *ctx, http_t *conn, const struct file *filep);
+
+int http_stat(http_t *conn, string_t path, struct file *filep);
+
+/*
+ * This is the heart of the `httpie's` logic.
+ * This function is called when the request is read, parsed and validated,
+ * and `httpie` must decide what action to take:
+ *
+ * Serve a file, or a directory, or call embedded function, etcetera. */
+void http_handle_request(http_t *conn);
+
+/* Send len bytes from the opened file to the client. */
+void http_send_file_data(http_t *conn, struct file *filep,
+	int64_t offset, int64_t len, int no_buffering);
 
 /*
  * Sets the global password file option for a context.
@@ -485,6 +646,7 @@ bool http_get_request(http_ini_t *ctx, http_t *conn, int *err);
  * The function returns the total number of ports opened,
  * or 0 if no ports have been opened. */
 int http_set_ports_option(http_ini_t *ctx);
+string_t http_get_default_option(ini_options_type name);
 void http_set_close_on_exec(fds_t sock);
 
 string http_error_string(int error_code, string buf, size_t buf_len);
@@ -492,23 +654,43 @@ string http_error_string(int error_code, string buf, size_t buf_len);
 /* Perform case-insensitive match of string against pattern */
 int http_match_prefix(string_t pattern, size_t pattern_len, string_t str);
 
+/* Send all current and obsolete cache opt-out directives. */
+void http_no_cache_header(http_t *conn);
+void http_domain_header(http_t *conn);
+void http_static_cache_header(http_t *conn);
+void http_cors_header(http_t *conn);
+
 /*
  * Returns true, if a file must be hidden from browsing by the remote client.
  * A used provided list of file patterns to hide is used.
  * Password files are always hidden, independent of the patterns defined by the user. */
 bool http_must_hide_file(http_ini_t *ctx, string_t path);
 
-void http_snprintf(http_t *conn, bool *truncated, string buf, size_t buflen, string_t fmt, ...);
+void http_snprintf(http_t *conn, int *truncated, string buf, size_t buflen, string_t fmt, ...);
 struct tm *http_gmtime_r(const time_t *clk, struct tm *result);
 
 /* Do cleanup work when an error occurred initializing a context. */
 http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...);
 void http_close_listening_sockets(http_ini_t *ctx);
 
+/* Used to process a new incoming connection on a socket. */
+void http_process_connection(http_ini_t *ctx, http_t *conn);
+
+/* Check if the uri is valid.
+ * return `URI_TYPE_UNKNOWN` for invalid uri,
+ * return `URI_TYPE_ASTERISK` for *,
+ * return `URI_TYPE_RELATIVE` for relative uri,
+ * return `URI_TYPE_ABS_NOPORT` for absolute uri without port,
+ * return `URI_TYPE_ABS_PORT` for absolute uri with port */
+enum uri_type_t http_get_uri_type(string_t uri);
+
+/* Return NULL or the relative uri at the current server */
+string_t http_get_rel_url_at_current_server(string_t uri, http_t *conn);
+
 /* Convert time_t to a string. According to RFC2616, Sec 14.18, this must be
  * included in all responses other than 100, 101, 5xx. */
 void http_gmt_time_str(char *buf, size_t buf_len, time_t *t);
-int http_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolve_src);
+int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src);
 
 /* Sets callback handlers to uri's. */
 void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_type, bool is_delete_request,
@@ -520,6 +702,14 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 	auth_cb auth_handler,
 	void_t cbdata);
 
+/**
+ * Checks the request headers to see if the connection is a valid websocket protocol.
+ * A websocket protocol has the following HTTP headers:
+ *
+ * Connection: Upgrade
+ * Upgrade: Websocket */
+bool http_is_websocket(http_t *conn);
+
 /* Does the heavy lifting in writing data over a websocket connectin to a remote peer. */
 int http_websocket_write_exec(http_t *conn, websocket_type opcode,
 	string_t data, size_t data_len, uint32_t masking_key);
@@ -530,6 +720,19 @@ int http_websocket_deflate_init(http_t *conn, int server);
 void http_websocket_request(http_ini_t *ctx, http_t *conn, int is_callback_resource,
 	ws_connect_cb ws_connect_handler, ws_ready_cb ws_ready_handler, ws_data_cb ws_data_handler, ws_close_cb ws_close_handler, void *cbData);
 
+/* Make first character uppercase in string/word, remainder lowercase,
+a word is represented by separator character provided. */
+string word_toupper(string str, char sep);
+
+/* Return True if we should reply 304 Not Modified. */
+int is_not_modified(const http_t *conn, const struct file *filestat);
+void handle_not_modified_static_file_request(http_t *conn, struct file *filep);
+void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
+	string_t mime_type, string_t additional_headers);
+void handle_file_based_request(http_t *conn, string_t path, struct file *file);
+/* Returns true, if a file defined by a specific path is located in memory. */
+bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep);
+void http_compressed_data(http_t *conn, struct file *filep);
 void sockaddr_to_str(char *buf, size_t len, const union usa *usa);
 unsigned short sockaddr_in_port(union usa *s);
 int http_switch_domain(http_t *conn);

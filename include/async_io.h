@@ -424,9 +424,13 @@ C_API void uds_handler(uds_unix_cb connected, int client);
 C_API bool socket_is_uds(int socket);
 
 C_API int async_getentropy(void *buf, size_t buflen);
-C_API int async_fwriter(const char *path, const char *mode, void *buf, size_t size, size_t count);
+C_API int async_fwrite(const char *path, const char *mode, void *buf, size_t size, size_t count);
 C_API int async_fprintf(const char *path, const char *mode, const char *buf);
-C_API FILE *async_fopen(const char *path, const char *mode);
+
+C_API FILE *fs_fopen(const char *path, const char *mode);
+C_API size_t fs_fread(void *buf, size_t items_size, size_t items_count, FILE *stream);
+C_API size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream);
+C_API int fs_fclose(FILE *stream);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

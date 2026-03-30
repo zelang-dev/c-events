@@ -216,7 +216,7 @@ C_API int parse_http(http_parser_type action, http_t *this, string raw);
  *
  * Following the https://tools.ietf.org/html/rfc2616.html specs.
  *
- * - For use with `http_response()` and `http_request()`.
+ * - For use with `http_response_str()` and `http_request_str()`.
  *
  * @param hostname for `Host:` header request,  will be ignored on `path/url` setting
  * @param protocol version for `HTTP/` header
@@ -245,7 +245,7 @@ C_API void http_server_agent(string);
  *
  * - `or:` `kv_custom("key", "value")`
  */
-C_API string http_response(http_t *this, string body, http_status status,
+C_API string http_response_str(http_t *this, string body, http_status status,
 	string type, u32 header_pairs, ...);
 
 /**
@@ -264,7 +264,7 @@ C_API string http_response(http_t *this, string body, http_status status,
  *
  * - `or:` `kv_custom("key", "value")`
  */
-C_API string http_request(http_t *this, http_method_type method, string path, string type,
+C_API string http_request_str(http_t *this, http_method_type method, string path, string type,
 	string body_data, u32 header_pairs, ...);
 
 /**

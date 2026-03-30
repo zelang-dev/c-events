@@ -90,7 +90,7 @@ static int http_send_websocket_handshake(http_t *conn, const char *websock_key) 
 #if !defined(OPENSSL_API_3_0)
 	SHA_CTX sha_ctx;
 #endif
-	bool truncated;
+	int truncated;
 
 	/* Calculate Sec-WebSocket-Accept reply from Sec-WebSocket-Key. */
 	http_snprintf(conn, &truncated, buf, sizeof(buf), "%s%s", websock_key, magic);

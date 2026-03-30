@@ -90,6 +90,203 @@ static const struct ini_option config_options[] = {
 	{NULL, INI_TYPE_UNKNOWN, NULL}
 };
 
+#define ARRAY_SIZE_EX(array) (sizeof(array) / sizeof(array[0]))
+
+static const struct {
+	const char *extension;
+	size_t ext_len;
+	const char *mime_type;
+} builtin_mime_types[] = {
+	/* IANA registered MIME types
+	 * (http://www.iana.org/assignments/media-types)
+	 * application types */
+	{".bin", 4, "application/octet-stream"},
+	{".cer", 4, "application/pkix-cert"},
+	{".crl", 4, "application/pkix-crl"},
+	{".crt", 4, "application/pkix-cert"},
+	{".deb", 4, "application/octet-stream"},
+	{".dmg", 4, "application/octet-stream"},
+	{".dll", 4, "application/octet-stream"},
+	{".doc", 4, "application/msword"},
+	{".eps", 4, "application/postscript"},
+	{".exe", 4, "application/octet-stream"},
+	{".iso", 4, "application/octet-stream"},
+	{".js", 3, "application/javascript"},
+	{".json", 5, "application/json"},
+	{".mjs", 4, "application/javascript"},
+	{".msi", 4, "application/octet-stream"},
+	{".pem", 4, "application/x-pem-file"},
+	{".pdf", 4, "application/pdf"},
+	{".ps", 3, "application/postscript"},
+	{".rtf", 4, "application/rtf"},
+	{".wasm", 5, "application/wasm"},
+	{".xhtml", 6, "application/xhtml+xml"},
+	{".xsl", 4, "application/xml"},
+	{".xslt", 5, "application/xml"},
+
+	/* fonts */
+	{".ttf", 4, "application/font-sfnt"},
+	{".cff", 4, "application/font-sfnt"},
+	{".otf", 4, "application/font-sfnt"},
+	{".aat", 4, "application/font-sfnt"},
+	{".sil", 4, "application/font-sfnt"},
+	{".pfr", 4, "application/font-tdpfr"},
+	{".woff", 5, "application/font-woff"},
+	{".woff2", 6, "application/font-woff2"},
+
+	/* audio */
+	{".mp3", 4, "audio/mpeg"},
+	{".oga", 4, "audio/ogg"},
+	{".ogg", 4, "audio/ogg"},
+
+	/* image */
+	{".gif", 4, "image/gif"},
+	{".ief", 4, "image/ief"},
+	{".jpeg", 5, "image/jpeg"},
+	{".jpg", 4, "image/jpeg"},
+	{".jpm", 4, "image/jpm"},
+	{".jpx", 4, "image/jpx"},
+	{".png", 4, "image/png"},
+	{".svg", 4, "image/svg+xml"},
+	{".tif", 4, "image/tiff"},
+	{".tiff", 5, "image/tiff"},
+
+	/* model */
+	{".wrl", 4, "model/vrml"},
+
+	/* text */
+	{".css", 4, "text/css"},
+	{".csv", 4, "text/csv"},
+	{".htm", 4, "text/html"},
+	{".html", 5, "text/html"},
+	{".sgm", 4, "text/sgml"},
+	{".shtm", 5, "text/html"},
+	{".shtml", 6, "text/html"},
+	{".txt", 4, "text/plain"},
+	{".xml", 4, "text/xml"},
+
+	/* video */
+	{".mov", 4, "video/quicktime"},
+	{".mp4", 4, "video/mp4"},
+	{".mpeg", 5, "video/mpeg"},
+	{".mpg", 4, "video/mpeg"},
+	{".ogv", 4, "video/ogg"},
+	{".qt", 3, "video/quicktime"},
+
+	/* not registered types
+	 * (http://reference.sitepoint.com/html/mime-types-full,
+	 * http://www.hansenb.pdx.edu/DMKB/dict/tutorials/mime_typ.php, ..) */
+	{".arj", 4, "application/x-arj-compressed"},
+	{".gz", 3, "application/x-gunzip"},
+	{".rar", 4, "application/x-arj-compressed"},
+	{".swf", 4, "application/x-shockwave-flash"},
+	{".tar", 4, "application/x-tar"},
+	{".tgz", 4, "application/x-tar-gz"},
+	{".torrent", 8, "application/x-bittorrent"},
+	{".ppt", 4, "application/x-mspowerpoint"},
+	{".xls", 4, "application/x-msexcel"},
+	{".zip", 4, "application/x-zip-compressed"},
+	{".aac",
+	 4,
+	 "audio/aac"}, /* http://en.wikipedia.org/wiki/Advanced_Audio_Coding */
+	{".flac", 5, "audio/flac"},
+	{".aif", 4, "audio/x-aif"},
+	{".m3u", 4, "audio/x-mpegurl"},
+	{".mid", 4, "audio/x-midi"},
+	{".ra", 3, "audio/x-pn-realaudio"},
+	{".ram", 4, "audio/x-pn-realaudio"},
+	{".wav", 4, "audio/x-wav"},
+	{".bmp", 4, "image/bmp"},
+	{".ico", 4, "image/x-icon"},
+	{".pct", 4, "image/x-pct"},
+	{".pict", 5, "image/pict"},
+	{".rgb", 4, "image/x-rgb"},
+	{".webm", 5, "video/webm"}, /* http://en.wikipedia.org/wiki/WebM */
+	{".asf", 4, "video/x-ms-asf"},
+	{".avi", 4, "video/x-msvideo"},
+	{".m4v", 4, "video/x-m4v"},
+	{NULL, 0, NULL}
+};
+
+static string_t month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+const char *http_get_builtin_mime_type(const char *path) {
+	const char *ext;
+	size_t i, path_len;
+
+	path_len = strlen(path);
+
+	for (i = 0; builtin_mime_types[i].extension != NULL; i++) {
+		ext = path + (path_len - builtin_mime_types[i].ext_len);
+		if ((path_len > builtin_mime_types[i].ext_len)
+			&& (str_is_case(ext, builtin_mime_types[i].extension))) {
+			return builtin_mime_types[i].mime_type;
+		}
+	}
+
+	return "text/plain";
+}
+
+/* Convert month to the month number. Return -1 on error, or month number */
+static int get_month_index(string_t s) {
+
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE_EX(month_names); i++) {
+
+		if (!strcmp(s, month_names[i])) return (int)i;
+	}
+
+	return -1;
+}
+
+/*
+ * Parse UTC date-time string, and return the corresponding time_t value.
+ * This function is used in the if-modified-since calculations */
+time_t http_parse_date_string(string_t datetime) {
+	char month_str[32] = {0};
+	int second;
+	int minute;
+	int hour;
+	int day;
+	int month;
+	int year;
+	time_t result = (time_t)0;
+	struct tm tm;
+
+	if ((sscanf(datetime, "%d/%3s/%d %d:%d:%d", &day, month_str, &year, &hour, &minute, &second) == 6) ||
+		(sscanf(datetime, "%d %3s %d %d:%d:%d", &day, month_str, &year, &hour, &minute, &second) == 6) ||
+		(sscanf(datetime, "%*3s, %d %3s %d %d:%d:%d", &day, month_str, &year, &hour, &minute, &second) == 6) ||
+		(sscanf(datetime, "%d-%3s-%d %d:%d:%d", &day, month_str, &year, &hour, &minute, &second) == 6)) {
+		month = get_month_index(month_str);
+		if (month >= 0 && year >= 1970) {
+			memset(&tm, 0, sizeof(tm));
+			tm.tm_year = year - 1900;
+			tm.tm_mon = month;
+			tm.tm_mday = day;
+			tm.tm_hour = hour;
+			tm.tm_min = minute;
+			tm.tm_sec = second;
+			result = timegm(&tm);
+		}
+	}
+
+	return result;
+}
+
+bool http_is_not_modified(http_ini_t *ctx, http_t *conn, const struct file *filep) {
+	char etag[64];
+	string_t ims = http_get_header(conn, "If-Modified-Since");
+	string_t inm = http_get_header(conn, "If-None-Match");
+
+	if (ctx == NULL || conn == NULL || filep == NULL)
+		return false;
+
+	http_construct_etag(conn, etag, sizeof(etag), filep);
+	return (inm != NULL && str_is_case(etag, inm))
+		|| (ims != NULL && (filep->last_modified <= http_parse_date_string(ims)));
+}
+
 int http_get_option_index(string_t name) {
 	int i;
 
@@ -100,6 +297,10 @@ int http_get_option_index(string_t name) {
 	}
 
 	return -1;
+}
+
+FORCEINLINE string_t http_get_default_option(ini_options_type name) {
+	return config_options[name].default_value;
 }
 
 string_t http_get_option(http_ini_t *ctx, string_t name) {
@@ -133,17 +334,28 @@ string http_error_string(int error_code, string buf, size_t buf_len) {
 #endif
 }
 
+/* Construct fake connection structure. Used for logging, if connection
+ * is not applicable at the moment of logging. */
+static http_t *fake_conn(http_t *fc, http_ini_t *ctx) {
+	static const http_t conn_zero = {0};
+	*fc = conn_zero;
+	fc->ctx = ctx;
+	fc->domain = &(ctx->host);
+	return fc;
+}
+
 bool http_set_gpass_option(http_ini_t *ctx) {
 	if (is_empty(ctx))
 		return true;
 
 	struct file file = STRUCT_FILE_INITIALIZER;
 	struct ini_domain_s *dom_ctx = &(ctx->host);
+	http_t fc;
 	string_t path;
 	char error_string[ARRAY_SIZE];
 
 	path = dom_ctx->config[GLOBAL_PASSWORDS_FILE];
-	if (!is_empty(path) && !http_stat(ctx, NULL, path, &file)) {
+	if (!str_is_empty(path) && !http_stat(fake_conn(&fc, ctx), path, &file)) {
 		http_logger(DEBUG_ERROR, NULL, "%s: cannot open %s: %s",
 			__func__, path, http_error_string(os_geterror(), error_string, ARRAY_SIZE));
 		return false;
@@ -160,7 +372,7 @@ bool http_set_uid_option_ex(http_ini_t *ctx) {
 #else  /* _WIN32 */
 
 	struct passwd *pw;
-	const char *uid;// = getuid();
+	string_t uid;// = getuid();
 	char error_string[ERROR_STRING_LEN];
 
 	if (ctx == NULL) return false;
@@ -465,62 +677,14 @@ bool http_must_hide_file(http_ini_t *ctx, string_t path) {
 		(pattern != NULL && http_match_prefix(pattern, strlen(pattern), path) > 0);
 }
 
-
-/* Is upgrade request:
- *   0 = regular HTTP/1.0 or HTTP/1.1 request
- *   1 = upgrade to websocket
- *   2 = upgrade to HTTP/2
- * -1 = upgrade to unknown protocol */
-static int should_switch_to_protocol(http_t *conn) {
-	const char *connection_headers;
-	const char *upgrade_to;
-	int should_upgrade;
-
-	/* A websocket protocol has the following HTTP headers:
-	 *
-	 * Connection: Upgrade
-	 * Upgrade: Websocket */
-	connection_headers = http_get_header(conn, "Connection");
-	should_upgrade = 0;
-	if (str_is_case(connection_headers, "upgrade"))
-		should_upgrade = 1;
-
-	if (!should_upgrade) {
-		return PROTOCOL_HTTP1;
-	}
-
-	upgrade_to = http_get_header(conn, "Upgrade");
-	if (upgrade_to == NULL) {
-		/* "Connection: Upgrade" without "Upgrade" Header --> Error */
-		return -1;
-	}
-
-	/* Upgrade to ... */
-	if (str_is_case(upgrade_to, "websocket")) {
-		/* The headers "Host", "Sec-WebSocket-Key", "Sec-WebSocket-Protocol" and
-		 * "Sec-WebSocket-Version" are also required.
-		 * Don't check them here, since even an unsupported websocket protocol
-		 * request still IS a websocket request (in contrast to a standard HTTP
-		 * request). It will fail later in handle_websocket_request.
-		 */
-		return PROTOCOL_WEBSOCKET; /* Websocket */
-	}
-	if (str_is_case(upgrade_to, "h2")) {
-		return PROTOCOL_HTTP2; /* Websocket */
-	}
-
-	/* Upgrade to another protocol */
-	return -1;
-}
-
 /* Return host (without port) */
 static void get_host_from_request(struct vec *host, const http_t *conn) {
-	const char *host_header = http_get_header((http_t *)conn, "Host");
+	string_t host_header = http_get_header((http_t *)conn, "Host");
 
 	host->ptr = NULL;
 	host->len = 0;
 	if (host_header != NULL) {
-		const char *pos;
+		string_t pos;
 
 		/* If the "Host" is an IPv6 address, like [::1], parse until ]
 		 * is found. */
@@ -554,7 +718,7 @@ int http_switch_domain(http_t *conn) {
 	if (host.ptr) {
 		struct ini_domain_s *dom = &(conn->ctx->host);
 		while (dom) {
-			const char *domName = dom->config[AUTHENTICATION_DOMAIN];
+			string_t domName = dom->config[AUTHENTICATION_DOMAIN];
 			size_t domNameLen = strlen(domName);
 			if ((domNameLen == host.len) && str_case_equal(host.ptr, domName, host.len)) {
 				/* Found matching domain */
@@ -599,7 +763,7 @@ static int parse_port_string(const struct vec *vec, http_socket *so, int *ip_ver
 	unsigned port;
 	unsigned long portUL;
 	int len;
-	const char *cb;
+	string_t cb;
 	char *endptr;
 	char buf[100] = {0};
 
@@ -776,7 +940,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	int off, on = 0;
 	union usa usa;
 	socklen_t len;
-	const char *opt_txt;
+	string_t opt_txt;
 	long opt_listen_backlog;
 
 	/* Create socket. */
@@ -887,7 +1051,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	if ((so.lsa.sa.sa_family == AF_INET) || (so.lsa.sa.sa_family == AF_INET6)) {
 		if (getsockopt(so.sock, SOL_SOCKET, SO_TYPE, (void *)&on, &on) >= 0) {
 			on = 1;
-			if (setsockopt(so.sock,	SOL_SOCKET,	SO_REUSEADDR, (const char *)&on, sizeof(on)) != 0) {
+			if (setsockopt(so.sock,	SOL_SOCKET,	SO_REUSEADDR, (string_t)&on, sizeof(on)) != 0) {
 				/* Set reuse option, but don't abort on errors. */
 				http_logger(DEBUG_CRASH, NULL,
 					"cannot set socket option SO_REUSEADDR (entry %i)", portsTotal);
@@ -984,7 +1148,7 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 }
 
 int http_set_ports_option(http_ini_t *ctx) {
-	const char *list;
+	string_t list;
 	char error_string[ERROR_STRING_LEN];
 	int on;
 	int off;
@@ -1031,7 +1195,7 @@ int http_set_ports_option(http_ini_t *ctx) {
 
 }
 
-int http_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolve_src) {
+int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src) {
 	struct addrinfo hints, *res, *ressave;
 	int func_ret = 0;
 	int gai_ret;
@@ -1066,4 +1230,188 @@ int http_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolv
 
 	freeaddrinfo(ressave);
 	return func_ret;
+}
+
+static const struct {
+	string_t proto;
+	size_t proto_len;
+	unsigned default_port;
+} abs_uri_protocols[] = {{"http://", 7, 80},
+						 {"https://", 8, 443},
+						 {"ws://", 5, 80},
+						 {"wss://", 6, 443},
+						 {NULL, 0, 0}};
+
+enum uri_type_t http_get_uri_type(string_t uri) {
+	int i;
+	string_t hostend, portbegin;
+	char *portend;
+	unsigned long port;
+
+	/* According to the HTTP standard
+	 * http://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html#sec5.1.2
+	 * URI can be an asterisk (*) or should start with slash (relative uri),
+	 * or it should start with the protocol (absolute uri). */
+	if ((uri[0] == '*') && (uri[1] == '\0')) {
+		/* asterisk */
+		return URI_TYPE_ASTERISK;
+	}
+
+	/* Valid URIs according to RFC 3986
+	 * (https://www.ietf.org/rfc/rfc3986.txt)
+	 * must only contain reserved characters :/?#[]@!$&'()*+,;=
+	 * and unreserved characters A-Z a-z 0-9 and -._~
+	 * and % encoded symbols.
+	 */
+	for (i = 0; uri[i] != 0; i++) {
+		/* Check for CRLF injection attempts */
+		if (uri[i] == '%') {
+			if (uri[i + 1] == '0' && (uri[i + 2] == 'd' || uri[i + 2] == 'D')) {
+				/* Found %0d (CR) */
+				cerr("CRLF injection attempt detected: %s\r\n", uri);
+				return URI_TYPE_UNKNOWN;
+			}
+			if (uri[i + 1] == '0' && (uri[i + 2] == 'a' || uri[i + 2] == 'A')) {
+				/* Found %0a (LF) */
+				cerr("CRLF injection attempt detected: %s\r\n", uri);
+				return URI_TYPE_UNKNOWN;
+			}
+		}
+		if ((unsigned char)uri[i] < 33) {
+			/* control characters and spaces are invalid */
+			return URI_TYPE_UNKNOWN;
+		}
+		/* Allow everything else here (See #894) */
+	}
+
+	/* A relative uri starts with a / character */
+	if (uri[0] == '/') {
+		/* relative uri */
+		return URI_TYPE_RELATIVE;
+	}
+
+	/* It could be an absolute uri: */
+	/* This function only checks if the uri is valid, not if it is
+	 * addressing the current server. So civetweb can also be used
+	 * as a proxy server. */
+	for (i = 0; abs_uri_protocols[i].proto != NULL; i++) {
+		if (str_case_equal(uri,
+			abs_uri_protocols[i].proto,
+			abs_uri_protocols[i].proto_len)) {
+
+			hostend = strchr(uri + abs_uri_protocols[i].proto_len, '/');
+			if (!hostend) {
+				return URI_TYPE_UNKNOWN;
+			}
+			portbegin = strchr(uri + abs_uri_protocols[i].proto_len, ':');
+			if (!portbegin) {
+				return URI_TYPE_ABS_NOPORT;
+			}
+
+			port = strtoul(portbegin + 1, &portend, 10);
+			if ((portend != hostend) || (port <= 0) || !is_valid_port(port)) {
+				return URI_TYPE_UNKNOWN;
+			}
+
+			return URI_TYPE_ABS_PORT;
+		}
+	}
+
+	return URI_TYPE_UNKNOWN;
+}
+
+string_t http_get_rel_url_at_current_server(string_t uri, http_t *conn) {
+	string_t server_domain;
+	size_t server_domain_len;
+	size_t request_domain_len = 0;
+	unsigned long port = 0;
+	int i, auth_domain_check_enabled;
+	string_t hostbegin = NULL;
+	string_t hostend = NULL;
+	string_t portbegin;
+	char *portend;
+
+	auth_domain_check_enabled =	str_is_case(conn->domain->config[ENABLE_AUTH_DOMAIN_CHECK], "yes");
+
+	/* DNS is case insensitive, so use case insensitive string compare here */
+	for (i = 0; abs_uri_protocols[i].proto != NULL; i++) {
+		if (str_case_equal(uri,
+			abs_uri_protocols[i].proto,
+			abs_uri_protocols[i].proto_len)) {
+			hostbegin = uri + abs_uri_protocols[i].proto_len;
+			hostend = strchr(hostbegin, '/');
+			if (!hostend) {
+				return 0;
+			}
+			portbegin = strchr(hostbegin, ':');
+			if ((!portbegin) || (portbegin > hostend)) {
+				port = abs_uri_protocols[i].default_port;
+				request_domain_len = (size_t)(hostend - hostbegin);
+			} else {
+				port = strtoul(portbegin + 1, &portend, 10);
+				if ((portend != hostend) || (port <= 0)
+					|| !is_valid_port(port)) {
+					return 0;
+				}
+				request_domain_len = (size_t)(portbegin - hostbegin);
+			}
+			/* protocol found, port set */
+			break;
+		}
+	}
+
+	if (!port) {
+		/* port remains 0 if the protocol is not found */
+		return 0;
+	}
+
+	/* Check if the request is directed to a different server. */
+	/* First check if the port is the same. */
+	if (ntohs(USA_IN_PORT_UNSAFE(&conn->client.lsa)) != port) {
+		/* Request is directed to a different port */
+		return 0;
+	}
+
+	/* Finally check if the server corresponds to the authentication
+	 * domain of the server (the server domain).
+	 * Allow full matches (like http://mydomain.com/path/file.ext), and
+	 * allow subdomain matches (like http://www.mydomain.com/path/file.ext),
+	 * but do not allow substrings (like
+	 * http://notmydomain.com/path/file.ext
+	 * or http://mydomain.com.fake/path/file.ext). */
+	if (auth_domain_check_enabled) {
+		server_domain = conn->domain->config[AUTHENTICATION_DOMAIN];
+		server_domain_len = strlen(server_domain);
+		if ((server_domain_len == 0) || (hostbegin == NULL)) {
+			return 0;
+		}
+		if ((request_domain_len == server_domain_len)
+			&& (!memcmp(server_domain, hostbegin, server_domain_len))) {
+			/* Request is directed to this server - full name match. */
+		} else {
+			if (request_domain_len < (server_domain_len + 2)) {
+				/* Request is directed to another server: The server name
+				 * is longer than the request name.
+				 * Drop this case here to avoid overflows in the
+				 * following checks. */
+				return 0;
+			}
+			if (hostbegin[request_domain_len - server_domain_len - 1] != '.') {
+				/* Request is directed to another server: It could be a
+				 * substring
+				 * like notmyserver.com */
+				return 0;
+			}
+			if (0
+				!= memcmp(server_domain,
+					hostbegin + request_domain_len - server_domain_len,
+					server_domain_len)) {
+				/* Request is directed to another server:
+				* The server name is different. */
+				return 0;
+			}
+		}
+	}
+
+	return hostend;
 }

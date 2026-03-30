@@ -213,6 +213,17 @@ C_API bool is_taskgroup(void *);
 C_API bool is_waitgroup(void *);
 C_API bool is_ptr_usable(void *self);
 
+/* Sort function.
+ * from https://github.com/bel2125/sort_r
+ *
+ * We cannot use qsort_r here. For a detailed reason, see
+ * https://stackoverflow.com/questions/39560773/different-declarations-of-qsort-r-on-mac-and-linux
+ */
+C_API void memsort(void *data, size_t elemcount, size_t elemsize,
+	int (*compfunc)(const void *data1, const void *data2, void *userarg), void *userarg);
+C_API int mempos(const unsigned char *src, size_t src_length,
+	unsigned char *match, size_t match_length);
+
 C_API range_t rangeing(int start, int stop, int steps);
 C_API range_t range(int start, int stop);
 C_API range_t range_char(const char *text);
@@ -263,9 +274,9 @@ C_API char *str_cat_ex(int num_args, ...);
 C_API char **str_split_ex(const char *s, const char *delim, int *count);
 C_API char *str_swap_ex(const char *haystack, const char *needle, const char *swap);
 C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
-C_API bool str_is_base64(const unsigned char *src);
-C_API unsigned char *str_base64_ex(const unsigned char *src);
-C_API unsigned char *str_unbase64_ex(const unsigned char *src);
+C_API bool str_is_base64(const char *src);
+C_API char *str_decode64(const char *src, char *dst, size_t dst_len);
+C_API char *str_encode64(const char *src, char *dst, size_t dst_len);
 C_API void str_free(void *);
 
 /*

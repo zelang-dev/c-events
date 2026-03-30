@@ -1,6 +1,6 @@
 #include "test_assert.h"
 
-TEST(http_request) {
+TEST(http_request_str) {
 	http_t *parser = http_for(nullptr, 1.1);
 	ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
 
@@ -23,7 +23,7 @@ TEST(http_request) {
  <b>hello world</b>";
 
     parse_http(HTTP_REQUEST, parser, raw);
-	ASSERT_STR(request, http_request(parser, HTTP_GET, "url.com/index.html", nullptr, nullptr, 2,
+	ASSERT_STR(request, http_request_str(parser, HTTP_GET, "url.com/index.html", nullptr, nullptr, 2,
 		kv(head_by, "Ze"),
 		kv(head_conn, "close"))
 	);
@@ -56,7 +56,7 @@ TEST(http_request) {
 TEST(list) {
     int result = 0;
 
-    EXEC_TEST(http_request);
+    EXEC_TEST(http_request_str);
 
     return result;
 }

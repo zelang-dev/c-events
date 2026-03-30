@@ -83,65 +83,76 @@ TEST(str_pad) {
 	return 0;
 }
 
-TEST(str_base64_ex) {
+TEST(str_encode64) {
+	char dst1[20];
+	{
+		// Failure
+		const char data[] = "IMProject is a very cool project!";
+		char *base64 = str_encode64(data, dst1, sizeof(dst1));
+		ASSERT_NULL(base64);
+		ASSERT_FALSE(str_is_base64(base64));
+	}
+	char dst[Kb(1)];
 	{
 		// Success
-		const unsigned char string[] = "IMProject is a very cool project!";
-		const unsigned char *base64 = str_base64_ex(string);
-		ASSERT_STR("SU1Qcm9qZWN0IGlzIGEgdmVyeSBjb29sIHByb2plY3Qh", (char *)base64);
+		const char string[] = "IMProject is a very cool project!";
+		char *base64 = str_encode64(string, dst, sizeof(dst));
+		ASSERT_STR("SU1Qcm9qZWN0IGlzIGEgdmVyeSBjb29sIHByb2plY3Qh", base64);
 		ASSERT_TRUE(str_is_base64(base64));
-		str_free((void *)base64);
 	}
 	{
 		// Success
-		const unsigned char string[] = "Hehe";
-		const unsigned char *base64 = str_base64_ex(string);
-		ASSERT_STR("SGVoZQ==", (char *)base64);
+		const char string[] = "Hehe";
+		char *base64 = str_encode64(string, dst, sizeof(dst));
+		ASSERT_STR("SGVoZQ==", base64);
 		ASSERT_TRUE(str_is_base64(base64));
-		str_free((void *)base64);
 	}
 	{
 		// Success
-		const unsigned char string[] = "jc";
-		const unsigned char *base64 = str_base64_ex((const unsigned char *)string);
-		ASSERT_STR("amM=", (char *)base64);
+		const char string[] = "jc";
+		char *base64 = str_encode64(string, dst, sizeof(dst));
+		ASSERT_STR("amM=", base64);
 		ASSERT_TRUE(str_is_base64(base64));
-		str_free((void *)base64);
 	}
 
 	return 0;
 }
 
-TEST(str_unbase64_ex) {
+TEST(str_decode64) {
+	char dst1[20];
 	{
 		// Success
 		char text[] = "IMProject is a very cool project!";
-		const unsigned char base64[] = "SU1Qcm9qZWN0IGlzIGEgdmVyeSBjb29sIHByb2plY3Qh";
-		unsigned char *data = str_unbase64_ex(base64);
-		ASSERT_STR(text, (char *)data);
-		str_free((void *)data);
+		const char base64[] = "SU1Qcm9qZWN0IGlzIGEgdmVyeSBjb29sIHByb2plY3Qh";
+		char *data = str_decode64(base64, dst1, sizeof(dst1));
+		ASSERT_NULL(data);
+	}
+	char dst[Kb(1)];
+	{
+		// Success
+		char text[] = "IMProject is a very cool project!";
+		const char base64[] = "SU1Qcm9qZWN0IGlzIGEgdmVyeSBjb29sIHByb2plY3Qh";
+		char *data = str_decode64(base64, dst, sizeof(dst));
+		ASSERT_STR(text, data);
 	}
 	{
 		// Success
 		char text[] = "B?E(H+MbQeThWmZq4t7w!z%C*F)J@NcR";
-		const unsigned char base64[] = "Qj9FKEgrTWJRZVRoV21acTR0N3cheiVDKkYpSkBOY1I=";
-		unsigned char *data = str_unbase64_ex(base64);
-		ASSERT_STR(text, (char *)data);
-		str_free((void *)data);
+		const char base64[] = "Qj9FKEgrTWJRZVRoV21acTR0N3cheiVDKkYpSkBOY1I=";
+		char *data = str_decode64(base64, dst, sizeof(dst));
+		ASSERT_STR(text, data);
 	}
 	{
 		// Success
 		char text[] = "Hehe";
-		const unsigned char base64[] = "SGVoZQ==";
-		unsigned char *data = str_unbase64_ex(base64);
-		ASSERT_STR(text, (char *)data);
-		str_free((void *)data);
+		const char base64[] = "SGVoZQ==";
+		char *data = str_decode64(base64, dst, sizeof(dst));
+		ASSERT_STR(text, data);
 	}
 	{
-		const unsigned char base64[] = "SGVoZQ1==";
-		unsigned char *data = str_unbase64_ex(base64);
+		const char base64[] = "SGVoZQ1==";
+		char *data = str_decode64(base64, dst, sizeof(dst));
 		ASSERT_NULL(data);
-		str_free((void *)data);
 	}
 
 	return 0;
@@ -170,8 +181,8 @@ TEST(list) {
 	EXEC_TEST(str_explode);
 	EXEC_TEST(str_repeat);
 	EXEC_TEST(str_pad);
-	EXEC_TEST(str_base64_ex);
-	EXEC_TEST(str_unbase64_ex);
+	EXEC_TEST(str_encode64);
+	EXEC_TEST(str_decode64);
 	EXEC_TEST(str_is_case);
 
     return result;

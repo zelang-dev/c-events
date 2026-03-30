@@ -703,30 +703,71 @@ EVENTS_INLINE char *trim(char *s) {
 	return rtrim(ltrim(s));
 }
 
-int str_pos(const char *text, char *pattern) {
-	size_t c, d, e, text_length, pattern_length, position = -1;
-	if (pattern == NULL || (void *)text == NULL)
-		return -1;
+int mempos(const unsigned char *src, size_t src_length,
+	unsigned char *match, size_t match_length) {
+	size_t c, d, e, position = -1;
+	if (is_empty(match) || is_empty(src))
+		return DATA_INVALID;
 
-	text_length = strlen(text);
-	pattern_length = strlen(pattern);
+	if (match_length > src_length)
+		return DATA_INVALID;
 
-	if (pattern_length > text_length)
-		return -1;
-
-	for (c = 0; c <= text_length - pattern_length; c++) {
+	for (c = 0; c <= src_length - match_length; c++) {
 		position = e = c;
-		for (d = 0; d < pattern_length; d++)
-			if (pattern[d] == text[e])
+		for (d = 0; d < match_length; d++)
+			if (match[d] == src[e])
 				e++;
 			else
 				break;
 
-		if (d == pattern_length)
+		if (d == match_length)
 			return (int)position;
 	}
 
-	return -1;
+	return DATA_INVALID;
+}
+
+void memsort(void *data, size_t elemcount, size_t elemsize,
+	int (*compfunc)(const void *data1, const void *data2, void *userarg), void *userarg) {
+
+/* We use ShellSort here with this gap sequence: https://oeis.org/A102549 */
+	size_t A102549[9] = {1, 4, 10, 23, 57, 132, 301, 701, 1750};
+	size_t gap, i, j, k;
+	int Aidx;
+	void *tmp = alloca(elemsize);
+
+	for (Aidx = 8; Aidx >= 0; Aidx--) {
+		gap = A102549[Aidx];
+		if (gap > (elemcount / 2)) {
+			continue;
+		}
+		for (i = 0; i < gap; i++) {
+			for (j = i; j < elemcount; j += gap) {
+				memcpy(tmp, (void *)((size_t)data + elemsize * j), elemsize);
+
+				for (k = j; k >= gap; k -= gap) {
+					void *cmp = (void *)((size_t)data + elemsize * (k - gap));
+					int cmpres = compfunc(cmp, tmp, userarg);
+					if (cmpres > 0) {
+						memcpy((void *)((size_t)data + elemsize * k),
+							cmp,
+							elemsize);
+					} else {
+						break;
+					}
+				}
+				memcpy((void *)((size_t)data + elemsize * k), tmp, elemsize);
+			}
+		}
+	}
+}
+
+EVENTS_INLINE int str_pos(const char *text, char *pattern) {
+	if (is_empty(text) || is_empty(pattern))
+		return -1;
+
+	return mempos((const unsigned char *)text, strlen(text),
+		(unsigned char *)pattern, strlen(pattern));
 }
 
 EVENTS_INLINE bool str_has(const char *text, char *pattern) {
@@ -1389,83 +1430,98 @@ static EVENTS_INLINE size_t str_base64_len(size_t decoded_len) {
 	return ((4u * decoded_len / 3u) + 3u) & ~3u;
 }
 
-EVENTS_INLINE bool str_is_base64(const unsigned char *src) {
-	size_t i, len = strlen((const char *)src);
+EVENTS_INLINE bool str_is_base64(const char *src) {
+	if (str_is_empty(src))
+		return false;
+
+	size_t i, len = strlen(src);
 	for (i = 0; i < len; i++) {
-		if (base64_decode_table[src[i]] == 0x80)
+		if (base64_decode_table[(const unsigned char)src[i]] == 0x80)
 			return false;
 	}
 
 	return true;
 }
 
-unsigned char *str_base64_ex(const unsigned char *src) {
+char *str_encode64(const char *src, char *dst, size_t dst_len) {
 	unsigned char *out, *pos;
 	const unsigned char *end, *begin;
-	size_t olen;
-	size_t len = strlen((const char *)src);
 
-	olen = str_base64_len(len) + 1 /* for NUL termination */;
-	if (olen < len)
+	if (str_is_empty(src))
+		return NULL;
+
+	size_t len = strlen(src);
+	/* for NUL termination */;
+	if (dst_len < (str_base64_len(len) + 1))
 		return NULL; /* integer overflow */
 
-	out = events_calloc(1, olen);
-	if (!is_empty(out)) {
-		end = src + len;
-		begin = src;
-		pos = out;
-		while (end - begin >= 3) {
-			*pos++ = base64_table[begin[0] >> 2];
-			*pos++ = base64_table[((begin[0] & 0x03) << 4) | (begin[1] >> 4)];
-			*pos++ = base64_table[((begin[1] & 0x0f) << 2) | (begin[2] >> 6)];
-			*pos++ = base64_table[begin[2] & 0x3f];
-			begin += 3;
-		}
+	end = (const unsigned char *)src + len;
+	begin = (const unsigned char *)src;
+	pos = (unsigned char *)dst;
+	if (is_empty(pos))
+		return NULL;
 
-		if (end - begin) {
-			*pos++ = base64_table[begin[0] >> 2];
-			if (end - begin == 1) {
-				*pos++ = base64_table[(begin[0] & 0x03) << 4];
-				*pos++ = '=';
-			} else {
-				*pos++ = base64_table[((begin[0] & 0x03) << 4) | (begin[1] >> 4)];
-				*pos++ = base64_table[(begin[1] & 0x0f) << 2];
-			}
-			*pos++ = '=';
-		}
-
-		*pos = '\0';
+	while (end - begin >= 3) {
+		*pos++ = base64_table[begin[0] >> 2];
+		*pos++ = base64_table[((begin[0] & 0x03) << 4) | (begin[1] >> 4)];
+		*pos++ = base64_table[((begin[1] & 0x0f) << 2) | (begin[2] >> 6)];
+		*pos++ = base64_table[begin[2] & 0x3f];
+		begin += 3;
 	}
 
-	return out;
+	if (end - begin) {
+		*pos++ = base64_table[begin[0] >> 2];
+		if (end - begin == 1) {
+			*pos++ = base64_table[(begin[0] & 0x03) << 4];
+			*pos++ = '=';
+		} else {
+			*pos++ = base64_table[((begin[0] & 0x03) << 4) | (begin[1] >> 4)];
+			*pos++ = base64_table[(begin[1] & 0x0f) << 2];
+		}
+		*pos++ = '=';
+	}
+
+	*pos = '\0';
+	return dst;
 }
 
-unsigned char *str_unbase64_ex(const unsigned char *src) {
-	unsigned char *out, *pos;
+char *str_decode64(const char *src, char *dst, size_t dst_len) {
+	unsigned char *pos;
 	unsigned char block[4];
-	size_t i, count, olen;
+	size_t len, i, count, olen;
 	int pad = 0;
-	size_t len = strlen((const char *)src);
+
+	if (!str_is_base64(src))
+		return NULL;
+
+	len = strlen(src);
+	/* `dst` expected length including 0 termination: */
+	/* IN 1 -> OUT 5, IN 2 -> OUT 5, IN 3 -> OUT 5, IN 4 -> OUT 9,
+	 * IN 5 -> OUT 9, IN 6 -> OUT 9, IN 7 -> OUT 13, etc. */
+	size_t expected_len = ((len + 2) / 3) * 4 + 1;
+	if (dst_len < expected_len) {
+		return NULL;
+	}
 
 	count = 0;
 	for (i = 0; i < len; i++) {
-		if (base64_decode_table[src[i]] != 0x80)
+		if (base64_decode_table[(const unsigned char)src[i]] != 0x80)
 			count++;
 	}
 
 	if (count == 0 || count % 4)
 		return NULL;
 
-	olen = (count / 4 * 3) + 1;
-	pos = out = events_calloc(1, olen);
-	if (!is_empty(out)) {
+
+	pos = (unsigned char *)dst;
+	if (!is_empty(pos)) {
 		count = 0;
 		for (i = 0; i < len; i++) {
-			unsigned char tmp = base64_decode_table[src[i]];
+			unsigned char tmp = base64_decode_table[(const unsigned char)src[i]];
 			if (tmp == 0x80)
 				continue;
 
-			if (src[i] == '=')
+			if ((const unsigned char)src[i] == '=')
 				pad++;
 			block[count] = tmp;
 			count++;
@@ -1480,7 +1536,6 @@ unsigned char *str_unbase64_ex(const unsigned char *src) {
 					else if (pad == 2)
 						pos -= 2;
 					else {
-						events_free(out);
 						/* Invalid padding */
 						return NULL;
 					}
@@ -1491,7 +1546,7 @@ unsigned char *str_unbase64_ex(const unsigned char *src) {
 		*pos = '\0';
 	}
 
-	return out;
+	return dst;
 }
 
 #include "getopt.c"
