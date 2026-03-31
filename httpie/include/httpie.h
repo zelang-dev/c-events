@@ -164,7 +164,7 @@ C_API int http_error(http_t *conn, int status, string_t fmt, ...);
  * - `0` when the connection has been closed
  * - `-1` on error
  * - `>0` number of bytes written on success */
-C_API int http_write(http_t *conn, const void *buf, size_t len);
+C_API int http_write(http_t *conn, const_t buf, size_t len);
 
 /* Send "HTTP 200 OK" response header.
  * After calling this function, use mg_write or mg_send_chunk to send the
@@ -273,7 +273,20 @@ C_API string_t http_suggest_connection_header(http_t *conn);
  * Prints a formatted error message to the opened
  * error log stream. It first tries to use a user supplied error handler. If
  * that doesn't work, the alternative is to write to an error log file. */
-C_API void http_logger(enum http_dbg debug_level, http_t *conn, string_t fmt, ...);
+C_API void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...);
+
+/* Public function to check http digest authentication header */
+C_API int http_check_digest_access_authentication(http_t *conn, const char *realm, const char *filename);
+
+/* Interface function. Parameters are provided by the user, so do
+ * at least some basic checks. */
+int http_send_digest_access_authentication_request(http_t *conn, const char *realm);
+
+/* Return stringified MD5 hash for list of strings. Buffer must be 33 bytes. */
+C_API char *http_md5(char buf[33], ...);
+
+C_API int http_modify_passwords_file_ha1(const char *fname, const char *domain, const char *user, const char *ha1);
+C_API int http_modify_passwords_file(const char *fname,	const char *domain,	const char *user, const char *pass);
 
 /* Sends a list of allowed options a client can use to connect to the server. */
 C_API void http_options(http_t *conn);

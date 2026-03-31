@@ -5,7 +5,7 @@
  * because each byte takes 2 bytes in string representation */
 static void
 bin2str(char *to, const unsigned char *p, size_t len) {
-	static const char *hex = "0123456789abcdef";
+	static string_t hex = "0123456789abcdef";
 
 	for (; len--; p++) {
 		*to++ = hex[p[0] >> 4];
@@ -14,20 +14,17 @@ bin2str(char *to, const unsigned char *p, size_t len) {
 	*to = '\0';
 }
 
-
-/* Return stringified MD5 hash for list of strings. Buffer must be 33 bytes.
- */
-C_API char *http_md5(char buf[33], ...) {
+char *http_md5(char buf[33], ...) {
 	unsigned char hash[16];
-	const char *p;
+	string_t p;
 	va_list ap;
 	MD5_CTX ctx;
 
 	MD5_Init(&ctx);
 
 	va_start(ap, buf);
-	while ((p = va_arg(ap, const char *)) != NULL) {
-		MD5_Update(&ctx, (const void *)p, strlen(p));
+	while ((p = va_arg(ap, string_t)) != NULL) {
+		MD5_Update(&ctx, (const_t)p, strlen(p));
 	}
 	va_end(ap);
 
@@ -38,15 +35,14 @@ C_API char *http_md5(char buf[33], ...) {
 
 
 /* Check the user's password, return 1 if OK */
-static int
-check_password_digest(const char *method,
-	const char *ha1,
-	const char *uri,
-	const char *nonce,
-	const char *nc,
-	const char *cnonce,
-	const char *qop,
-	const char *response) {
+static int check_password_digest(string_t method,
+	string_t ha1,
+	string_t uri,
+	string_t nonce,
+	string_t nc,
+	string_t cnonce,
+	string_t qop,
+	string_t response) {
 	char ha2[32 + 1], expected_response[32 + 1];
 
 	/* Some of the parameters may be NULL */
@@ -83,8 +79,8 @@ check_password_digest(const char *method,
  * Advance pointer to buffer to the next word. Return found 0-terminated
  * word.
  * Delimiters can be quoted with quotechar. */
-static char *skip_quoted(char **buf, const char *delimiters,
-	const char *whitespace, char quotechar) {
+static char *skip_quoted(char **buf, string_t delimiters,
+	string_t whitespace, char quotechar) {
 	char *p, *begin_word, *end_word, *end_whitespace;
 
 	begin_word = *buf;
@@ -144,7 +140,7 @@ static char *skip_quoted(char **buf, const char *delimiters,
 static int parse_auth_header(http_t *conn, char *buf,
 	size_t buf_size, struct auth_header *auth_header) {
 	char *name, *value, *s;
-	const char *ah;
+	string_t ah;
 	uint64_t nonce;
 
 	if (!auth_header || !conn) {
@@ -161,10 +157,10 @@ static int parse_auth_header(http_t *conn, char *buf,
 	if (str_case_equal(ah, "Basic ", 6)) {
 		/* Basic Auth (we never asked for this, but some client may send it) */
 		char *split;
-		const char *userpw_b64 = ah + 6;
+		string_t userpw_b64 = ah + 6;
 		size_t userpw_b64_len = strlen(userpw_b64);
 		size_t buf_len_r = buf_size;
-		if (is_empty(buf = str_decode64(userpw_b64, buf, MG_BUF_LEN))) {
+		if (is_empty(buf = str_decode64(userpw_b64, buf, BUF_LEN))) {
 			return 0; /* decode error */
 		}
 		split = strchr(buf, ':');
@@ -275,7 +271,7 @@ static int parse_auth_header(http_t *conn, char *buf,
 	return (auth_header->user != NULL);
 }
 
-static const char *http_fgets(char *buf, size_t size, struct file *filep) {
+static string_t http_fgets(char *buf, size_t size, struct file *filep) {
 	if (!filep) {
 		return NULL;
 	}
@@ -297,21 +293,20 @@ static const char *http_fgets(char *buf, size_t size, struct file *filep) {
 
 /* Use the global passwords file, if specified by auth_gpass option,
  * or search for .htpasswd in the requested directory. */
-static void open_auth_file(http_t *conn,const char *path,struct file *filep) {
+static void open_auth_file(http_t *conn,string_t path,struct file *filep) {
 	if ((conn != NULL) && (conn->domain != NULL)) {
 		char name[UTF8_PATH_MAX];
-		const char *p, *e,
-			*gpass = conn->domain->config[GLOBAL_PASSWORDS_FILE];
+		string_t p, e,
+			gpass = conn->domain->config[GLOBAL_PASSWORDS_FILE];
 		int truncated;
 
 		if (gpass != NULL) {
 			/* Use global passwords file */
 			if (!http_fopen(conn->ctx, conn, gpass, "rb", filep)) {
-#if defined(DEBUG)
-				/* Use http_logger here, since gpass has been
+				/* Use http_log here, since gpass has been
 				 * configured. */
-				http_logger(DEBUG_ERROR, conn, "fopen(%s): %s", gpass, strerror(ERRNO));
-#endif
+				http_log(DEBUG_ERROR, conn, "fopen(%s): %s", gpass, strerror(os_geterror()));
+
 			}
 			/* Important: using local struct http_file to test path for
 			 * is_directory flag. If filep is used, http_stat() makes it
@@ -329,12 +324,10 @@ static void open_auth_file(http_t *conn,const char *path,struct file *filep) {
 				PASSWORDS_FILE_NAME);
 
 			if (truncated || !http_fopen(conn->ctx, conn, name, "rb", filep)) {
-#if defined(DEBUG)
-				/* Don't use http_logger here, but only a trace, since
+				/* Don't use http_log here, but only a trace, since
 				 * this is a typical case. It will occur for every directory
 				 * without a password file. */
-				cerr("fopen(%s): %s", name, strerror(ERRNO));
-#endif
+				debug_info("fopen(%s): %s", name, strerror(os_geterror()));
 			}
 		} else {
 			/* Try to find .htpasswd in requested directory. */
@@ -353,12 +346,10 @@ static void open_auth_file(http_t *conn,const char *path,struct file *filep) {
 				PASSWORDS_FILE_NAME);
 
 			if (truncated || !http_fopen(conn->ctx, conn, name, "rb", filep)) {
-#if defined(DEBUG)
-				/* Don't use http_logger here, but only a trace, since
+				/* Don't use http_log here, but only a trace, since
 				 * this is a typical case. It will occur for every directory
 				 * without a password file. */
-				cerr("fopen(%s): %s", name, strerror(ERRNO));
-#endif
+				debug_info("fopen(%s): %s", name, strerror(os_geterror()));
 			}
 		}
 	}
@@ -413,7 +404,7 @@ static int read_auth_file(struct file *filep,
 						return is_authorized;
 					}
 				} else {
-					http_logger(DEBUG_ERROR, workdata->conn,
+					http_log(DEBUG_ERROR, workdata->conn,
 						"%s: cannot open authorization file: %s",
 						__func__,
 						workdata->buf);
@@ -423,7 +414,7 @@ static int read_auth_file(struct file *filep,
 
 			/* everything is invalid for the moment (might change in the
 			 * future) */
-			http_logger(DEBUG_ERROR, workdata->conn,
+			http_log(DEBUG_ERROR, workdata->conn,
 				"%s: syntax error in authorization file: %s",
 				__func__,
 				workdata->buf);
@@ -432,7 +423,7 @@ static int read_auth_file(struct file *filep,
 
 		workdata->f_domain = strchr(workdata->f_user, ':');
 		if (workdata->f_domain == NULL) {
-			http_logger(DEBUG_ERROR, workdata->conn,
+			http_log(DEBUG_ERROR, workdata->conn,
 				"%s: syntax error in authorization file: %s",
 				__func__,
 				workdata->buf);
@@ -443,7 +434,7 @@ static int read_auth_file(struct file *filep,
 		(workdata->f_domain)++;
 		workdata->f_ha1 = strchr(workdata->f_domain, ':');
 		if (workdata->f_ha1 == NULL) {
-			http_logger(DEBUG_ERROR, workdata->conn,
+			http_log(DEBUG_ERROR, workdata->conn,
 				"%s: syntax error in authorization file: %s",
 				__func__,
 				workdata->buf);
@@ -486,10 +477,9 @@ static int read_auth_file(struct file *filep,
 	return is_authorized;
 }
 
-/* Authorize against the opened passwords file. Return 1 if authorized. */
-static int authorize(http_t *conn, struct file *filep, const char *realm) {
+int authorize(http_t *conn, struct file *filep, string_t realm) {
 	struct read_auth_file_struct workdata;
-	char buf[MG_BUF_LEN];
+	char buf[BUF_LEN];
 
 	if (!conn || !conn->domain) {
 		return 0;
@@ -514,11 +504,9 @@ static int authorize(http_t *conn, struct file *filep, const char *realm) {
 	return read_auth_file(filep, &workdata, INITIAL_DEPTH);
 }
 
-
-/* Public function to check http digest authentication header */
-C_API int http_check_digest_access_authentication(http_t *conn,
-	const char *realm,
-	const char *filename) {
+int http_check_digest_access_authentication(http_t *conn,
+	string_t realm,
+	string_t filename) {
 	struct file file = STRUCT_FILE_INITIALIZER;
 	int auth;
 
@@ -536,11 +524,10 @@ C_API int http_check_digest_access_authentication(http_t *conn,
 	return auth;
 }
 
-/* Return 1 if request is authorised, 0 otherwise. */
-static int check_authorization(http_t *conn, const char *path) {
+int check_authorization(http_t *conn, string_t path) {
 	char fname[UTF8_PATH_MAX];
 	struct vec uri_vec, filename_vec;
-	const char *list;
+	string_t list;
 	struct file file = STRUCT_FILE_INITIALIZER;
 	int authorized = 1, truncated;
 
@@ -561,7 +548,7 @@ static int check_authorization(http_t *conn, const char *path) {
 
 			if (truncated
 				|| !http_fopen(conn->ctx, conn, fname, "rb", &file)) {
-				http_logger(DEBUG_ERROR, conn,
+				http_log(DEBUG_ERROR, conn,
 					"%s: cannot open %s: %s",
 					__func__,
 					fname,
@@ -583,8 +570,7 @@ static int check_authorization(http_t *conn, const char *path) {
 	return authorized;
 }
 
-/* Internal function. Assumes conn is valid */
-static void send_authorization_request(http_t *conn, const char *realm) {
+void send_authorization_request(http_t *conn, string_t realm) {
 	uint64_t nonce = (uint64_t)(conn->ctx->start_time);
 	int trunc = 0;
 	char buf[128];
@@ -626,12 +612,8 @@ static void send_authorization_request(http_t *conn, const char *realm) {
 	http_response_send(conn);
 }
 
-
-/* Interface function. Parameters are provided by the user, so do
- * at least some basic checks.
- */
-C_API int http_send_digest_access_authentication_request(http_t *conn,
-	const char *realm) {
+int http_send_digest_access_authentication_request(http_t *conn,
+	string_t realm) {
 	if (conn && conn->domain) {
 		send_authorization_request(conn, realm);
 		return 0;
@@ -639,14 +621,12 @@ C_API int http_send_digest_access_authentication_request(http_t *conn,
 	return -1;
 }
 
-
-#if !defined(NO_FILES)
-static int is_authorized_for_put(http_t *conn) {
+int is_authorized_for_put(http_t *conn) {
 	int ret = 0;
 
 	if (conn) {
 		struct file file = STRUCT_FILE_INITIALIZER;
-		const char *passfile = conn->domain->config[PUT_DELETE_PASSWORDS_FILE];
+		string_t passfile = conn->domain->config[PUT_DELETE_PASSWORDS_FILE];
 
 		if (passfile != NULL
 			&& http_fopen(conn->ctx, conn, passfile, "rb", &file)) {
@@ -655,16 +635,14 @@ static int is_authorized_for_put(http_t *conn) {
 		}
 	}
 
-	//DEBUG_TRACE("file write authorization: %i", ret);
+	debug_info("file write authorization: %i", ret);
 	return ret;
 }
-#endif
 
-
-C_API int http_modify_passwords_file_ha1(const char *fname,
-	const char *domain,
-	const char *user,
-	const char *ha1) {
+int http_modify_passwords_file_ha1(string_t fname,
+	string_t domain,
+	string_t user,
+	string_t ha1) {
 	int found = 0, i, result = 1;
 	char line[512], u[256], d[256], h[256];
 	struct stat st = {0};
@@ -821,11 +799,10 @@ C_API int http_modify_passwords_file_ha1(const char *fname,
 	return result;
 }
 
-
-C_API int http_modify_passwords_file(const char *fname,
-	const char *domain,
-	const char *user,
-	const char *pass) {
+int http_modify_passwords_file(string_t fname,
+	string_t domain,
+	string_t user,
+	string_t pass) {
 	char ha1buf[33];
 	if ((fname == NULL) || (domain == NULL) || (user == NULL)) {
 		return 0;

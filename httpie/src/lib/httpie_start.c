@@ -55,7 +55,7 @@ static int http_check_acl(http_ini_t *phys_ctx, const union usa *sa) {
 			}
 
 			if (matched < 0) {
-				http_logger(DEBUG_ERROR, nullptr,
+				http_log(DEBUG_ERROR, nullptr,
 					"%s: subnet must be [+|-]IP-addr[/x]",
 					__func__);
 				return -1;
@@ -78,6 +78,7 @@ static FORCEINLINE void http_handler(int client) {
 		defer(http_free, conn);
 		http_process_connection(conn->ctx, conn);
 	} guarded;
+	shutdown(fd2socket(client), SHUT_RD);
 }
 
 /* Process new incoming connections to the server. */
@@ -102,7 +103,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 	conn_birth_time = time(null);
 	if (!http_check_acl(ctx, (const union usa *)&so.rsa)) {
 		sockaddr_to_str(src_addr, sizeof(src_addr), &so.rsa);
-		http_logger(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
+		http_log(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
 			__func__, src_addr);
 		close(so.sock);
 		so.sock = INVALID_SOCKET;
@@ -111,7 +112,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		so.has_ssl = listener->has_ssl;
 		so.has_redir = listener->has_redir;
 		if (getsockname(so.sock, &so.lsa.sa, &len) != 0) {
-			http_logger(DEBUG_ERROR, nullptr, "%s: getsockname() failed: %s",
+			http_log(DEBUG_ERROR, nullptr, "%s: getsockname() failed: %s",
 				__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 		}
 
@@ -125,7 +126,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		if ((so.lsa.sa.sa_family == AF_INET)
 			|| (so.lsa.sa.sa_family == AF_INET6)) {
 			if (setsockopt(so.sock, SOL_SOCKET, SO_KEEPALIVE, (string_t)&on, sizeof(on)) != 0) {
-				http_logger(DEBUG_ERROR, nullptr, "%s: setsockopt(SOL_SOCKET SO_KEEPALIVE) failed: %s",
+				http_log(DEBUG_ERROR, nullptr, "%s: setsockopt(SOL_SOCKET SO_KEEPALIVE) failed: %s",
 					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 			}
 		}
@@ -134,7 +135,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		if ((so.lsa.sa.sa_family == AF_INET)
 			|| (so.lsa.sa.sa_family == AF_INET6)) {
 			if (setsockopt(so.sock, IPPROTO_TCP, TCP_NODELAY, (string_t)&on, sizeof(on)) != 0) {
-				http_logger(DEBUG_ERROR, nullptr, "%s: setsockopt(IPPROTO_TCP TCP_NODELAY) failed: %s",
+				http_log(DEBUG_ERROR, nullptr, "%s: setsockopt(IPPROTO_TCP TCP_NODELAY) failed: %s",
 					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 			}
 		}
@@ -224,7 +225,7 @@ http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...) {
 		va_start(ap, fmt);
 		vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
 		va_end(ap);
-		http_logger(DEBUG_CRASH, nullptr, "%s: %s", __func__, buf);
+		http_log(DEBUG_CRASH, nullptr, "%s: %s", __func__, buf);
 	}
 
 	http_free_ini(ctx);
@@ -250,7 +251,7 @@ http_ini_t *http_start(int max_fd, http_clb_t *callbacks, void *user_data,
 
 	/*
 	 * No memory for the `http_ini_t` structure is the only error which we
-	 * don't log through `http_logger()` for the simple reason that we do not
+	 * don't log through `http_log()` for the simple reason that we do not
 	 * have enough configured yet to make that function working. Having an
 	 * OOM in this state of the process though should be noticed by the
 	 * calling process in other parts of their execution anyway. */

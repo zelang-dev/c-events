@@ -13,6 +13,12 @@
 #endif
 #define in ,
 
+#ifdef USE_DEBUG
+#	define debug_info(...) cerr(__VA_ARGS__)
+#else
+#	define debug_info(...)
+#endif
+
 /* For a detailed description of these *_PATH_MAX defines, see
  * https://github.com/civetweb/civetweb/issues/937. */
 
@@ -29,11 +35,11 @@
 
 #define CGI_ENVIRONMENT_SIZE	(4096)
 #define MAX_CGI_ENVIR_VARS		(256)
-#define MG_BUF_LEN				(8192)
+#define BUF_LEN				(8192)
 
 /* Do not try to compress files smaller than this limit. */
-#if !defined(MG_FILE_COMPRESSION_SIZE_LIMIT)
-#define MG_FILE_COMPRESSION_SIZE_LIMIT (1024) /* in bytes */
+#if !defined(FILE_COMPRESSION_SIZE_LIMIT)
+#define FILE_COMPRESSION_SIZE_LIMIT (1024) /* in bytes */
 #endif
 
 #if !defined(UNIX_DOMAIN_SOCKET_SERVER_NAME)
@@ -478,6 +484,7 @@ struct http_s {
 	http_socket	client;
 	/* Is Multipart `form_data` in header response? */
 	int is_multipart;
+	int is_valid;
 	/* The protocol version */
 	double version;
 	/* The raw headers and body junction position from server */
@@ -555,11 +562,11 @@ struct auth_header {
 struct read_auth_file_struct {
 	http_t *conn;
 	struct auth_header auth_header;
-	const char *domain;
+	string_t domain;
 	char buf[256 + 256 + 40];
-	const char *f_user;
-	const char *f_domain;
-	const char *f_ha1;
+	string_t f_user;
+	string_t f_domain;
+	string_t f_ha1;
 };
 
 bool http_fopen(http_ini_t *ctx, const http_t *conn,
@@ -714,10 +721,11 @@ bool http_is_websocket(http_t *conn);
 int http_websocket_write_exec(http_t *conn, websocket_type opcode,
 	string_t data, size_t data_len, uint32_t masking_key);
 
-void http_websocket_deflate_send(http_t *conn);
+void http_websocket_deflate_response(http_t *conn);
 void http_websocket_deflate_negotiate(http_t *conn);
 int http_websocket_deflate_init(http_t *conn, int server);
-void http_websocket_request(http_ini_t *ctx, http_t *conn, int is_callback_resource,
+/* Processes a websocket request on a connection. */
+void http_websocket_request(http_ini_t *ctx, http_t *conn, int is_callback_resource, struct ws_subprotocols_s *subprotocols,
 	ws_connect_cb ws_connect_handler, ws_ready_cb ws_ready_handler, ws_data_cb ws_data_handler, ws_close_cb ws_close_handler, void *cbData);
 
 /* Make first character uppercase in string/word, remainder lowercase,
@@ -732,6 +740,20 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 void handle_file_based_request(http_t *conn, string_t path, struct file *file);
 /* Returns true, if a file defined by a specific path is located in memory. */
 bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep);
+void handle_directory_request(http_t *conn, string_t dir);
+
+/*
+ * Parse UTC date-time string, and return the corresponding time_t value.
+ * This function is used in the if-modified-since calculations */
+time_t http_parse_date_string(string_t datetime);
+/* Internal function. Assumes conn is valid */
+void send_authorization_request(http_t *conn, string_t realm);
+/* Return 1 if request is authorised, 0 otherwise. */
+int check_authorization(http_t *conn, string_t path);
+/* Authorize against the opened passwords file. Return 1 if authorized. */
+int authorize(http_t *conn, struct file *filep, string_t realm);
+
+int is_authorized_for_put(http_t *conn);
 void http_compressed_data(http_t *conn, struct file *filep);
 void sockaddr_to_str(char *buf, size_t len, const union usa *usa);
 unsigned short sockaddr_in_port(union usa *s);

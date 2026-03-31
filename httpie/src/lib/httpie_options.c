@@ -93,9 +93,9 @@ static const struct ini_option config_options[] = {
 #define ARRAY_SIZE_EX(array) (sizeof(array) / sizeof(array[0]))
 
 static const struct {
-	const char *extension;
+	string_t extension;
 	size_t ext_len;
-	const char *mime_type;
+	string_t mime_type;
 } builtin_mime_types[] = {
 	/* IANA registered MIME types
 	 * (http://www.iana.org/assignments/media-types)
@@ -210,8 +210,8 @@ static const struct {
 
 static string_t month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-const char *http_get_builtin_mime_type(const char *path) {
-	const char *ext;
+string_t http_get_builtin_mime_type(string_t path) {
+	string_t ext;
 	size_t i, path_len;
 
 	path_len = strlen(path);
@@ -240,9 +240,6 @@ static int get_month_index(string_t s) {
 	return -1;
 }
 
-/*
- * Parse UTC date-time string, and return the corresponding time_t value.
- * This function is used in the if-modified-since calculations */
 time_t http_parse_date_string(string_t datetime) {
 	char month_str[32] = {0};
 	int second;
@@ -356,7 +353,7 @@ bool http_set_gpass_option(http_ini_t *ctx) {
 
 	path = dom_ctx->config[GLOBAL_PASSWORDS_FILE];
 	if (!str_is_empty(path) && !http_stat(fake_conn(&fc, ctx), path, &file)) {
-		http_logger(DEBUG_ERROR, NULL, "%s: cannot open %s: %s",
+		http_log(DEBUG_ERROR, NULL, "%s: cannot open %s: %s",
 			__func__, path, http_error_string(os_geterror(), error_string, ARRAY_SIZE));
 		return false;
 	}
@@ -382,13 +379,13 @@ bool http_set_uid_option_ex(http_ini_t *ctx) {
 	if (uid == NULL) return true;
 
 	if ((pw = getpwnam(uid)) == NULL)
-		http_logger(DEBUG_CRASH, NULL, "%s: unknown user [%s]", __func__, uid);
+		http_log(DEBUG_CRASH, NULL, "%s: unknown user [%s]", __func__, uid);
 	else if (setgid(pw->pw_gid) == -1)
-		http_logger(DEBUG_CRASH, NULL, "%s: setgid(%s): %s", __func__, uid, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+		http_log(DEBUG_CRASH, NULL, "%s: setgid(%s): %s", __func__, uid, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 	else if (setgroups(0, NULL))
-		http_logger(DEBUG_CRASH, NULL, "%s: setgroups(): %s", __func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+		http_log(DEBUG_CRASH, NULL, "%s: setgroups(): %s", __func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 	else if (setuid(pw->pw_uid) == -1)
-		http_logger(DEBUG_CRASH, NULL, "%s: setuid(%s): %s", __func__, uid, httplib_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+		http_log(DEBUG_CRASH, NULL, "%s: setuid(%s): %s", __func__, uid, httplib_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 	else
 		return true;
 
@@ -692,7 +689,7 @@ static void get_host_from_request(struct vec *host, const http_t *conn) {
 			pos = strchr(host_header, ']');
 			if (!pos) {
 				/* Malformed hostname starts with '[', but no ']' found */
-				http_logger(DEBUG_CRASH, null, "%s", "Host name format error '[' without ']'");
+				http_log(DEBUG_CRASH, null, "%s", "Host name format error '[' without ']'");
 				return;
 			}
 			/* terminate after ']' */
@@ -716,25 +713,42 @@ int http_switch_domain(http_t *conn) {
 
 	get_host_from_request(&host, conn);
 	if (host.ptr) {
-		struct ini_domain_s *dom = &(conn->ctx->host);
-		while (dom) {
-			string_t domName = dom->config[AUTHENTICATION_DOMAIN];
-			size_t domNameLen = strlen(domName);
-			if ((domNameLen == host.len) && str_case_equal(host.ptr, domName, host.len)) {
-				/* Found matching domain */
-				http_logger(DEBUG_NONE, null,
-					"HTTP domain %s found", dom->config[AUTHENTICATION_DOMAIN]);
-				conn->domain = dom;
-				break;
+		if (conn->client.has_ssl) {
+			/* This is a HTTPS connection, maybe we have a hostname
+			 * from SNI (set in ssl_servername_callback). */
+			string_t sslhost = conn->domain->config[AUTHENTICATION_DOMAIN];
+			if (sslhost && (conn->domain != &(conn->ctx->host))) {
+				/* We are not using the default domain */
+				if ((strlen(sslhost) != host.len)
+					|| !str_case_equal(host.ptr, sslhost, host.len)) {
+					/* Mismatch between SNI domain and HTTP domain */
+					debug_info("Host mismatch: SNI: %s, HTTPS: %.*s",
+						sslhost, (int)host.len, host.ptr);
+					return 0;
+				}
 			}
+		} else {
+			struct ini_domain_s *dom = &(conn->ctx->host);
+			while (dom) {
+				string_t domName = dom->config[AUTHENTICATION_DOMAIN];
+				size_t domNameLen = strlen(domName);
+				if ((domNameLen == host.len)
+					&& str_case_equal(host.ptr, domName, host.len)) {
+					/* Found matching domain */
+					debug_info("HTTP domain %s found",
+						dom->config[AUTHENTICATION_DOMAIN]);
+					conn->domain = dom;
+					break;
+				}
 
-			atomic_lock(&conn->ctx->nonce_mutex);
-			dom = dom->next;
-			atomic_unlock(&conn->ctx->nonce_mutex);
+				atomic_lock(&conn->ctx->nonce_mutex);
+				dom = dom->next;
+				atomic_unlock(&conn->ctx->nonce_mutex);
+			}
 		}
-		http_logger(DEBUG_NONE, null, "Host: %.*s", (int)host.len, host.ptr);
+		debug_info("HTTP%s Host: %.*s", conn->client.has_ssl ? "S" : "", (int)host.len, host.ptr);
 	} else {
-		http_logger(DEBUG_INFO, null, "Host is not set");
+		debug_info("HTTP%s Host is not set", conn->client.has_ssl ? "S" : "");
 		return 0;
 	}
 
@@ -948,7 +962,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	 * https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml */
 	if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM,
 		(ip_version == 99) ? (/* LOCAL */ 0) : (/* TCP */ 6))) == INVALID_SOCKET) {
-		http_logger(DEBUG_CRASH, NULL, "cannot create socket (entry %i)", portsTotal);
+		http_log(DEBUG_CRASH, NULL, "cannot create socket (entry %i)", portsTotal);
 		if (so.is_optional) {
 			portsOk++; /* it's okay if we couldn't create a socket,
 					this port is optional anyway */
@@ -969,7 +983,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 					sizeof(off))
 				!= 0) {
 				/* Set IPv6 only option, but don't abort on errors. */
-				http_logger(DEBUG_CRASH, NULL,
+				http_log(DEBUG_CRASH, NULL,
 					"cannot set socket option "
 					"IPV6_V6ONLY=off (entry %i)",
 					portsTotal);
@@ -983,7 +997,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 					sizeof(on))
 				!= 0) {
 				/* Set IPv6 only option, but don't abort on errors. */
-				http_logger(DEBUG_CRASH, NULL,
+				http_log(DEBUG_CRASH, NULL,
 					"cannot set socket option "
 					"IPV6_V6ONLY=on (entry %i)",
 					portsTotal);
@@ -994,7 +1008,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	if (so.lsa.sa.sa_family == AF_INET) {
 		len = sizeof(so.lsa.sin);
 		if (bind(so.sock, &so.lsa.sa, len) != 0) {
-			http_logger(DEBUG_CRASH, NULL,
+			http_log(DEBUG_CRASH, NULL,
 				"cannot bind to %.*s: %d (%s)",
 				(int)vec.len,
 				vec.ptr,
@@ -1011,7 +1025,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	} else if (so.lsa.sa.sa_family == AF_INET6) {
 		len = sizeof(so.lsa.sin6);
 		if (bind(so.sock, &so.lsa.sa, len) != 0) {
-			http_logger(DEBUG_CRASH, NULL,
+			http_log(DEBUG_CRASH, NULL,
 				"cannot bind to IPv6 %.*s: %d (%s)",
 				(int)vec.len,
 				vec.ptr,
@@ -1028,7 +1042,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	} else if (so.lsa.sa.sa_family == AF_UNIX) {
 		len = sizeof(so.lsa.sun);
 		if (bind(so.sock, &so.lsa.sa, len) != 0) {
-			http_logger(DEBUG_CRASH, NULL,
+			http_log(DEBUG_CRASH, NULL,
 				"cannot bind to unix socket %s: %d (%s)",
 				so.lsa.sun.sun_path,
 				os_geterror(),
@@ -1042,7 +1056,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			return portsOk;
 		}
 	} else {
-		http_logger(DEBUG_CRASH, NULL, "cannot bind: address family not supported (entry %i)", portsTotal);
+		http_log(DEBUG_CRASH, NULL, "cannot bind: address family not supported (entry %i)", portsTotal);
 		close(so.sock);
 		so.sock = INVALID_SOCKET;
 		return portsOk;
@@ -1053,7 +1067,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			on = 1;
 			if (setsockopt(so.sock,	SOL_SOCKET,	SO_REUSEADDR, (string_t)&on, sizeof(on)) != 0) {
 				/* Set reuse option, but don't abort on errors. */
-				http_logger(DEBUG_CRASH, NULL,
+				http_log(DEBUG_CRASH, NULL,
 					"cannot set socket option SO_REUSEADDR (entry %i)", portsTotal);
 			}
 		}
@@ -1062,7 +1076,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	opt_txt = phys_ctx->host.config[LISTEN_BACKLOG_SIZE];
 	opt_listen_backlog = strtol(opt_txt, NULL, 10);
 	if ((opt_listen_backlog > INT_MAX) || (opt_listen_backlog < 1)) {
-		http_logger(DEBUG_CRASH, NULL,
+		http_log(DEBUG_CRASH, NULL,
 			"%s value \"%s\" is invalid",
 			config_options[LISTEN_BACKLOG_SIZE].name,
 			opt_txt);
@@ -1072,7 +1086,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	}
 
 	if (listen(so.sock, (int)opt_listen_backlog) != 0) {
-		http_logger(DEBUG_CRASH, NULL,
+		http_log(DEBUG_CRASH, NULL,
 			"cannot listen to %.*s: %d (%s)",
 			(int)vec.len,
 			vec.ptr,
@@ -1086,7 +1100,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	if ((getsockname(so.sock, &(usa.sa), &len) != 0)
 		|| (usa.sa.sa_family != so.lsa.sa.sa_family)) {
 		int err = os_geterror();
-		http_logger(DEBUG_CRASH, NULL,
+		http_log(DEBUG_CRASH, NULL,
 			"call to getsockname failed %.*s: %d (%s)",
 			(int)vec.len,
 			vec.ptr,
@@ -1108,7 +1122,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 		realloc(phys_ctx->listening_sockets,
 			(phys_ctx->num_listening_sockets + 1) * sizeof(phys_ctx->listening_sockets[0])))
 		== NULL) {
-		http_logger(DEBUG_CRASH, NULL, "%s", "Out of memory");
+		http_log(DEBUG_CRASH, NULL, "%s", "Out of memory");
 		close(so.sock);
 		so.sock = INVALID_SOCKET;
 		return portsOk;
@@ -1177,7 +1191,7 @@ int http_set_ports_option(http_ini_t *ctx) {
 	while ((list = http_next_option(list, &vec, NULL)) != NULL) {
 		ports_total++;
 		if (!parse_port_string(&vec, &so, &ip_version)) {
-			http_logger(DEBUG_CRASH, NULL, "%s: %.*s: invalid port spec (entry %i). Expecting list of: %s",
+			http_log(DEBUG_CRASH, NULL, "%s: %.*s: invalid port spec (entry %i). Expecting list of: %s",
 				__func__, (int)vec.len, vec.ptr,
 				ports_total, "[IP_ADDRESS:]PORT[s|r]");
 			continue;

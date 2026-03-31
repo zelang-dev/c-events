@@ -44,7 +44,7 @@ void http_compressed_data(http_t *conn, struct file *filep) {
 		Z_DEFAULT_STRATEGY);
 
 	if (zret != Z_OK) {
-		http_logger(DEBUG_ERROR, conn,
+		http_log(DEBUG_ERROR, conn,
 			"GZIP init failed (%i): %s",
 			zret,
 			(zstream.msg ? zstream.msg : "<no error message>"));
@@ -56,7 +56,7 @@ void http_compressed_data(http_t *conn, struct file *filep) {
 	do {
 		zstream.avail_in = fs_fread(in_buf, 1, Kb(8), in_file);
 		if (ferror(in_file)) {
-			http_logger(DEBUG_ERROR, conn, "fread failed: %s", strerror(os_geterror()));
+			http_log(DEBUG_ERROR, conn, "fread failed: %s", strerror(os_geterror()));
 			(void)deflateEnd(&zstream);
 			return;
 		}
@@ -102,7 +102,7 @@ void http_compressed_data(http_t *conn, struct file *filep) {
 
 	if (zret != Z_STREAM_END) {
 		/* Error: We did not compress everything. */
-		http_logger(DEBUG_ERROR, conn,
+		http_log(DEBUG_ERROR, conn,
 			"GZIP incomplete (%i): %s",
 			zret,
 			(zstream.msg ? zstream.msg : "<no error message>"));
@@ -125,7 +125,7 @@ int http_websocket_deflate_init(http_t *conn, int server) {
 			MEM_LEVEL,
 			Z_DEFAULT_STRATEGY);
 	if (zret != Z_OK) {
-		http_logger(DEBUG_ERROR, conn,
+		http_log(DEBUG_ERROR, conn,
 			"Websocket deflate init failed (%i): %s",
 			zret,
 			(conn->req.websocket_deflate_state.msg
@@ -140,7 +140,7 @@ int http_websocket_deflate_init(http_t *conn, int server) {
 		server ? -1 * conn->req.websocket_deflate_client_max_windows_bits
 		: -1 * conn->req.websocket_deflate_server_max_windows_bits);
 	if (zret != Z_OK) {
-		http_logger(DEBUG_ERROR, conn,
+		http_log(DEBUG_ERROR, conn,
 			"Websocket inflate init failed (%i): %s",
 			zret,
 			(conn->req.websocket_inflate_state.msg
@@ -193,7 +193,7 @@ void http_websocket_deflate_negotiate(http_t *conn) {
 						// The permessage-deflate spec specifies that a
 						// value of 8 is also allowed, but zlib doesn't accept
 						// that.
-						http_logger(DEBUG_ERROR, conn,
+						http_log(DEBUG_ERROR, conn,
 							"server-max-window-bits must be "
 							"between 9 and 15. Got %i",
 							val);
@@ -217,7 +217,7 @@ void http_websocket_deflate_negotiate(http_t *conn) {
 						// The permessage-deflate spec specifies that a
 						// value of 8 is also allowed, but zlib doesn't
 						// accept that.
-						http_logger(DEBUG_ERROR, conn,
+						http_log(DEBUG_ERROR, conn,
 							"client-max-window-bits must be "
 							"between 9 and 15. Got %i",
 							val);
@@ -227,7 +227,7 @@ void http_websocket_deflate_negotiate(http_t *conn) {
 						++extensions;
 				}
 			} else {
-				http_logger(DEBUG_ERROR, conn,
+				http_log(DEBUG_ERROR, conn,
 					"Unknown parameter %s for permessage-deflate",
 					extensions);
 				break;
@@ -239,7 +239,7 @@ void http_websocket_deflate_negotiate(http_t *conn) {
 	conn->req.websocket_deflate_initialized = 0;
 }
 
-void http_websocket_deflate_send(http_t *conn) {
+void http_websocket_deflate_response(http_t *conn) {
 	if (conn->req.accept_gzip) {
 		http_printf(conn,
 			"Sec-WebSocket-Extensions: permessage-deflate; "

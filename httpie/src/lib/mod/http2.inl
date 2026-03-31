@@ -880,7 +880,7 @@ http2_settings_acknowledge(http_t *conn)
 {
 	unsigned char http2_set_ackn_frame[9] = {0, 0, 0, 4, 1, 0, 0, 0, 0};
 
-	DEBUG_TRACE("%s", "Sending settings frame");
+	debug_info("%s", "Sending settings frame");
 	mg_xwrite(conn, http2_set_ackn_frame, 9);
 }
 
@@ -959,7 +959,7 @@ http2_send_settings(http_t *conn,
 	mg_xwrite(conn, &id, 2);
 	mg_xwrite(conn, &data, 4);
 
-	DEBUG_TRACE("%s", "HTTP2 settings sent");
+	debug_info("%s", "HTTP2 settings sent");
 }
 
 
@@ -1087,10 +1087,10 @@ http2_send_response_headers(http_t *conn)
 		ok = 0;
 	}
 	if (ok) {
-		DEBUG_TRACE("HTTP2 response header sent: stream %u",
+		debug_info("HTTP2 response header sent: stream %u",
 		            conn->http2.stream_id);
 	} else {
-		DEBUG_TRACE("HTTP2 response header sending error: stream %u",
+		debug_info("HTTP2 response header sending error: stream %u",
 		            conn->http2.stream_id);
 	}
 
@@ -1120,7 +1120,7 @@ http2_data_frame_head(http_t *conn,
 	http2_data_frame[7] = (stream_id & 0xFF00u) >> 8;
 	http2_data_frame[8] = (stream_id & 0xFFu);
 
-	DEBUG_TRACE("HTTP2 begin data frame: stream %u, frame_size %u (final: %i)",
+	debug_info("HTTP2 begin data frame: stream %u, frame_size %u (final: %i)",
 	            stream_id,
 	            frame_size,
 	            is_final);
@@ -1137,7 +1137,7 @@ http2_send_window(http_t *conn,
 	unsigned char http2_window_frame[9] = {0, 0, 4, 8, 0, 0, 0, 0, 0};
 	uint32_t data = htonl(window_size);
 
-	DEBUG_TRACE("HTTP2 send window_size: stream %u, error %u",
+	debug_info("HTTP2 send window_size: stream %u, error %u",
 	            stream_id,
 	            window_size);
 
@@ -1158,7 +1158,7 @@ http2_reset_stream(http_t *conn,
 	unsigned char http2_reset_frame[9] = {0, 0, 4, 3, 0, 0, 0, 0, 0};
 	uint32_t val = htonl(error_id);
 
-	DEBUG_TRACE("HTTP2 send reset: stream %u, error %u", stream_id, error_id);
+	debug_info("HTTP2 send reset: stream %u, error %u", stream_id, error_id);
 
 	http2_reset_frame[5] = (stream_id & 0xFF000000u) >> 24;
 	http2_reset_frame[6] = (stream_id & 0xFF0000u) >> 16;
@@ -1172,7 +1172,7 @@ http2_reset_stream(http_t *conn,
 static void
 http2_must_use_http1(http_t *conn)
 {
-	DEBUG_TRACE("HTTP2 not available for this URL (%s)", conn->path);
+	debug_info("HTTP2 not available for this URL (%s)", conn->path);
 	http2_reset_stream(conn, conn->http2.stream_id, 0xd);
 }
 
@@ -1189,13 +1189,13 @@ http2_must_use_http1(http_t *conn)
 static int mem_h_count = 0;
 static int mem_d_count = 0;
 #define CHECK_LEAK_HDR_ALLOC(ptr)                                              \
-	DEBUG_TRACE("H NEW %p (%i): %s", ptr, ++mem_h_count, (string_t)ptr)
+	debug_info("H NEW %p (%i): %s", ptr, ++mem_h_count, (string_t)ptr)
 #define CHECK_LEAK_HDR_FREE(ptr)                                               \
-	DEBUG_TRACE("H DEL %p (%i): %s", ptr, --mem_h_count, (string_t)ptr)
+	debug_info("H DEL %p (%i): %s", ptr, --mem_h_count, (string_t)ptr)
 #define CHECK_LEAK_DYN_ALLOC(ptr)                                              \
-	DEBUG_TRACE("D NEW %p (%i): %s", ptr, ++mem_d_count, (string_t)ptr)
+	debug_info("D NEW %p (%i): %s", ptr, ++mem_d_count, (string_t)ptr)
 #define CHECK_LEAK_DYN_FREE(ptr)                                               \
-	DEBUG_TRACE("D DEL %p (%i): %s", ptr, --mem_d_count, (string_t)ptr)
+	debug_info("D DEL %p (%i): %s", ptr, --mem_d_count, (string_t)ptr)
 #else
 #define CHECK_LEAK_HDR_ALLOC(ptr)
 #define CHECK_LEAK_HDR_FREE(ptr)
@@ -1210,7 +1210,7 @@ static int mem_d_count = 0;
 static void
 purge_dynamic_header_table(http_t *conn, uint32_t tableSize)
 {
-	DEBUG_TRACE("HTTP2 dynamic header table set to %u", tableSize);
+	debug_info("HTTP2 dynamic header table set to %u", tableSize);
 	while (conn->http2.dyn_table_size > tableSize) {
 		conn->http2.dyn_table_size--;
 
@@ -1290,7 +1290,7 @@ handle_http2(http_t *conn)
 	                               conn->ctx);
 	if (!buf) {
 		/* Out of memory */
-		DEBUG_TRACE("%s", "Out of memory for HTTP2 frame");
+		debug_info("%s", "Out of memory for HTTP2 frame");
 		return;
 	}
 
@@ -1329,20 +1329,20 @@ handle_http2(http_t *conn)
 
 		if (http2_frame_size > server_settings.settings_max_frame_size) {
 			/* TODO: Error Message */
-			DEBUG_TRACE("HTTP2 frame too large (%lu)",
+			debug_info("HTTP2 frame too large (%lu)",
 			            (unsigned long)http2_frame_size);
 			goto clean_http2;
 		}
 		bytes_read = mg_read(conn, buf, http2_frame_size);
 		if (bytes_read != (int)http2_frame_size) {
 			/* TODO: Error Message - or read again? */
-			DEBUG_TRACE("HTTP2 read error (%li != %li)",
+			debug_info("HTTP2 read error (%li != %li)",
 			            (signed long int)bytes_read,
 			            (signed long int)http2_frame_size);
 			goto clean_http2;
 		}
 
-		DEBUG_TRACE("HTTP2 frame type %u, size %u, stream %u, flags %02x",
+		debug_info("HTTP2 frame type %u, size %u, stream %u, flags %02x",
 		            http2_frame_type,
 		            http2_frame_size,
 		            http2_frame_stream_id,
@@ -1355,7 +1355,7 @@ handle_http2(http_t *conn)
 		case 0: /* DATA */
 		{
 			/* TODO */
-			DEBUG_TRACE("%s", "HTTP2 DATA frame?");
+			debug_info("%s", "HTTP2 DATA frame?");
 		} break;
 
 		case 1: /* HEADERS */
@@ -1372,7 +1372,7 @@ handle_http2(http_t *conn)
 			if (frame_is_padded) {
 				padding = buf[i];
 				i++;
-				DEBUG_TRACE("HTTP2 frame padded by %u bytes", padding);
+				debug_info("HTTP2 frame padded by %u bytes", padding);
 			}
 			if (frame_is_priority) {
 				uint32_t val = ((uint32_t)buf[0 + i] * 0x1000000u)
@@ -1383,7 +1383,7 @@ handle_http2(http_t *conn)
 				exclusive = ((val & 0x80000000u) != 0);
 				weight = buf[4 + i];
 				i += 5;
-				DEBUG_TRACE(
+				debug_info(
 				    "HTTP2 frame weight %u, dependency %u (exclusive: %i)",
 				    weight,
 				    dependency,
@@ -1439,7 +1439,7 @@ handle_http2(http_t *conn)
 					continue;
 
 				} else {
-					DEBUG_TRACE("HTTP2 unknown start pattern %02x", buf[i]);
+					debug_info("HTTP2 unknown start pattern %02x", buf[i]);
 					goto clean_http2;
 				}
 
@@ -1453,7 +1453,7 @@ handle_http2(http_t *conn)
 					    hpack_decode(buf, &i, (int)bytes_read, conn->ctx);
 					CHECK_LEAK_HDR_ALLOC(key);
 					if (!key) {
-						DEBUG_TRACE("%s", "HTTP2 key decoding error");
+						debug_info("%s", "HTTP2 key decoding error");
 						goto clean_http2;
 					}
 				} else if (/*(idx >= 15) &&*/ (idx <= 61)) {
@@ -1471,7 +1471,7 @@ handle_http2(http_t *conn)
 					CHECK_LEAK_HDR_ALLOC(key);
 				} else {
 					/* protocol violation */
-					DEBUG_TRACE("HTTP2 invalid index %lu", (unsigned long)idx);
+					debug_info("HTTP2 invalid index %lu", (unsigned long)idx);
 					goto clean_http2;
 				}
 				/* key is allocated now and must be freed later */
@@ -1486,7 +1486,7 @@ handle_http2(http_t *conn)
 							CHECK_LEAK_HDR_ALLOC(val);
 						} else {
 							/* protocol violation */
-							DEBUG_TRACE("HTTP2 indexed header %lu has no value "
+							debug_info("HTTP2 indexed header %lu has no value "
 							            "(key: %s)",
 							            (unsigned long)idx,
 							            key);
@@ -1503,7 +1503,7 @@ handle_http2(http_t *conn)
 						CHECK_LEAK_HDR_ALLOC(val);
 					} else {
 						/* protocol violation */
-						DEBUG_TRACE(
+						debug_info(
 						    "HTTP2 indexed header %lu out of range (key: %s)",
 						    (unsigned long)idx,
 						    key);
@@ -1520,7 +1520,7 @@ handle_http2(http_t *conn)
 					                   conn->ctx); /* leak? */
 					CHECK_LEAK_HDR_ALLOC(val);
 					if (!val) {
-						DEBUG_TRACE("%s", "HTTP2 value decoding error");
+						debug_info("%s", "HTTP2 value decoding error");
 						mg_free((void *)key);
 						goto clean_http2;
 					}
@@ -1530,7 +1530,7 @@ handle_http2(http_t *conn)
 						if (conn->http2.dyn_table_size
 						    >= HTTP2_DYN_TABLE_SIZE) {
 							/* Too many elements */
-							DEBUG_TRACE("HTTP2 index table is full (key: %s, "
+							debug_info("HTTP2 index table is full (key: %s, "
 							            "value: %s)",
 							            key,
 							            val);
@@ -1559,7 +1559,7 @@ handle_http2(http_t *conn)
 
 						conn->http2.dyn_table_size++;
 
-						DEBUG_TRACE("HTTP2 new dynamic header table entry %i "
+						debug_info("HTTP2 new dynamic header table entry %i "
 						            "(key: %s, value: %s)",
 						            (int)conn->http2.dyn_table_size,
 						            key,
@@ -1572,7 +1572,7 @@ handle_http2(http_t *conn)
 
 				/* Add header for this request */
 				if ((key != NULL) && (val != NULL)
-				    && (conn->req.num_headers < MG_MAX_HEADERS)) {
+				    && (conn->req.num_headers < MAX_HEADERS)) {
 					conn->req
 					    .http_headers[conn->req.num_headers]
 					    .name = key;
@@ -1593,7 +1593,7 @@ handle_http2(http_t *conn)
 						conn->status = atoi(val);
 					}
 
-					DEBUG_TRACE("HTTP2 request header (key: %s, value: %s)",
+					debug_info("HTTP2 request header (key: %s, value: %s)",
 					            key,
 					            val);
 
@@ -1602,7 +1602,7 @@ handle_http2(http_t *conn)
 					 * - or the max. number of headers is reached
 					 * in both cases free all memory
 					 */
-					DEBUG_TRACE("%s", "HTTP2 cannot add header");
+					debug_info("%s", "HTTP2 cannot add header");
 					CHECK_LEAK_HDR_FREE(key);
 					CHECK_LEAK_HDR_FREE(val);
 
@@ -1617,12 +1617,12 @@ handle_http2(http_t *conn)
 			conn->http2.stream_id = http2_frame_stream_id;
 
 			/* header parsed */
-			DEBUG_TRACE("HTTP2 handle_request (stream %u)",
+			debug_info("HTTP2 handle_request (stream %u)",
 			            http2_frame_stream_id);
 			handle_request_stat_log(conn);
 
 			/* Send "final" frame */
-			DEBUG_TRACE("HTTP2 handle_request done (stream %u)",
+			debug_info("HTTP2 handle_request done (stream %u)",
 			            http2_frame_stream_id);
 			http2_data_frame_head(conn, 0, 1);
 			free_buffered_response_header_list(conn);
@@ -1635,7 +1635,7 @@ handle_http2(http_t *conn)
 			    ((uint32_t)buf[0] * 0x1000000u) + ((uint32_t)buf[1] * 0x10000u)
 			    + ((uint32_t)buf[2] * 0x100u) + ((uint32_t)buf[3]);
 			uint8_t weight = buf[4];
-			DEBUG_TRACE("HTTP2 priority %u dependent stream %u",
+			debug_info("HTTP2 priority %u dependent stream %u",
 			            weight,
 			            dependStream);
 		} break;
@@ -1645,7 +1645,7 @@ handle_http2(http_t *conn)
 			uint32_t errorId =
 			    ((uint32_t)buf[0] * 0x1000000u) + ((uint32_t)buf[1] * 0x10000u)
 			    + ((uint32_t)buf[2] * 0x100u) + ((uint32_t)buf[3]);
-			DEBUG_TRACE("HTTP2 reset with error %u", errorId);
+			debug_info("HTTP2 reset with error %u", errorId);
 		} break;
 
 		case 4: /* SETTINGS */
@@ -1654,11 +1654,11 @@ handle_http2(http_t *conn)
 				http2_reset_stream(conn,
 				                   http2_frame_stream_id,
 				                   HTTP2_ERR_PROTOCOL_ERROR);
-				DEBUG_TRACE("%s", "HTTP2 received invalid settings frame");
+				debug_info("%s", "HTTP2 received invalid settings frame");
 			} else if (http2_frame_flags) {
 				/* ACK frame. Do not reply. */
 				my_settings_accepted++;
-				DEBUG_TRACE("%s", "CivetWeb settings confirmed by peer");
+				debug_info("%s", "CivetWeb settings confirmed by peer");
 			} else {
 				int i;
 				for (i = 0; i < (int)http2_frame_size; i += 6) {
@@ -1671,37 +1671,37 @@ handle_http2(http_t *conn)
 					switch (id) {
 					case 1:
 						client_settings.settings_header_table_size = val;
-						DEBUG_TRACE("Received settings header_table_size: %u",
+						debug_info("Received settings header_table_size: %u",
 						            val);
 						break;
 					case 2:
 						client_settings.settings_enable_push = (val != 0);
-						DEBUG_TRACE("Received settings enable_push: %u", val);
+						debug_info("Received settings enable_push: %u", val);
 						break;
 					case 3:
 						client_settings.settings_max_concurrent_streams = val;
-						DEBUG_TRACE(
+						debug_info(
 						    "Received settings max_concurrent_streams: %u",
 						    val);
 						break;
 					case 4:
 						client_settings.settings_initial_window_size = val;
-						DEBUG_TRACE("Received settings initial_window_size: %u",
+						debug_info("Received settings initial_window_size: %u",
 						            val);
 						break;
 					case 5:
 						client_settings.settings_max_frame_size = val;
-						DEBUG_TRACE("Received settings max_frame_size: %u",
+						debug_info("Received settings max_frame_size: %u",
 						            val);
 						break;
 					case 6:
 						client_settings.settings_max_header_list_size = val;
-						DEBUG_TRACE(
+						debug_info(
 						    "Received settings max_header_list_size: %u", val);
 						break;
 					default:
 						/* Unknown setting. Ignore it. */
-						DEBUG_TRACE("Received unknown settings id=%u: %u",
+						debug_info("Received unknown settings id=%u: %u",
 						            id,
 						            val);
 						break;
@@ -1714,13 +1714,13 @@ handle_http2(http_t *conn)
 			break;
 
 		case 5: /* PUSH_PROMISE */
-			DEBUG_TRACE("%s", "Push promise not supported");
+			debug_info("%s", "Push promise not supported");
 			break;
 
 		case 6: /* PING */
 			if (http2_frame_flags == 0) {
 				/* Set "reply" flag, and send same data back */
-				DEBUG_TRACE("%s", "Replying to ping");
+				debug_info("%s", "Replying to ping");
 				http2_frame_head[4] = 1;
 				mg_xwrite(conn, http2_frame_head, sizeof(http2_frame_head));
 				mg_xwrite(conn, buf, http2_frame_size);
@@ -1739,7 +1739,7 @@ handle_http2(http_t *conn)
 			uint32_t debugDataLen = http2_frame_size - 8;
 			char *debugData = (char *)buf + 8;
 
-			DEBUG_TRACE("HTTP2 goaway stream %u, error %u (%.*s)",
+			debug_info("HTTP2 goaway stream %u, error %u (%.*s)",
 			            lastStream,
 			            errorId,
 			            debugDataLen,
@@ -1754,18 +1754,18 @@ handle_http2(http_t *conn)
 			               + ((uint32_t)buf[2] * 0x100u) + ((uint32_t)buf[3]);
 			http_window_length = (val & 0x7FFFFFFFu);
 
-			DEBUG_TRACE("HTTP2 window update stream %u, length %u",
+			debug_info("HTTP2 window update stream %u, length %u",
 			            http2_frame_stream_id,
 			            http_window_length);
 		} break;
 
 		case 9: /* CONTINUATION */
-			DEBUG_TRACE("%s", "HTTP2 Continue");
+			debug_info("%s", "HTTP2 Continue");
 			break;
 
 		default:
 			/* TODO: Error Message */
-			DEBUG_TRACE("%s", "Unknown frame type");
+			debug_info("%s", "Unknown frame type");
 			goto clean_http2;
 		}
 
@@ -1776,7 +1776,7 @@ handle_http2(http_t *conn)
 	}
 
 clean_http2:
-	DEBUG_TRACE("%s", "HTTP2 free buffer, connection handler finished");
+	debug_info("%s", "HTTP2 free buffer, connection handler finished");
 	mg_free(buf);
 }
 
@@ -1879,16 +1879,16 @@ process_new_http2_connection(http_t *conn)
 	if (!is_valid_http2_primer(conn)) {
 		/* Primer does not match expectation from RFC.
 		 * See https://tools.ietf.org/html/rfc7540#section-3.5 */
-		DEBUG_TRACE("%s", "No valid HTTP2 primer");
+		debug_info("%s", "No valid HTTP2 primer");
 		mg_send_http_error(conn, 400, "%s", "Invalid HTTP/2 primer");
 
 	} else {
 		/* Valid HTTP/2 primer received */
-		DEBUG_TRACE("%s", "Start handling HTTP2");
+		debug_info("%s", "Start handling HTTP2");
 		handle_http2(conn);
 
 		/* Free memory allocated for headers, if not done yet */
-		DEBUG_TRACE("%s", "Free remaining HTTP2 header memory");
+		debug_info("%s", "Free remaining HTTP2 header memory");
 		free_buffered_response_header_list(conn);
 		free_buffered_request_header_list(conn);
 		purge_dynamic_header_table(conn, 0);

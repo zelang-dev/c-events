@@ -382,8 +382,16 @@ static void parse_multipart(http_t *this) {
 		bool found;
 
 		snprintf(scrape, ARRAY_SIZE, "--%s", this->boundary);
-		this->raw[this->raw_pos] = '\n';
-		this->raw[this->raw_pos + 1] = '\n';
+		if (this->is_valid == 2) {
+			this->raw[this->raw_pos] = '\n';
+			this->raw[this->raw_pos + 1] = '\n';
+		} else {
+			this->raw[this->raw_pos] = '\r';
+			this->raw[this->raw_pos + 1] = '\n';
+			this->raw[this->raw_pos + 2] = '\r';
+			this->raw[this->raw_pos + 3] = '\n';
+		}
+
 		boundary = str_split_ex(this->raw, scrape, &count);
 		$append(this->garbage, boundary);
 		if (--count >= 2 && str_is(boundary[count], "--")) {
@@ -399,7 +407,10 @@ static void parse_multipart(http_t *this) {
 				$reset(this->names);
 
 			for (x = 1; x < count; x++) {
-				boundaries = str_split_ex(boundary[x], LFLF, &pieces);
+				if (this->is_valid == 2)
+					boundaries = str_split_ex(boundary[x], LFLF, &pieces);
+				else
+					boundaries = str_split_ex(boundary[x], CRLF CRLF, &pieces);
 				$append(this->garbage, boundaries);
 				if (pieces > 1) {
 					multipart = calloc(1, sizeof(form_data_t));
@@ -474,16 +485,19 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 		this->sessions = nullptr;
 	}
 
-	s_pos = str_pos(raw, LFLF);
-	if (s_pos == DATA_INVALID)
-		return -1;
+	this->is_valid = 4;
+	if ((s_pos = str_pos(raw, CRLF CRLF)) == DATA_INVALID) {
+		this->is_valid = 2;
+		if ((s_pos = str_pos(raw, LFLF)) == DATA_INVALID)
+			return -1;
+	}
 
 	this->action = action;
 	this->raw = raw;
 	this->raw_pos = s_pos;
 	this->raw[s_pos] = '\0';
 	messages = this->raw;
-	this->body = trim(trim_at(messages, s_pos + 2));
+	this->body = trim(trim_at(messages, s_pos + this->is_valid));
 	lines = str_has(messages, "\n") ? str_split_ex(messages, "\n", &count) : nullptr;
 	if (count >= 1) {
 		if (is_empty(this->headers)) {

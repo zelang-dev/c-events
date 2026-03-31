@@ -127,8 +127,8 @@ static int print_dir_entry(http_t *conn, struct de *de) {
 
 /* This function is called from send_directory() and used for
  * sorting directory entries by size, name, or modification time. */
-static int compare_dir_entries(const void *p1, const void *p2, void *arg) {
-	const char *query_string = (const char *)(arg != NULL ? arg : "");
+static int compare_dir_entries(const_t p1, const_t p2, void *arg) {
+	string_t query_string = (string_t)(arg != NULL ? arg : "");
 	if (p1 && p2) {
 		const struct de *a = (const struct de *)p1, *b = (const struct de *)p2;
 		int cmp_result = 0;
@@ -172,7 +172,7 @@ static int compare_dir_entries(const void *p1, const void *p2, void *arg) {
 }
 
 
-static int remove_directory(http_t *conn, const char *dir) {
+static int remove_directory(http_t *conn, string_t dir) {
 	char path[UTF8_PATH_MAX];
 	struct dirent *dp;
 	DIR *dirp;
@@ -208,7 +208,7 @@ static int remove_directory(http_t *conn, const char *dir) {
 			}
 
 			if (!_stat_ex(conn, path, &de.file)) {
-				http_logger(DEBUG_ERROR, null,
+				http_log(DEBUG_ERROR, null,
 					"%s: _stat_ex(%s) failed: %s",
 					__func__,
 					path,
@@ -236,7 +236,7 @@ static int remove_directory(http_t *conn, const char *dir) {
 }
 
 static int scan_directory(http_t *conn,
-	const char *dir,
+	string_t dir,
 	void *data,
 	int (*cb)(struct de *, void *)) {
 	char path[UTF8_PATH_MAX];
@@ -272,7 +272,7 @@ static int scan_directory(http_t *conn,
 			}
 
 			if (!_stat_ex(conn, path, &de.file)) {
-				http_logger(DEBUG_ERROR, null,
+				http_log(DEBUG_ERROR, null,
 					"%s: _stat_ex(%s) failed: %s",
 					__func__,
 					path,
@@ -323,16 +323,16 @@ static FORCEINLINE void *_scan_directory(param_t args) {
 	return casting(scan_directory((http_t *)args[0].object, args[1].const_char_ptr, args[2].object, (int (*)(struct de *, void *))args[3].func));
 }
 
-FORCEINLINE int fs_scan_directory(http_t *conn, const char *dir, void *data, int (*cb)(struct de *, void *)) {
+FORCEINLINE int fs_scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *)) {
 	return await_for(queue_work(events_pool(), _scan_directory, 4, conn, dir, data, cb)).integer;
 }
 
-static void handle_directory_request(http_t *conn, const char *dir) {
+void handle_directory_request(http_t *conn, string_t dir) {
 	size_t i;
 	int sort_direction;
 	struct dir_scan_data data = {NULL, 0, 128};
 	char date[64], *esc, *p;
-	const char *title;
+	string_t title;
 	time_t curtime = time(NULL);
 
 	if (!conn) {
@@ -497,15 +497,15 @@ void http_snprintf(http_t *conn, int *truncated, string buf, size_t buflen, stri
 	va_end(ap);
 }
 
-static int http_error_send(http_t *conn, int status, const char *fmt, va_list args) {
-	char errmsg_buf[MG_BUF_LEN];
+static int http_error_send(http_t *conn, int status, string_t fmt, va_list args) {
+	char errmsg_buf[BUF_LEN];
 	va_list ap;
 	int has_body;
 	char path_buf[UTF8_PATH_MAX];
 	int len, i, page_handler_found, scope, truncated;
-	const char *error_handler = NULL;
+	string_t error_handler = NULL;
 	struct file error_page_file = STRUCT_FILE_INITIALIZER;
-	const char *error_page_file_ext, *tstr;
+	string_t error_page_file_ext, tstr;
 	int handled_by_callback = 0;
 
 	if ((conn == NULL) || (fmt == NULL)) {
@@ -527,7 +527,7 @@ static int http_error_send(http_t *conn, int status, const char *fmt, va_list ar
 		http_vsnprintf(NULL, errmsg_buf, sizeof(errmsg_buf), fmt, ap);
 		va_end(ap);
 		/* In a debug build, print all html errors */
-		//DEBUG_TRACE("Error %i - [%s]", status, errmsg_buf);
+		debug_info("Error %i - [%s]", status, errmsg_buf);
 	}
 
 	/* If there is a http_error callback, call it.
@@ -545,7 +545,7 @@ static int http_error_send(http_t *conn, int status, const char *fmt, va_list ar
 	if (!handled_by_callback) {
 		/* Check for recursion */
 		if (conn->req.in_error_handler) {
-			//DEBUG_TRACE("Recursion when handling error %u - fall back to default", status);
+			debug_info("Recursion when handling error %u - fall back to default", status);
 		} else {
 			/* Send user defined error pages, if defined */
 			error_handler = conn->domain->config[ERROR_PAGES];
@@ -618,11 +618,11 @@ static int http_error_send(http_t *conn, int status, const char *fmt, va_list ar
 						path_buf[len + i - 1] = 0;
 
 						if (http_stat(conn, path_buf, &error_page_file)) {
-							//DEBUG_TRACE("Check error page %s - found", path_buf);
+							debug_info("Check error page %s - found", path_buf);
 							page_handler_found = 1;
 							break;
 						}
-						//DEBUG_TRACE("Check error page %s - not found", path_buf);
+						debug_info("Check error page %s - not found", path_buf);
 
 						/* Continue with the next file extension from the
 						 * configuration (if there is a next one). */
@@ -656,13 +656,13 @@ static int http_error_send(http_t *conn, int status, const char *fmt, va_list ar
 		/* HTTP responses 1xx, 204 and 304 MUST NOT send a body */
 		if (has_body) {
 			/* For other errors, send a generic error message. */
-			const char *status_text = http_status_str(status);
+			string_t status_text = http_status_str(status);
 			http_printf(conn, "Error %d: %s\n", status, status_text);
 			http_write(conn, errmsg_buf, strlen(errmsg_buf));
 
 		} else {
 			/* No body allowed. Close the connection. */
-			//DEBUG_TRACE("Error %i", status);
+			debug_info("Error %i", status);
 		}
 	}
 	return 0;
@@ -681,7 +681,7 @@ int http_error(http_t *conn, int status, string_t fmt, ...) {
 }
 
 void http_domain_header(http_t *conn) {
-	const char *header = conn->domain->config[ADDITIONAL_HEADER];
+	string_t header = conn->domain->config[ADDITIONAL_HEADER];
 
 	if (conn->domain->config[STRICT_HTTPS_MAX_AGE]) {
 		long max_age = atol(conn->domain->config[STRICT_HTTPS_MAX_AGE]);
@@ -826,7 +826,7 @@ static int http_vprintf(http_t *conn, string_t fmt, va_list ap) {
 
 	buf = NULL;
 	if ((len = alloc_vprintf(&buf, mem, sizeof(mem), fmt, ap)) > 0)
-		len = http_write(conn, (const void *)buf, (size_t)len);
+		len = http_write(conn, (const_t)buf, (size_t)len);
 
 	if (buf != mem) {
 		free(buf);
@@ -892,7 +892,7 @@ static int _read_inner(http_t *conn, void *buf, size_t len) {
 		(int64_t)((len > INT_MAX) ? INT_MAX : len); /* since the return value is
 													 * int, we may not read more
 													 * bytes */
-	const char *body;
+	string_t body;
 
 	if (conn == NULL) {
 		return 0;
@@ -1138,7 +1138,7 @@ int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len) {
 	return t;
 }
 
-int http_write(http_t *conn, const void *buf, size_t len) {
+int http_write(http_t *conn, const_t buf, size_t len) {
 	if (conn == NULL) {
 		return 0;
 	}
@@ -1274,7 +1274,7 @@ void http_no_cache_header(http_t *conn) {
  void http_static_cache_header(http_t *conn) {
 	int max_age;
 	char val[64];
-	const char *cache_control =
+	string_t cache_control =
 		conn->domain->config[STATIC_FILE_CACHE_CONTROL];
 
 	/* If there is a full cache-control option configured,0 use it */
@@ -1441,23 +1441,23 @@ void http_options(http_t *conn) {
 	if (is_empty(conn->ctx->document_root)) return;
 
 	curtime = time(NULL);
-	conn->status = 200;
+	conn->status = (http_status)200;
 	conn->req.must_close = true;
 
 	http_gmt_time_str(date, sizeof(date), &curtime);
 	http_printf(conn,
-		"HTTP/1.1 200 OK\r\n"
-		"Date: %s\r\n"
+		"HTTP/1.1 200 OK" CRLF
+		"Date: %s" CRLF
 		/* TODO: "Cache-Control" (?) */
-		"Connection: %s\r\n"
+		"Connection: %s" CRLF
 		"Allow: GET, POST, HEAD, CONNECT, PUT, DELETE, OPTIONS, "
-		"PROPFIND, MKCOL\r\n"
-		"DAV: 1\r\n\r\n",
+		"PROPFIND, MKCOL" CRLF
+		"DAV: 1" CRLF CRLF,
 		date,
 		http_suggest_connection_header(conn));
 }
 
-static string_t logger_level_str(enum http_dbg debug_level) {
+static string_t log_level_str(enum http_dbg debug_level) {
 	string_t level;
 	switch (debug_level) {
 		case DEBUG_NONE:
@@ -1483,7 +1483,7 @@ static string_t logger_level_str(enum http_dbg debug_level) {
 	return level;
 }
 
-void http_logger(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
+void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
 	char buf[Kb(4)] = {0};
 	char clientbuf[ARRAY_SIZE] = {0};
 	va_list ap;
@@ -1507,13 +1507,13 @@ void http_logger(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
 	 * We now try to open the error log file. If this succeeds the error is
 	 * appended to the file. */
 	if (is_empty(conn) || is_empty(conn->ctx->error_log_file)) {
-		cerr("[%010lu]%s: %s"CLR_LN, (unsigned long)timestamp, logger_level_str(debug_level), buf);
+		cerr("[%010lu]%s: %s"CLR_LN, (unsigned long)timestamp, log_level_str(debug_level), buf);
 		return;
 	}
 
 	yield_task();
 	snprintf(clientbuf, sizeof(clientbuf), "[%010lu]%s[client %s] %s %s: ",
-		(unsigned long)timestamp, logger_level_str(debug_level), "conn->remote_addr", conn->method, conn->uri);
+		(unsigned long)timestamp, log_level_str(debug_level), "conn->remote_addr", conn->method, conn->uri);
 	string_t data = str_cat_ex(4, clientbuf, " ", buf, "\n");
 	if (!is_empty(data)) {
 		async_fprintf((string_t)conn->ctx->error_log_file, "a+", data);
@@ -1589,7 +1589,7 @@ bool http_get_request(http_ini_t *ctx, http_t *conn, int *err) {
 
 	*err = 0;
 	if (is_empty(conn)) {
-		http_logger(DEBUG_ERROR, conn, "%s: internal error", __func__);
+		http_log(DEBUG_ERROR, conn, "%s: internal error", __func__);
 		*err = 500;
 		return false;
 	}
@@ -1599,36 +1599,36 @@ bool http_get_request(http_ini_t *ctx, http_t *conn, int *err) {
 	snprintf(remote_ip_str, 16, "%d.%d.%d.%d", (remote_ip >> 24), (remote_ip >> 16) & 0xff, (remote_ip >> 8) & 0xff, remote_ip & 0xff);
 
 	if (conn->req.request_len >= 0 && conn->req.data_len < conn->req.request_len) {
-		http_logger(DEBUG_ERROR, conn, "%s: %s invalid request size", __func__, remote_ip_str);
+		http_log(DEBUG_ERROR, conn, "%s: %s invalid request size", __func__, remote_ip_str);
 		*err = 500;
 		return false;
 	}
 
 	if (conn->req.request_len == 0 && conn->req.data_len == conn->req.buf_size) {
-		http_logger(DEBUG_ERROR, conn, "%s: %s request too large",
+		http_log(DEBUG_ERROR, conn, "%s: %s request too large",
 			__func__, remote_ip_str);
 		*err = 413;
 		return false;
 	} else if (conn->req.request_len <= 0) {
 		if (conn->req.data_len > 0) {
-			http_logger(DEBUG_ERROR, conn, "%s: %s client sent malformed request",
+			http_log(DEBUG_ERROR, conn, "%s: %s client sent malformed request",
 				__func__, remote_ip_str);
 			*err = 400;
 		} else {
 			/* Server did not send anything -> just close the connection */
 			conn->req.must_close = true;
-			http_logger(DEBUG_WARNING, conn, "%s: %s client did not send a request",
+			http_log(DEBUG_WARNING, conn, "%s: %s client did not send a request",
 				__func__, remote_ip_str);
 			*err = 0;
 		}
 		return false;
 	} else if (parse_http(HTTP_REQUEST, conn, conn->req.buf) <= 0) {
-		http_logger(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
+		http_log(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
 		*err = 400;
 		return false;
 	} else {
 		if (!http_switch_domain(conn)) {
-			http_logger(DEBUG_ERROR, conn, "%s: Bad request: Host mismatch", __func__);
+			http_log(DEBUG_ERROR, conn, "%s: Bad request: Host mismatch", __func__);
 			*err = 400;
 			return false;
 		}
@@ -1645,7 +1645,7 @@ bool http_get_request(http_ini_t *ctx, http_t *conn, int *err) {
 			string endptr = NULL;
 			conn->req.content_len = strtoll(cl, &endptr, 10);
 			if (endptr == cl) {
-				http_logger(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
+				http_log(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
 				*err = 411;
 				return false;
 			}
@@ -1731,7 +1731,7 @@ int http_put_dir(http_ini_t *ctx, http_t *conn, string_t path) {
 void http_remove_bad_file(http_ini_t *ctx, http_t *conn, string_t path ) {
 	int r = fs_unlink(path);
 	if (r != 0 && ctx != NULL && conn != NULL)
-		http_logger(DEBUG_ERROR, conn, "%s: Cannot remove invalid file %s", __func__, path);
+		http_log(DEBUG_ERROR, conn, "%s: Cannot remove invalid file %s", __func__, path);
 }
 
 int http_fclose(struct file *filep) {
@@ -1789,8 +1789,8 @@ bool http_fopen(http_ini_t *ctx, const http_t *conn, string_t path, string_t mod
 	return http_is_file_opened(filep);
 }
 
-void http_file(http_t *conn, const char *path, const char *mime_type,
-	const char *additional_headers) {
+void http_file(http_t *conn, string_t path, string_t mime_type,
+	string_t additional_headers) {
 	struct file file = STRUCT_FILE_INITIALIZER;
 
 	if (!conn) {
@@ -1822,7 +1822,7 @@ void http_file(http_t *conn, const char *path, const char *mime_type,
 }
 
 int64_t http_store_body(http_ini_t *ctx, http_t *conn, string_t path) {
-	char buf[MG_BUF_LEN];
+	char buf[BUF_LEN];
 	int64_t len;
 	int ret;
 	int n;
@@ -1833,7 +1833,7 @@ int64_t http_store_body(http_ini_t *ctx, http_t *conn, string_t path) {
 
 	len = 0;
 	if (conn->req.consumed_content != 0) {
-		http_logger(DEBUG_ERROR, conn, "%s: Contents already consumed", __func__);
+		http_log(DEBUG_ERROR, conn, "%s: Contents already consumed", __func__);
 		return -11;
 	}
 
@@ -2026,7 +2026,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 	int reqerr;
 	enum uri_type_t uri_type;
 	union {
-		const void *con;
+		const_t con;
 		void *var;
 	} ptr;
 
@@ -2053,7 +2053,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 				http_error(conn, reqerr, "%s", http_status_str(reqerr));
 			was_error = true;
 		} else if (strcmp(ri->http_version, "1.0") && strcmp(ri->http_version, "1.1")) {
-			http_logger(DEBUG_ERROR, conn, "%s: bad HTTP version \"%s\"", __func__, ri->http_version);
+			http_log(DEBUG_ERROR, conn, "%s: bad HTTP version \"%s\"", __func__, ri->http_version);
 			http_error(conn, 505, "%s", http_status_str(505));
 			was_error = true;
 		}
@@ -2077,7 +2077,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 						conn->req.local_uri = NULL;
 					break;
 				default:
-					http_logger(DEBUG_ERROR, conn, "%s: invalid URI", __func__);
+					http_log(DEBUG_ERROR, conn, "%s: invalid URI", __func__);
 					http_error(conn, 400, "%s", http_status_str(400));
 
 					conn->req.local_uri = NULL;
@@ -2237,7 +2237,7 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 	tmp_rh = calloc(sizeof(struct http_cb_info), 1);
 	if (tmp_rh == NULL) {
 		atomic_unlock(&ctx->host.nonce_mutex);
-		http_logger(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
+		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
 		return;
 	}
 
@@ -2245,7 +2245,7 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 	if (tmp_rh->uri == NULL) {
 		atomic_unlock(&ctx->host.nonce_mutex);
 		tmp_rh = http_free_ex(tmp_rh);
-		http_logger(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
+		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
 		return;
 	}
 

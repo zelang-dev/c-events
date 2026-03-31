@@ -15,8 +15,8 @@
  * Connection: Upgrade
  * Upgrade: Websocket */
 FORCEINLINE bool http_is_websocket(http_t *conn) {
-	const char *upgrade;
-	const char *connection;
+	string_t upgrade;
+	string_t connection;
 
 	if (str_is_case((upgrade = http_get_header(conn, "Upgrade")), "websocket")
 		&& str_is_case((connection = http_get_header(conn, "Connection")), "upgrade")) {
@@ -32,64 +32,11 @@ FORCEINLINE bool http_is_websocket(http_t *conn) {
 	return false;
 }
 
-static int http_base64_encode(const unsigned char *src,
-	size_t src_len,
-	char *dst,
-	size_t *dst_len) {
-	static const char *b64 =
-		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	size_t i, j;
-	int a, b, c;
-
-	if (dst_len != NULL) {
-		/* Expected length including 0 termination: */
-		/* IN 1 -> OUT 5, IN 2 -> OUT 5, IN 3 -> OUT 5, IN 4 -> OUT 9,
-		 * IN 5 -> OUT 9, IN 6 -> OUT 9, IN 7 -> OUT 13, etc. */
-		size_t expected_len = ((src_len + 2) / 3) * 4 + 1;
-		if (*dst_len < expected_len) {
-			if (*dst_len > 0) {
-				dst[0] = '\0';
-			}
-			*dst_len = expected_len;
-			return 0;
-		}
-	}
-
-	for (i = j = 0; i < src_len; i += 3) {
-		a = src[i];
-		b = ((i + 1) >= src_len) ? 0 : src[i + 1];
-		c = ((i + 2) >= src_len) ? 0 : src[i + 2];
-
-		dst[j++] = b64[a >> 2];
-		dst[j++] = b64[((a & 3) << 4) | (b >> 4)];
-		if (i + 1 < src_len) {
-			dst[j++] = b64[(b & 15) << 2 | (c >> 6)];
-		}
-		if (i + 2 < src_len) {
-			dst[j++] = b64[c & 63];
-		}
-	}
-
-	while (j % 4 != 0) {
-		dst[j++] = '=';
-	}
-	dst[j++] = '\0';
-
-	if (dst_len != NULL) {
-		*dst_len = (size_t)j;
-	}
-
-	/* Return -1 for "OK" */
-	return -1;
-}
-
-static int http_send_websocket_handshake(http_t *conn, const char *websock_key) {
-	static const char *magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+static int http_send_websocket_handshake(http_t *conn, string_t websock_key) {
+	static string_t magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 	char buf[100], sha[20], b64_sha[sizeof(sha) * 2];
 	size_t dst_len = sizeof(b64_sha);
-#if !defined(OPENSSL_API_3_0)
 	SHA_CTX sha_ctx;
-#endif
 	int truncated;
 
 	/* Calculate Sec-WebSocket-Accept reply from Sec-WebSocket-Key. */
@@ -99,20 +46,22 @@ static int http_send_websocket_handshake(http_t *conn, const char *websock_key) 
 		return 0;
 	}
 
+	debug_info("%s", "Send websocket handshake");
+
 	SHA1_Init(&sha_ctx);
 	SHA1_Update(&sha_ctx, (unsigned char *)buf, (uint32_t)strlen(buf));
 	SHA1_Final((unsigned char *)sha, &sha_ctx);
 
-	http_base64_encode((unsigned char *)sha, sizeof(sha), b64_sha, &dst_len);
+	char *sha_data = str_encode64((string_t)sha, b64_sha, dst_len);
 	http_printf(conn,
 		"HTTP/1.1 101 Switching Protocols\r\n"
 		"Upgrade: websocket\r\n"
 		"Connection: Upgrade\r\n"
 		"Sec-WebSocket-Accept: %s\r\n",
-		b64_sha);
+		sha_data);
 
 	// Send negotiated compression extension parameters
-	http_websocket_deflate_send(conn);
+	http_websocket_deflate_response(conn);
 
 	if (conn->req.acceptedWebSocketSubprotocol) {
 		http_printf(conn,
@@ -157,43 +106,58 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 
 	if (ctx == NULL || conn == NULL) return;
 
-	if (conn->ctx->host.config[ENABLE_WEBSOCKET_PING_PONG]) {
-		enable_ping_pong = str_is_cast(conn->ctx->host.config[ENABLE_WEBSOCKET_PING_PONG], "yes");
+	if (conn->domain->config[ENABLE_WEBSOCKET_PING_PONG]) {
+		enable_ping_pong = str_is_cast(conn->domain->config[ENABLE_WEBSOCKET_PING_PONG], "yes");
 	}
 
 	data = mem;
-	if (conn->ctx->host.config[WEBSOCKET_TIMEOUT]) {
-		timeout = (double)atoi(conn->ctx->host.config[WEBSOCKET_TIMEOUT]) / 1000.0;
+	if (conn->domain->config[WEBSOCKET_TIMEOUT]) {
+		timeout = (double)atoi(conn->domain->config[WEBSOCKET_TIMEOUT]) / 1000.0;
 	}
 
-	if ((timeout <= 0.0) && (conn->ctx->host.config[REQUEST_TIMEOUT])) {
-		timeout = atoi(conn->ctx->host.config[REQUEST_TIMEOUT]) / 1000.0;
+	if ((timeout <= 0.0) && (conn->domain->config[REQUEST_TIMEOUT])) {
+		timeout = atoi(conn->domain->config[REQUEST_TIMEOUT]) / 1000.0;
 	}
 
+	/* Enter data processing loop */
+	debug_info("Websocket connection %s:%u start data processing loop",
+		conn->req.remote_addr,
+		conn->req.remote_port);
+	conn->req.in_websocket_handling = 1;
 	task_name("websocket #%d", task_id());
 
 	/* Loop continuously, reading messages from the socket, invoking the
 	 * callback, and waiting repeatedly until an error occurs. */
-	while (ctx->status == HTTP_STATUS_RUNNING) {
+	while (ctx->status == HTTP_STATUS_RUNNING && (!conn->req.must_close)) {
 		header_len = 0;
 		if (conn->req.data_len < conn->req.request_len) {
-			http_logger(DEBUG_ERROR, conn, "%s: websocket error: data len less than request len, closing connection", __func__);
+			debug_info("%s: websocket error: data len less than request len, closing connection", __func__);
 			break;
 		}
 
-		body_len = (size_t)(conn->req.data_len - conn->req.request_len);
-		if (body_len >= 2) {
+		if ((body_len = (size_t)(conn->req.data_len - conn->req.request_len)) >= 2) {
 			len = buf[1] & 127;
 			mask_len = (buf[1] & 128) ? 4 : 0;
-			if (len < 126 && body_len >= mask_len) {
+			if ((len < 126) && (body_len >= mask_len)) {
+				/* inline 7-bit length field */
 				data_len = len;
 				header_len = 2 + mask_len;
-			} else if (len == 126 && body_len >= mask_len + 4) {
-				header_len = mask_len + 4;
-				data_len = (((size_t)buf[2]) << 8) + buf[3];
-			} else if (body_len >= 10 + mask_len + 10) {
-				header_len = mask_len + 10;
-				data_len = (((uint64_t)ntohl(*(uint32_t *)(void *)&buf[2])) << 32) + ntohl(*(uint32_t *)(void *)&buf[6]);
+			} else if ((len == 126) && (body_len >= (4 + mask_len))) {
+				/* 16-bit length field */
+				header_len = 4 + mask_len;
+				data_len = ((((size_t)buf[2]) << 8) + buf[3]);
+			} else if (body_len >= (10 + mask_len)) {
+				/* 64-bit length field */
+				uint32_t l1, l2;
+				memcpy(&l1, &buf[2], 4); /* Use memcpy for alignment */
+				memcpy(&l2, &buf[6], 4);
+				header_len = 10 + mask_len;
+				data_len = (((uint64_t)ntohl(l1)) << 32) + ntohl(l2);
+				if (data_len > (uint64_t)0x7FFF0000ul) {
+					/* no can do */
+					http_log(DEBUG_ERROR, conn, "%s", "websocket out of memory; closing connection");
+					break;
+				}
 			}
 		}
 
@@ -204,7 +168,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				data = malloc(data_len);
 				if (data == NULL) {
 					/* Allocation failed, exit the loop and then close the connection */
-					http_logger(DEBUG_ERROR, conn, "%s: websocket out of memory; closing connection", __func__);
+					http_log(DEBUG_ERROR, conn, "%s: websocket out of memory; closing connection", __func__);
 					break;
 				}
 			}
@@ -218,7 +182,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			/* Read frame payload from the first message in the queue into
 			 * data and advance the queue by moving the memory in place. */
 			if (body_len < header_len) {
-				http_logger(DEBUG_ERROR, conn, "%s: websocket error: body len less than header len, closing connection", __func__);
+				http_log(DEBUG_ERROR, conn, "%s: websocket error: body len less than header len, closing connection", __func__);
 				break;
 			}
 
@@ -230,18 +194,21 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				len = body_len - header_len;
 				memcpy(data, buf + header_len, len);
 				error = 0;
-				while (len < data_len) {
-					n = tls_reader(conn->fd, data + len, (int)(data_len - len));
+				while ((uint64_t)len < data_len) {
+					n = tls_reader(socket2fd(conn->fd), (char *)(data + len), (int)(data_len - len));
 					if (n <= 0) {
 						error = 1;
 						break;
+					} else if (n > 0) {
+						len += (size_t)n;
+					} else {
+						/* Timeout: should retry */
+						/* TODO: retry condition */
 					}
-
-					len += (size_t)n;
 				}
 
 				if (error) {
-					http_logger(DEBUG_ERROR, conn, "%s: websocket pull failed; closing connection", __func__);
+					http_log(DEBUG_ERROR, conn, "%s: websocket pull failed; closing connection", __func__);
 					break;
 				}
 				conn->req.data_len = conn->req.request_len;
@@ -275,16 +242,15 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				/* filter PONG messages */
 				/* No unanswered PINGs left */
 				ping_count = 0;
+				debug_info("PONG from %s:%u", conn->req.remote_addr, conn->req.remote_port);
 			} else if (enable_ping_pong
 				&& ((mop & 0xF) == WS_OPS_PING)) {
-		 		/* reply PING messages */
-					ret = http_websocket_write(conn,
-					WS_OPS_PONG,
-					(char *)data,
-					(size_t)data_len);
+		 			/* reply PING messages */
+					ret = http_websocket_write(conn, WS_OPS_PONG, (string_t)data, (size_t)data_len);
+					debug_info("Reply PING from %s:%u",	conn->req.remote_addr, conn->req.remote_port);
 				if (ret <= 0) {
 					/* Error: send failed */
-					http_logger(DEBUG_WARNING, null, "Reply PONG failed (%i)", ret);
+					debug_info("Reply PONG failed (%i)", ret);
 					break;
 				}
 
@@ -326,7 +292,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 											inflate_buf_size);
 								}
 								if (new_mem == NULL) {
-									http_logger(DEBUG_CRASH,
+									http_log(DEBUG_CRASH,
 										conn,
 										"Out of memory: Cannot allocate "
 										"inflate buffer of %lu bytes",
@@ -344,7 +310,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 									Z_SYNC_FLUSH);
 								if (ret == Z_NEED_DICT || ret == Z_DATA_ERROR
 									|| ret == Z_MEM_ERROR) {
-									http_logger(DEBUG_CRASH,
+									http_log(DEBUG_CRASH,
 										conn,
 										"ZLIB inflate error: %i %s",
 										ret,
@@ -401,7 +367,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			n = tls_reader(conn->fd, conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
 			if (n <= -2) {
 				/* Error, no bytes read */
-				http_logger(DEBUG_WARNING, null, "PULL from %s:%u failed",
+				http_log(DEBUG_WARNING, null, "PULL from %s:%u failed",
 					conn->req.remote_addr,
 					conn->req.remote_port);
 				break;
@@ -415,7 +381,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				if (ctx->status == HTTP_STATUS_RUNNING 	&& (!conn->req.must_close)) {
 					if (ping_count > MAX_UNANSWERED_PING) {
 						/* Stop sending PING */
-						http_logger(DEBUG_WARNING, null, "Too many (%i) unanswered ping from %s:%u "
+						http_log(DEBUG_WARNING, null, "Too many (%i) unanswered ping from %s:%u "
 							"- closing connection",
 							ping_count,
 							conn->req.remote_addr,
@@ -428,7 +394,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 						ret = http_websocket_write(conn, WS_OPS_PING, NULL,	0);
 						if (ret <= 0) {
 							/* Error: send failed */
-							http_logger(DEBUG_WARNING, null, "Send PING failed (%i)", ret);
+							http_log(DEBUG_WARNING, null, "Send PING failed (%i)", ret);
 							break;
 						}
 						ping_count++;
@@ -449,12 +415,19 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	task_name("webworker #%d", task_id());
 }
 
-/* Processes a websocket request on a connection. */
-void http_websocket_request(http_ini_t *ctx, http_t *conn, int is_callback_resource, ws_connect_cb ws_connect_handler, ws_ready_cb ws_ready_handler, ws_data_cb ws_data_handler, ws_close_cb ws_close_handler, void *cbData) {
-	const char *websock_key;
-	const char *version;
-	const char *key1;
-	const char *key2;
+void http_websocket_request(http_ini_t *ctx,
+	http_t *conn,
+	int is_callback_resource,
+	struct ws_subprotocols_s *subprotocols,
+	ws_connect_cb ws_connect_handler,
+	ws_ready_cb ws_ready_handler,
+	ws_data_cb ws_data_handler,
+	ws_close_cb ws_close_handler,
+	void *cbData) {
+	string_t websock_key;
+	string_t version;
+	string_t key1;
+	string_t key2;
 	char key3[8];
 	int lua_websock = 0;
 
@@ -504,29 +477,50 @@ void http_websocket_request(http_ini_t *ctx, http_t *conn, int is_callback_resou
 	/* Step 1.3: Could check for "Host", but we do not really need this
 	 * value for anything, so just ignore it. */
 
-	http_websocket_deflate_negotiate(conn);
 	/* Step 2: If a callback is responsible, call it. */
 	if (is_callback_resource) {
-		if (ws_connect_handler != NULL && ws_connect_handler(conn, cbData) != 0) {
-			/*
-			 * C callback has returned non-zero, do not proceed with
+		int nbSubprotocolHeader = 0;
+		/* Step 2.1 check and select subprotocol */
+		string protocol = http_get_header(conn, "Sec-WebSocket-Protocol");
+		if (!is_empty(protocol)) {
+			conn->req.acceptedWebSocketSubprotocol = protocol;
+			string *protocols = str_has(protocol, ",") ? str_split_ex(protocol, ",", &nbSubprotocolHeader) : nullptr;
+			if (!is_empty(protocols) && (nbSubprotocolHeader > 0) && subprotocols) {
+				int headerNo, idx;
+				string_t acceptedWebSocketSubprotocol = NULL;
+
+				/* look for matching subprotocol */
+				for (headerNo = 0; headerNo < nbSubprotocolHeader; headerNo++) {
+					/* There might be multiple headers ... */
+					protocol = protocols[headerNo];
+					for (idx = 0; idx < subprotocols->nb_subprotocols; idx++) {
+						if (str_is(protocol, subprotocols->subprotocols[idx])) {
+							acceptedWebSocketSubprotocol = 	subprotocols->subprotocols[idx];
+							break;
+						}
+					}
+
+					if (!is_empty(acceptedWebSocketSubprotocol)) {
+						conn->req.acceptedWebSocketSubprotocol = acceptedWebSocketSubprotocol;
+						break;
+					}
+				}
+			}
+
+			if (!is_empty(protocols))
+				free(protocols);
+		}
+
+		http_websocket_deflate_negotiate(conn);
+		if ((ws_connect_handler != NULL)
+			&& (ws_connect_handler(conn, cbData) != 0)) {
+			/* C callback has returned non-zero, do not proceed with
 			 * handshake.
-			 *
-			 * Note that C callbacks are no longer called when Lua is
+			 */
+			/* Note that C callbacks are no longer called when Lua is
 			 * responsible, so C can no longer filter callbacks for Lua. */
 			return;
 		}
-	}
-
-	/* Step 4: Check if there is a responsible websocket handler. */
-	if (!is_callback_resource && !lua_websock) {
-		/*
-		 * There is no callback, an Lua is not responsible either. */
-		/* Reply with a 404 Not Found or with nothing at all?
-		 * TODO (mid): check the websocket standards, how to reply to
-		 * requests to invalid websocket addresses. */
-		http_error(conn, 404, "%s", "Not found");
-		return;
 	}
 
 	/* Step 5: The websocket connection has been accepted */
@@ -556,12 +550,12 @@ void http_websocket_request(http_ini_t *ctx, http_t *conn, int is_callback_resou
 }
 
 /* Use to mask data when writing data over a websocket client connection. */
-static void mask_data(const char *_in, size_t in_len, uint32_t masking_key, char *out) {
+static void mask_data(string_t _in, size_t in_len, uint32_t masking_key, char *out) {
 	size_t i = 0;
 	if (in_len > 3 && ((ptrdiff_t)_in % 4) == 0) {
 		/* Convert in 32 bit words, if data is 4 byte aligned */
 		while (i + 3 < in_len) {
-			*(uint32_t *)(void *)(out + i) = *(const uint32_t *)(const void *)(_in + i) ^ masking_key;
+			*(uint32_t *)(void *)(out + i) = *(const uint32_t *)(const_t)(_in + i) ^ masking_key;
 			i += 4;
 		}
 	}
@@ -569,7 +563,7 @@ static void mask_data(const char *_in, size_t in_len, uint32_t masking_key, char
 	if (i != in_len) {
 		/* convert 1-3 remaining bytes if ((dataLen % 4) != 0) */
 		while (i < in_len) {
-			*(uint8_t *)(void *)(out + i) = *(const uint8_t *)(const void *)(_in + i) ^ *(((uint8_t *)&masking_key) + (i % 4));
+			*(uint8_t *)(void *)(out + i) = *(const uint8_t *)(const_t)(_in + i) ^ *(((uint8_t *)&masking_key) + (i % 4));
 			i++;
 		}
 	}
@@ -585,7 +579,7 @@ int http_websocket_client_write(http_t *conn, websocket_type opcode, string_t da
 	retval = -1;
 	masked_data = malloc(((dataLen + 7) / 4) * 4);
 	if (masked_data == NULL) {
-		http_logger(DEBUG_ERROR, conn, "%s: cannot allocate buffer for masked websocket response: Out of memory", __func__);
+		http_log(DEBUG_ERROR, conn, "%s: cannot allocate buffer for masked websocket response: Out of memory", __func__);
 		return -1;
 	}
 
@@ -619,7 +613,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 		deflated_size = (size_t)compressBound((uLong)data_len);
 		deflated = calloc(deflated_size, sizeof(Bytef));
 		if (deflated == NULL) {
-			http_logger(DEBUG_CRASH, conn,
+			http_log(DEBUG_CRASH, conn,
 				"Out of memory: Cannot allocate deflate buffer of %lu bytes",
 				(unsigned long)deflated_size);
 			return -1;
@@ -659,17 +653,17 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 		header_len += 4;
 	}
 
-	retval = tls_writer(conn->fd, header, header_len);
+	retval = http_write(conn, (const_t)header, header_len);
 	if (retval != (int)header_len) {
 		/* Did not send complete header */
 		retval = -1;
 	} else {
 		if (data_len > 0) {
 			if (use_deflate) {
-				retval = tls_writer(conn->fd, deflated, data_len);
+				retval = http_write(conn, (const_t)deflated, data_len);
 				free(deflated);
 			} else
-				retval = tls_writer(conn->fd, (string)data, data_len);
+				retval = http_write(conn, (const_t)data, data_len);
 		}
 	}
 

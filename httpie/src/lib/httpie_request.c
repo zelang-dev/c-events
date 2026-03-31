@@ -23,7 +23,7 @@ static int is_webdav_method(const http_t *conn) {
 	if (conn) {
 		string_t s = conn->method;
 		if (s != NULL) {
-			/* These are the civetweb builtin DAV methods */
+			/* These are the builtin DAV methods */
 			return (!strcmp(s, "PROPFIND") || !strcmp(s, "PROPPATCH")
 				|| !strcmp(s, "LOCK") || !strcmp(s, "UNLOCK")
 				|| !strcmp(s, "MOVE") || !strcmp(s, "COPY"));
@@ -186,17 +186,19 @@ static int substitute_index_file(http_t *conn, char *path, size_t path_len, stru
  * - is_found:			out: file is found (directly)
  * - is_script_resource:		out: handled by a script?
  * - is_websocket_request:	out: websocket connection?
- * - is_put_or_delete_request:	out: put/delete file? */
-void http_interpret_uri(http_t *conn, /* in/out: request (must be valid) */
-	char *filename,             /* out: filename */
-	size_t filename_buf_len,    /* in: size of filename buffer */
-	struct file *filestat, /* out: file status structure */
-	int *is_found,                 /* out: file found (directly) */
-	int *is_script_resource,       /* out: handled by a script? */
-	int *is_websocket_request,     /* out: websocket connection? */
-	int *is_put_or_delete_request, /* out: put/delete a file? */
-	int *is_webdav_request,        /* out: webdav request? */
-	int *is_template_text          /* out: SSI file or LSP file? */
+ * - is_put_or_delete_request:	out: put/delete file?
+ * - is_webdav_request: out: webdav request?
+ * - is_template_text: out: SSI file or LSP file? */
+void http_interpret_uri(http_t *conn,
+	char *filename,
+	size_t filename_buf_len,
+	struct file *filestat,
+	int *is_found,
+	int *is_script_resource,
+	int *is_websocket_request,
+	int *is_put_or_delete_request,
+	int *is_webdav_request,
+	int *is_template_text
 ) {
 	char const *accept_encoding;
 
@@ -445,7 +447,7 @@ void http_interpret_uri(http_t *conn, /* in/out: request (must be valid) */
 							overwritten */
 							char *subres_name = filename + sep_pos;
 							size_t subres_name_len = strlen(subres_name);
-							//DEBUG_TRACE("Substitute script %s serving path %s", tmp_str, filename);
+							debug_info("Substitute script %s serving path %s", tmp_str, filename);
 
 							/* this index file is a script */
 							if ((script_name_len + subres_name_len + 2)
@@ -463,7 +465,7 @@ void http_interpret_uri(http_t *conn, /* in/out: request (must be valid) */
 							*is_found = 1;
 							break;
 						} else {
-							//DEBUG_TRACE("Substitute file %s serving path %s", tmp_str, filename);
+							debug_info("Substitute file %s serving path %s", tmp_str, filename);
 
 							/* non-script files will not have sub-resources */
 							filename[sep_pos] = 0;
@@ -483,7 +485,7 @@ void http_interpret_uri(http_t *conn, /* in/out: request (must be valid) */
 		return;
 
 	/* Reset all outputs */
-	interpret_cleanup:
+interpret_cleanup:
 		memset(filestat, 0, sizeof(*filestat));
 		*filename = 0;
 		*is_found = 0;
@@ -527,8 +529,7 @@ static int http_get_request_handler(http_t *conn,
 					matched = (tmp_rh->uri_len == urilen)
 						&& (strcmp(tmp_rh->uri, uri) == 0);
 				} else if (step == 1) {
-					/* next try for a partial match, we will accept
-					uri/something */
+					/* next try for a partial match, we will accept uri/something */
 					matched =
 						(tmp_rh->uri_len < urilen)
 						&& (uri[tmp_rh->uri_len] == '/')
@@ -570,7 +571,7 @@ static int http_get_request_handler(http_t *conn,
 	return 0; /* none found */
 }
 
-int http_url_decode(string_t src,int src_len,char *dst,int dst_len,int is_form_url_encoded) {
+int http_url_decode(string_t src, int src_len, char *dst, int dst_len, int is_form_url_encoded) {
 	int i, j, a, b;
 
 #define HEXTOI(x) (isdigit(x) ? (x - '0') : (x - 'W'))
@@ -783,7 +784,7 @@ C_API int http_get_request_link(http_t *conn, char *buf, size_t buflen) {
 }
 
 static void redirect_to_https_port(http_t *conn, int port) {
-	char target_url[MG_BUF_LEN];
+	char target_url[BUF_LEN];
 	int truncated = 0;
 	string_t expect_proto =
 		(conn->req.proto == PROTOCOL_WEBSOCKET) ? "wss" : "https";
@@ -813,7 +814,7 @@ static void redirect_to_https_port(http_t *conn, int port) {
 		}
 	}
 
-	/* Check overflow in location buffer (will not occur if MG_BUF_LEN
+	/* Check overflow in location buffer (will not occur if BUF_LEN
 	 * is used as buffer size) */
 	if (truncated) {
 		http_error(conn, 500, "%s", "Redirect URL too long");
@@ -1025,7 +1026,7 @@ static void get_mime_type(http_t *conn, string_t path, struct vec *vec) {
 
 void http_send_file_data(http_t *conn, struct file *filep,
 	int64_t offset, int64_t len, int no_buffering) {
-	char buf[MG_BUF_LEN];
+	char buf[BUF_LEN];
 	int to_read, num_read, num_written;
 	int64_t size;
 
@@ -1044,8 +1045,8 @@ void http_send_file_data(http_t *conn, struct file *filep,
 	} else if (len > 0 && filep->fp != NULL) {
 		/* file stored on disk */
 		if ((offset > 0) && (fseek(filep->fp, offset, SEEK_SET) != 0)) {
-			http_logger(DEBUG_ERROR, conn, "%s: fseek() failed: %s", __func__, strerror(os_geterror()));
 			http_error(conn, 500, "%s", "Error: Unable to access file at requested position.");
+			http_log(DEBUG_ERROR, conn, "%s: fseek() failed: %s", __func__, strerror(os_geterror()));
 		} else {
 			while (len > 0) {
 				/* Calculate how much to read from the file into the buffer. */
@@ -1155,7 +1156,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 		/* File is already compressed. No "on the fly" compression. */
 		allow_on_the_fly_compression = 0;
 	} else if ((conn->req.accept_gzip) && (range_hdr == NULL)
-		&& (filep->size >= MG_FILE_COMPRESSION_SIZE_LIMIT)) {
+		&& (filep->size >= FILE_COMPRESSION_SIZE_LIMIT)) {
 		struct file file_stat;
 		http_snprintf(conn, &truncated, gz_path, sizeof(gz_path), "%s.gz", path);
 		if (!truncated && http_stat(conn, gz_path, &file_stat)
@@ -1172,7 +1173,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 	}
 
 	if (!http_fopen(conn->ctx, conn, path, "rb", filep)) {
-		http_error(conn, 500, "Error: Cannot open file\nfopen(%s): %s",	path, strerror(os_geterror()));
+		http_error(conn, 500, "Error: Cannot open file\nfopen(%s): %s", path, strerror(os_geterror()));
 		return;
 	}
 
@@ -1212,7 +1213,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 
 	/* Do not compress small files. Small files do not benefit from file
 	 * compression, but there is still some overhead. */
-	if (filep->size < MG_FILE_COMPRESSION_SIZE_LIMIT) {
+	if (filep->size < FILE_COMPRESSION_SIZE_LIMIT) {
 		/* File is below the size limit. */
 		allow_on_the_fly_compression = 0;
 	}
@@ -1226,7 +1227,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 	http_static_cache_header(conn);
 	http_domain_header(conn);
 	http_cors_header(conn);
-	http_response_add(conn,	"Content-Type",	mime_vec.ptr, (int)mime_vec.len);
+	http_response_add(conn, "Content-Type", mime_vec.ptr, (int)mime_vec.len);
 	http_response_add(conn, "Last-Modified", lm, -1);
 	http_response_add(conn, "Etag", etag, -1);
 
@@ -1293,7 +1294,7 @@ void handle_file_based_request(http_t *conn,
 #if defined(USE_DUKTAPE)
 	if (match_prefix_strlen(conn->domain->config[DUKTAPE_SCRIPT_EXTENSIONS],
 		path)
-		> 0) {
+	> 0) {
 		if (is_in_script_path(conn, path)) {
 			/* Call duktape to generate the page */
 			mg_exec_duktape_script(conn, path);
@@ -1352,10 +1353,10 @@ int is_not_modified(const http_t *conn, const struct file *filestat) {
 	http_construct_etag(conn, etag, sizeof(etag), filestat);
 
 	if (inm) {
-		return str_is_caste(etag, inm);
+		return str_is_case(etag, inm);
 	}
 	if (ims) {
-		return (filestat->last_modified <= parse_date_string(ims));
+		return (filestat->last_modified <= http_parse_date_string(ims));
 	}
 	return 0;
 }
@@ -1382,7 +1383,7 @@ void handle_not_modified_static_file_request(http_t *conn, struct file *filep) {
 }
 
 static void discard_unread_request_data(http_t *conn) {
-	char buf[MG_BUF_LEN];
+	char buf[BUF_LEN];
 	while (http_read(conn, buf, sizeof(buf)) > 0)
 		;
 }
@@ -1461,7 +1462,7 @@ void http_handle_request(http_t *conn) {
 			/* A http to https forward port has been specified,
 			 * but no https port to forward to. */
 			http_error(conn, 503, "%s", "Error: SSL forward not configured properly");
-			http_logger(DEBUG_ERROR, conn, "%s", "Can not redirect to SSL, no SSL port available");
+			http_log(DEBUG_ERROR, conn, "%s", "Can not redirect to SSL, no SSL port available");
 		}
 		return;
 	}
@@ -1481,7 +1482,7 @@ void http_handle_request(http_t *conn) {
 
 	/* 1.4. clean URIs, so a path like allowed_dir/../forbidden_file is not
 	 * possible. The fact that we cleaned the URI is stored in that the
-	 * pointer to ri->local_ur and ri->local_uri_raw are now different.
+	 * pointer to ri->local_uri and ri->local_uri_raw are now different.
 	 * ri->local_uri_raw still points to memory allocated in
 	 * worker_thread_run(). ri->local_uri is private to the request so we
 	 * don't have to use preallocated memory here. */
@@ -1498,7 +1499,7 @@ void http_handle_request(http_t *conn) {
 	uri_len = (int)strlen(ri->local_uri);
 
 	/* step 1. completed, the url is known now */
-	//DEBUG_TRACE("REQUEST: %s %s", conn->method, ri->local_uri);
+	debug_info("REQUEST: %s %s", conn->method, ri->local_uri);
 
 	/* 2. if this ip has limited speed, set it for this connection */
 	//conn->throttle = set_throttle(conn->domain->config[THROTTLE], &conn->client.rsa, ri->local_uri);
@@ -1515,13 +1516,13 @@ void http_handle_request(http_t *conn) {
 			if (!conn->req.must_close) {
 				discard_unread_request_data(conn);
 			}
-			//DEBUG_TRACE("%s", "begin_request handled request");
+			debug_info("%s", "start handled request");
 			return;
 		} else if (i == 0) {
 			/* `httpie` should process the request */
 		} else {
 			/* unspecified - may change with the next version */
-			//DEBUG_TRACE("%s", "done (undocumented behavior)");
+			debug_info("%s", "done (undocumented behavior)");
 			return;
 		}
 	}
@@ -1590,7 +1591,7 @@ void http_handle_request(http_t *conn) {
 				http_printf(conn,
 					"Access-Control-Expose-Headers: %s\r\n",
 					cors_exphdr_cfg);
-		}
+			}
 
 			if (cors_acrh || (cors_cred_cfg && *cors_cred_cfg)) {
 				/* CORS request is asking for additional headers */
@@ -1611,32 +1612,40 @@ void http_handle_request(http_t *conn) {
 			}
 			http_printf(conn, "Access-Control-Max-Age: 60\r\n");
 			http_printf(conn, "\r\n");
-			//DEBUG_TRACE("%s", "OPTIONS done");
+			debug_info("%s", "OPTIONS done");
 			return;
+		}
 	}
-}
 
-	/* 5. interpret the url to find out how the request must be handled
-	*/
+		/* 5. interpret the url to find out how the request must be handled
+		*/
 
-	/* 5.1. first test, if the request targets the regular http(s)://
-	* protocol namespace or the websocket ws(s):// protocol namespace.
-	*/
+		/* 5.1. first test, if the request targets the regular http(s)://
+		* protocol namespace or the websocket ws(s):// protocol namespace.
+		*/
 	is_websocket_request = (conn->req.proto == PROTOCOL_WEBSOCKET);
 	handler_type = is_websocket_request ? WEBSOCKET_HANDLER : REQUEST_HANDLER;
 	if (is_websocket_request) {
 		if (conn->req.proto == PROTOCOL_HTTP2) {
 			//http2_must_use_http1(conn);
-			//DEBUG_TRACE("%s", "must use HTTP/1.x");
+			debug_info("%s", "must use HTTP/1.x");
 			//return;
 		}
 	}
 
 	/* 5.2. check if the request will be handled by a callback */
-	if (http_get_request_handler(conn, handler_type, &callback_handler,
-		&subprotocols, &ws_connect_handler, &ws_ready_handler,
-		&ws_data_handler, &ws_close_handler, NULL, &callback_data, &handler_info)) {
-		/* 5.2.1. A callback will handle this request. All requests
+	if (http_get_request_handler(conn,
+		handler_type,
+		&callback_handler,
+		&subprotocols,
+		&ws_connect_handler,
+		&ws_ready_handler,
+		&ws_data_handler,
+		&ws_close_handler,
+		NULL,
+		&callback_data,
+		&handler_info)) {
+	  /* 5.2.1. A callback will handle this request. All requests
 		* handled by a callback have to be considered as requests
 		* to a script resource. */
 		is_callback_resource = 1;
@@ -1644,12 +1653,12 @@ void http_handle_request(http_t *conn) {
 		is_put_or_delete_request = is_put_or_delete_method(conn);
 		/* Never handle a C callback according to File WebDav rules,
 		 * even if it is a webdav method */
-		is_webdav_request = 0; /* is_civetweb_webdav_method(conn); */
+		is_webdav_request = 0; /* is_webdav_method(conn); */
 	} else {
-no_callback_resource:
-		/* 5.2.2. No callback is responsible for this request. The URI
-		 * addresses a file based resource (static content or Lua/cgi
-		 * scripts in the file system). */
+	no_callback_resource:
+			/* 5.2.2. No callback is responsible for this request. The URI
+			 * addresses a file based resource (static content or Lua/cgi
+			 * scripts in the file system). */
 		is_callback_resource = 0;
 		http_interpret_uri(conn,
 			path,
@@ -1672,26 +1681,35 @@ no_callback_resource:
 				405,
 				"%s method not allowed",
 				conn->method);
-			//DEBUG_TRACE("%s", "webdav rejected");
+			debug_info("%s", "webdav rejected");
 			return;
 		}
 	}
 
 	/* 6. authorization check */
 	/* 6.1. a custom authorization handler is installed */
-	if (http_get_request_handler(conn, AUTH_HANDLER, NULL, NULL, NULL, NULL,
-		NULL, NULL, &auth_handler, &auth_callback_data, NULL)) {
+	if (http_get_request_handler(conn,
+		AUTH_HANDLER,
+		NULL,
+		NULL,
+		NULL,
+		NULL,
+		NULL,
+		NULL,
+		&auth_handler,
+		&auth_callback_data,
+		NULL)) {
 		if (!auth_handler(conn, auth_callback_data)) {
 			/* Callback handler will not be used anymore. Release it */
 			release_handler_ref(conn, handler_info);
-			//DEBUG_TRACE("%s", "auth handler rejected request");
+			debug_info("%s", "auth handler rejected request");
 			return;
 		}
 	} else if (is_put_or_delete_request && !is_script_resource
 		&& !is_callback_resource) {
 		if (conn->req.proto == PROTOCOL_HTTP2) {
 			//http2_must_use_http1(conn);
-			//DEBUG_TRACE("%s", "must use HTTP/1.x");
+			debug_info("%s", "must use HTTP/1.x");
 			//return;
 		}
 		/* 6.2. this request is a PUT/DELETE to a real file */
@@ -1707,7 +1725,7 @@ no_callback_resource:
 				405,
 				"%s method not allowed",
 				conn->method);
-			//DEBUG_TRACE("%s", "all file based put/delete requests rejected");
+			debug_info("%s", "all file based put/delete requests rejected");
 			return;
 		}
 
@@ -1716,7 +1734,7 @@ no_callback_resource:
 		 */
 		if (!is_authorized_for_put(conn)) {
 			send_authorization_request(conn, NULL);
-			//DEBUG_TRACE("%s", "file write needs authorization");
+			debug_info("%s", "file write needs authorization");
 			return;
 		}
 	} else {
@@ -1728,7 +1746,7 @@ no_callback_resource:
 
 			/* Callback handler will not be used anymore. Release it */
 			release_handler_ref(conn, handler_info);
-			//DEBUG_TRACE("%s", "access authorization required");
+			debug_info("%s", "access authorization required");
 			return;
 		}
 	}
@@ -1739,7 +1757,7 @@ no_callback_resource:
 	if (is_callback_resource) {
 		if (conn->req.proto == PROTOCOL_HTTP2) {
 			//http2_must_use_http1(conn);
-			//DEBUG_TRACE("%s", "must use HTTP/1.x");
+			debug_info("%s", "must use HTTP/1.x");
 			//return;
 		}
 		if (!is_websocket_request) {
@@ -1788,7 +1806,7 @@ no_callback_resource:
 				goto no_callback_resource;
 			}
 		} else {
-			handle_websocket_request(conn,
+			http_websocket_request(conn,
 				path,
 				is_callback_resource,
 				subprotocols,
@@ -1798,7 +1816,7 @@ no_callback_resource:
 				ws_close_handler,
 				callback_data);
 		}
-		DEBUG_TRACE("%s", "websocket handling done");
+		debug_info("%s", "websocket handling done");
 		return;
 	}
 
@@ -1806,14 +1824,13 @@ no_callback_resource:
 	if (is_websocket_request) {
 		if (conn->req.proto == PROTOCOL_HTTP2) {
 			//http2_must_use_http1(conn);
-			//DEBUG_TRACE("%s", "must use HTTP/1.x");
+			debug_info("%s", "must use HTTP/1.x");
 			//return;
 		}
 		if (is_script_resource) {
-
 			if (is_in_script_path(conn, path)) {
 				/* Websocket Lua script */
-				handle_websocket_request(conn,
+				http_websocket_request(conn,
 					path,
 					0 /* Lua Script */,
 					NULL,
@@ -1829,14 +1846,14 @@ no_callback_resource:
 		} else {
 			http_error(conn, 404, "%s", "Not found");
 		}
-		DEBUG_TRACE("%s", "websocket script done");
+		debug_info("%s", "websocket script done");
 		return;
 	} else
 	/* 9b. This request is either for a static file or resource handled
 	 * by a script file. Thus, a DOCUMENT_ROOT must exist. */
 		if (conn->domain->config[DOCUMENT_ROOT] == NULL) {
 			http_error(conn, 404, "%s", "Not Found");
-			DEBUG_TRACE("%s", "no document root available");
+			debug_info("%s", "no document root available");
 			return;
 		}
 
@@ -1844,11 +1861,11 @@ no_callback_resource:
 	if (is_script_resource) {
 		if (conn->req.proto == PROTOCOL_HTTP2) {
 			//http2_must_use_http1(conn);
-			//DEBUG_TRACE("%s", "must use HTTP/1.x");
+			debug_info("%s", "must use HTTP/1.x");
 			//return;
 		}
 		handle_file_based_request(conn, path, &file);
-		DEBUG_TRACE("%s", "script handling done");
+		debug_info("%s", "script handling done");
 		return;
 	}
 
@@ -1859,13 +1876,13 @@ no_callback_resource:
 	if (is_put_or_delete_request) {
 		if (conn->req.proto == PROTOCOL_HTTP2) {
 			//http2_must_use_http1(conn);
-			//DEBUG_TRACE("%s", "must use HTTP/1.x");
+			debug_info("%s", "must use HTTP/1.x");
 			//return;
 		}
 		/* 11.1. PUT method */
 		if (!strcmp(conn->method, "PUT")) {
 			put_file(conn, path);
-			DEBUG_TRACE("handling %s request to %s done",
+			debug_info("handling %s request to %s done",
 				conn->method,
 				path);
 			return;
@@ -1873,7 +1890,7 @@ no_callback_resource:
 		/* 11.2. DELETE method */
 		if (!strcmp(conn->method, "DELETE")) {
 			delete_file(conn, path);
-			DEBUG_TRACE("handling %s request to %s done",
+			debug_info("handling %s request to %s done",
 				conn->method,
 				path);
 			return;
@@ -1881,7 +1898,7 @@ no_callback_resource:
 		/* 11.3. MKCOL method */
 		if (!strcmp(conn->method, "MKCOL")) {
 			dav_mkcol(conn, path);
-			DEBUG_TRACE("handling %s request to %s done",
+			debug_info("handling %s request to %s done",
 				conn->method,
 				path);
 			return;
@@ -1889,14 +1906,14 @@ no_callback_resource:
 		/* 11.4. MOVE method */
 		if (!strcmp(conn->method, "MOVE")) {
 			dav_move_file(conn, path, 0);
-			DEBUG_TRACE("handling %s request to %s done",
+			debug_info("handling %s request to %s done",
 				conn->method,
 				path);
 			return;
 		}
 		if (!strcmp(conn->method, "COPY")) {
 			dav_move_file(conn, path, 1);
-			DEBUG_TRACE("handling %s request to %s done",
+			debug_info("handling %s request to %s done",
 				conn->method,
 				path);
 			return;
@@ -1904,7 +1921,7 @@ no_callback_resource:
 		/* 11.5. LOCK method */
 		if (!strcmp(conn->method, "LOCK")) {
 			dav_lock_file(conn, path);
-			DEBUG_TRACE("handling %s request to %s done",
+			debug_info("handling %s request to %s done",
 				conn->method,
 				path);
 			return;
@@ -1912,7 +1929,7 @@ no_callback_resource:
 		/* 11.6. UNLOCK method */
 		if (!strcmp(conn->method, "UNLOCK")) {
 			dav_unlock_file(conn, path);
-			DEBUG_TRACE("handling %s request to %s done",
+			debug_info("handling %s request to %s done",
 				conn->method,
 				path);
 			return;
@@ -1920,21 +1937,14 @@ no_callback_resource:
 		/* 11.7. PROPPATCH method */
 		if (!strcmp(conn->method, "PROPPATCH")) {
 			dav_proppatch(conn, path);
-			DEBUG_TRACE("handling %s request to %s done",
-				conn->method,
-				path);
+			debug_info("handling %s request to %s done", conn->method, path);
 			return;
 		}
 		/* 11.8. Other methods, e.g.: PATCH
 		 * This method is not supported for static resources,
 		 * only for scripts (Lua, CGI) and callbacks. */
-		http_error(conn,
-			405,
-			"%s method not allowed",
-			conn->method);
-		DEBUG_TRACE("method %s on %s is not supported",
-			conn->method,
-			path);
+		http_error(conn, 405, "%s method not allowed", conn->method);
+		debug_info("method %s on %s is not supported", conn->method, path);
 		return;
 	}
 
@@ -1942,7 +1952,7 @@ no_callback_resource:
 	 * hidden */
 	if (!is_found || (http_must_hide_file(conn->ctx, path))) {
 		http_error(conn, 404, "%s", "Not found");
-		DEBUG_TRACE("handling %s request to %s: file not found",
+		debug_info("handling %s request to %s: file not found",
 			conn->method,
 			path);
 		return;
@@ -1951,8 +1961,6 @@ no_callback_resource:
 	/* 12. Directory uris should end with a slash */
 	if (file.is_directory && (uri_len > 0)
 		&& (ri->local_uri[uri_len - 1] != '/')) {
-
-
 		/* Path + server root */
 		size_t buflen = UTF8_PATH_MAX * 2 + 2;
 		char *new_path;
@@ -1989,7 +1997,7 @@ no_callback_resource:
 			http_redirect(conn, new_path, 301);
 			free(new_path);
 		}
-		DEBUG_TRACE("%s request to %s: directory redirection sent",
+		debug_info("%s request to %s: directory redirection sent",
 			conn->method,
 			path);
 		return;
@@ -1999,7 +2007,7 @@ no_callback_resource:
 	/* 13.1. Handle PROPFIND */
 	if (!strcmp(conn->method, "PROPFIND")) {
 		handle_propfind(conn, path, &file);
-		DEBUG_TRACE("handling %s request to %s done", conn->method, path);
+		debug_info("handling %s request to %s done", conn->method, path);
 		return;
 	}
 	/* 13.2. Handle OPTIONS for files */
@@ -2009,8 +2017,8 @@ no_callback_resource:
 		 * maximum flexibility.
 		 * Lua and CGI scripts may fully support CORS this way (including
 		 * preflights). */
-		send_options(conn);
-		DEBUG_TRACE("handling %s request to %s done", conn->method, path);
+		http_options(conn);
+		debug_info("handling %s request to %s done", conn->method, path);
 		return;
 	}
 	/* 13.3. everything but GET and HEAD (e.g. POST) */
@@ -2020,7 +2028,7 @@ no_callback_resource:
 			405,
 			"%s method not allowed",
 			conn->method);
-		DEBUG_TRACE("handling %s request to %s done", conn->method, path);
+		debug_info("handling %s request to %s done", conn->method, path);
 		return;
 	}
 
@@ -2029,7 +2037,7 @@ no_callback_resource:
 		/* Substitute files have already been handled above. */
 		/* Here we can either generate and send a directory listing,
 		 * or send an "access denied" error. */
-		if (!mg_strcasecmp(conn->domain->config[ENABLE_DIRECTORY_LISTING],
+		if (str_is_case(conn->domain->config[ENABLE_DIRECTORY_LISTING],
 			"yes")) {
 			handle_directory_request(conn, path);
 		} else {
@@ -2038,7 +2046,7 @@ no_callback_resource:
 				"%s",
 				"Error: Directory listing denied");
 		}
-		DEBUG_TRACE("handling %s request to %s done", conn->method, path);
+		debug_info("handling %s request to %s done", conn->method, path);
 		return;
 	}
 
@@ -2046,11 +2054,11 @@ no_callback_resource:
 	if (is_template_text_file) {
 		if (conn->req.proto == PROTOCOL_HTTP2) {
 			//http2_must_use_http1(conn);
-			//DEBUG_TRACE("%s", "must use HTTP/1.x");
+			debug_info("%s", "must use HTTP/1.x");
 			//return;
 		}
 		handle_file_based_request(conn, path, &file);
-		//DEBUG_TRACE("handling %s request to %s done (template)",conn->method,path);
+		debug_info("handling %s request to %s done (template)", conn->method, path);
 		return;
 	}
 
@@ -2058,10 +2066,10 @@ no_callback_resource:
 	if ((!conn->req.in_error_handler) && is_not_modified(conn, &file)) {
 		/* Send 304 "Not Modified" - this must not send any body data */
 		handle_not_modified_static_file_request(conn, &file);
-		//DEBUG_TRACE("handling %s request to %s done (not modified)",conn->method,	path);
+		debug_info("handling %s request to %s done (not modified)", conn->method, path);
 		return;
 	}
 	/* 17. Static file - not cached */
 	handle_static_file_request(conn, path, &file, NULL, NULL);
-	//DEBUG_TRACE("handling %s request to %s done (static)", conn->method, path);
+	debug_info("handling %s request to %s done (static)", conn->method, path);
 }
