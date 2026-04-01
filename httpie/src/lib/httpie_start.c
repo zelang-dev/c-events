@@ -76,7 +76,18 @@ static FORCEINLINE void http_handler(int client) {
 	guard {
 		http_t *conn = (http_t *)events_get_target_data(client);
 		defer(http_free, conn);
-		http_process_connection(conn->ctx, conn);
+		/* Request buffers are not pre-allocated. They are private to the
+		 * request and do not contain any state information that might be
+		 * of interest to anyone observing a server status.  */
+		conn->req.buf = (string)fence(calloc(1, conn->ctx->max_request_size + 1), rpfree);
+		if (conn->req.buf == NULL) {
+			http_log(DEBUG_CRASH, conn, "Out of memory: Cannot allocate buffer for task #%i", task_id());
+		} else {
+			conn->req.buf_size = (int)conn->ctx->max_request_size;
+			conn->domain = &(conn->ctx->host); /* Use default domain and default host */
+			conn->req.user_data = conn->ctx->user_data;
+			http_process_connection(conn->ctx, conn);
+		}
 	} guarded;
 	shutdown(fd2socket(client), SHUT_RD);
 }

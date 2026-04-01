@@ -1,17 +1,5 @@
 #include "httpie_internal.h"
 
-/* Directory entry */
-struct de {
-	char *file_name;
-	struct file file;
-};
-
-struct dir_scan_data {
-	struct de *entries;
-	size_t num_entries;
-	size_t arr_size;
-};
-
 static int _stat_ex(http_t *conn, string_t path, struct file *filep) {
 	struct stat st;
 
@@ -171,8 +159,7 @@ static int compare_dir_entries(const_t p1, const_t p2, void *arg) {
 	return 0;
 }
 
-
-static int remove_directory(http_t *conn, string_t dir) {
+int remove_directory(http_t *conn, string_t dir) {
 	char path[UTF8_PATH_MAX];
 	struct dirent *dp;
 	DIR *dirp;
@@ -1309,87 +1296,6 @@ void http_no_cache_header(http_t *conn) {
 	http_response_add(conn, "Cache-Control", val, -1);
 }
 
-bool http_forward_body(http_t *conn, FILE *fp) {
-	string_t expect;
-	string_t body;
-	char buf[Kb(8)];
-	int to_read;
-	int nread;
-	bool success;
-	int64_t buffered_len;
-	double timeout;
-
-	if (is_empty(conn)) return false;
-
-	success = false;
-	expect = http_get_header(conn, "Expect");
-
-	if (is_empty(fp)) {
-		http_error(conn, 500, "%s", "Error: NULL File");
-		return false;
-	}
-
-	if (conn->req.content_len == -1 && !conn->req.is_chunked) {
-		/*
-		 * Content length is not specified by the client.
-		 */
-		http_error(conn, 411, "%s", "Error: Client did not specify content length");
-	} else if (!is_empty(expect) && str_is(expect, "100-continue")) {
-		/*
-		 * Client sent an "Expect: xyz" header and xyz is not 100-continue.
-		 */
-		http_error(conn, 417, "Error: Can not fulfill expectation %s", expect);
-	} else {
-		if (!is_empty(expect)) {
-			http_printf(conn, "%s", "HTTP/1.1 100 Continue\r\n\r\n");
-			conn->status = 100;
-		} else
-			conn->status = 200;
-
-		buffered_len = (int64_t)(conn->req.data_len) - (int64_t)conn->req.request_len - conn->req.consumed_content;
-		if (buffered_len < 0 || conn->req.consumed_content != 0) {
-			http_error(conn, 500, "%s", "Error: Size mismatch");
-			return false;
-		}
-
-		if (buffered_len > 0) {
-			if ((int64_t)buffered_len > conn->req.content_len)
-				buffered_len = (int)conn->req.content_len;
-
-			body = conn->req.buf + conn->req.request_len + conn->req.consumed_content;
-			tls_writer(conn->fd, (string)body, (int64_t)buffered_len);
-			conn->req.consumed_content += buffered_len;
-		}
-
-		nread = 0;
-		while (conn->req.consumed_content < conn->req.content_len) {
-			to_read = sizeof(buf);
-			if ((int64_t)to_read > conn->req.content_len - conn->req.consumed_content) to_read = (int)(conn->req.content_len - conn->req.consumed_content);
-
-			nread = http_read(conn, buf, to_read);
-			if (nread <= 0 || tls_writer(conn->fd, buf, nread) != nread) break;
-			conn->req.consumed_content += nread;
-		}
-
-		if (conn->req.consumed_content == conn->req.content_len)
-			success = (nread >= 0);
-
-		/*
-		 * Each error code path in this function must send an error
-		 */
-		if (!success) {
-			/*
-			 * NOTE: Maybe some data has already been sent. */
-			/* TODO (low): If some data has been sent, a correct error
-			 * reply can no longer be sent, so just close the connection
-			 */
-			http_error(conn, 500, "%s", "");
-		}
-	}
-
-	return success;
-}
-
 /* HTTP 1.1 assumes keep alive if "Connection:" header is not set
  * This function must tolerate situations when connection info is not
  * set up, for example if request parsing failed. */
@@ -1511,7 +1417,6 @@ void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
 		return;
 	}
 
-	yield_task();
 	snprintf(clientbuf, sizeof(clientbuf), "[%010lu]%s[client %s] %s %s: ",
 		(unsigned long)timestamp, log_level_str(debug_level), "conn->remote_addr", conn->method, conn->uri);
 	string_t data = str_cat_ex(4, clientbuf, " ", buf, "\n");
@@ -1526,145 +1431,225 @@ void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
  * -1  if request is malformed
  *  0  if request is not yet fully buffered
  * >0  actual request length, including last \r\n\r\n */
-static int http_get_request_len(string_t buf, int buflen) {
-	string_t s;
-	string_t e;
-	int len;
+static int get_http_header_len(string_t buf, int buflen) {
+	int i;
+	for (i = 0; i < buflen; i++) {
+		/* Do an unsigned comparison in some conditions below */
+		const unsigned char c = (unsigned char)buf[i];
 
-	len = 0;
-	s = buf;
-	e = s + buflen - 1;
-	while (len <= 0 && s < e) {
-		/*
-		 * Control characters are not allowed but >=128 is.
-		 */
-		if (!isprint(*(const unsigned char *)s) && *s != '\r' && *s != '\n' && *(const unsigned char *)s < 128)
+		if ((c < 128) && ((char)c != '\r') && ((char)c != '\n')
+			&& !isprint(c)) {
+			/* abort scan as soon as one malformed character is found */
 			return -1;
+		}
 
-		if (s[0] == '\n' && s[1] == '\n')
-			len = (int)(s - buf) + 2;
-		else if (s[0] == '\n' && &s[1] < e && s[1] == '\r' && s[2] == '\n')
-			len = (int)(s - buf) + 3;
+		if (i < buflen - 1) {
+			if ((buf[i] == '\n') && (buf[i + 1] == '\n')) {
+				/* Two newline, no carriage return - not standard compliant,
+				 * but it should be accepted */
+				return i + 2;
+			}
+		}
 
-		s++;
+		if (i < buflen - 3) {
+			if ((buf[i] == '\r') && (buf[i + 1] == '\n') && (buf[i + 2] == '\r')
+				&& (buf[i + 3] == '\n')) {
+				/* Two \r\n - standard compliant */
+				return i + 4;
+			}
+		}
 	}
 
-	return len;
+	return 0;
 }
 
-int http_read_request(http_t *conn, string buf, int bufsiz, int *nread) {
-	int request_len;
-	int n;
+/* Keep reading the input `conn` until \r\n\r\n appears in the
+ * buffer (which marks the end of HTTP request). Buffer buf may already
+ * have some data. The length of the data is stored in nread.
+ * Upon every read operation, increase nread by the number of bytes read. */
+static int read_message(http_t *conn,
+	char *buf,
+	int bufsiz,
+	int *nread) {
+	int request_len, n = 0;
+	struct timespec last_action_time;
+	double request_timeout;
 
-	if (is_empty(conn))
+	if (!conn) {
 		return 0;
-
-	n = 0;
-	request_len = http_get_request_len(buf, *nread);
-	while (*nread < bufsiz && request_len == 0 &&
-		((n = tls_reader(conn->fd, buf + *nread, bufsiz - *nread)) > 0)) {
-
-		*nread += n;
-		if (*nread > bufsiz) return -2;
-
-		request_len = http_get_request_len(buf, *nread);
 	}
 
-	return (request_len <= 0 && n <= 0) ? -1 : request_len;
+	request_len = get_http_header_len(buf, *nread);
+	while (request_len == 0) {
+		/* Full request not yet received */
+		if (conn->ctx->status != HTTP_STATUS_RUNNING) {
+			/* Server is to be stopped. */
+			return -1;
+		}
+
+		if (*nread >= bufsiz) {
+			/* Request too long */
+			return -2;
+		}
+
+		n = tls_reader(socket2fd(conn->fd), buf + *nread, bufsiz - *nread);
+		if (n < 0) {
+			/* Receive error */
+			return -1;
+		}
+
+		if (n > 0) {
+			*nread += n;
+			request_len = get_http_header_len(buf, *nread);
+		}
+	}
+
+	return request_len;
 }
 
-FORCEINLINE uint32_t http_get_remote_ip(const http_t *conn) {
-	if (conn == NULL)
-		return 0;
-
-	return ntohl(*(const uint32_t *)&conn->client.rsa.sin.sin_addr);
-}
-
-bool http_get_request(http_ini_t *ctx, http_t *conn, int *err) {
-	string_t cl;
-	uint32_t remote_ip;
-	char remote_ip_str[16];
-
-	if (is_empty(err)) return false;
+static int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
+	if (ebuf_len > 0) {
+		ebuf[0] = '\0';
+	}
 
 	*err = 0;
-	if (is_empty(conn)) {
-		http_log(DEBUG_ERROR, conn, "%s: internal error", __func__);
+	if (!conn) {
+		http_snprintf(conn,
+		            NULL, /* No truncation check for ebuf */
+		            ebuf,
+		            ebuf_len,
+		            "%s",
+		            "Internal error");
 		*err = 500;
-		return false;
+		return 0;
 	}
 
-	conn->req.request_len = http_read_request(conn, conn->req.buf, conn->req.buf_size, &conn->req.data_len);
-	remote_ip = http_get_remote_ip(conn);
-	snprintf(remote_ip_str, 16, "%d.%d.%d.%d", (remote_ip >> 24), (remote_ip >> 16) & 0xff, (remote_ip >> 8) & 0xff, remote_ip & 0xff);
-
-	if (conn->req.request_len >= 0 && conn->req.data_len < conn->req.request_len) {
-		http_log(DEBUG_ERROR, conn, "%s: %s invalid request size", __func__, remote_ip_str);
+	conn->req.request_len = read_message(conn, conn->req.buf, conn->req.buf_size, &conn->req.data_len);
+	if ((conn->req.request_len >= 0) && (conn->req.data_len < conn->req.request_len)) {
+		http_snprintf(conn,
+		            NULL, /* No truncation check for ebuf */
+		            ebuf,
+		            ebuf_len,
+		            "%s",
+		            "Invalid message size");
 		*err = 500;
-		return false;
+		return 0;
 	}
 
-	if (conn->req.request_len == 0 && conn->req.data_len == conn->req.buf_size) {
-		http_log(DEBUG_ERROR, conn, "%s: %s request too large",
-			__func__, remote_ip_str);
+	if ((conn->req.request_len == 0) && (conn->req.data_len == conn->req.buf_size)) {
+		http_snprintf(conn,
+		            NULL, /* No truncation check for ebuf */
+		            ebuf,
+		            ebuf_len,
+		            "%s",
+		            "Message too large");
 		*err = 413;
-		return false;
-	} else if (conn->req.request_len <= 0) {
+		return 0;
+	}
+
+	if (conn->req.request_len <= 0) {
 		if (conn->req.data_len > 0) {
-			http_log(DEBUG_ERROR, conn, "%s: %s client sent malformed request",
-				__func__, remote_ip_str);
+			http_snprintf(conn,
+			            NULL, /* No truncation check for ebuf */
+			            ebuf,
+			            ebuf_len,
+			            "%s",
+			            "Malformed message");
 			*err = 400;
 		} else {
-			/* Server did not send anything -> just close the connection */
-			conn->req.must_close = true;
-			http_log(DEBUG_WARNING, conn, "%s: %s client did not send a request",
-				__func__, remote_ip_str);
+			/* Server did not recv anything -> just close the connection */
+			conn->req.must_close = 1;
+			http_snprintf(conn,
+			            NULL, /* No truncation check for ebuf */
+			            ebuf,
+			            ebuf_len,
+			            "%s",
+			            "No data received");
 			*err = 0;
 		}
-		return false;
-	} else if (parse_http(HTTP_REQUEST, conn, conn->req.buf) <= 0) {
-		http_log(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
-		*err = 400;
-		return false;
-	} else {
-		if (!http_switch_domain(conn)) {
-			http_log(DEBUG_ERROR, conn, "%s: Bad request: Host mismatch", __func__);
-			*err = 400;
-			return false;
-		}
 
-		/* Message is a valid request or response */
-		if (((cl = http_get_header(conn, "Accept-Encoding")) != NULL)
-			&& str_has(cl, "gzip")) {
-			conn->req.accept_gzip = 1;
-		}
-
-		/* Message is a valid request or response */
-		if ((cl = http_get_header(conn, "Content-Length")) != NULL) {
-			/* Request/response has content length set */
-			string endptr = NULL;
-			conn->req.content_len = strtoll(cl, &endptr, 10);
-			if (endptr == cl) {
-				http_log(DEBUG_ERROR, conn, "%s: %s bad request", __func__, remote_ip_str);
-				*err = 411;
-				return false;
-			}
-		} else if ((cl = http_get_header(conn, "Transfer-Encoding")) != NULL
-			&& str_is_case(cl, "chunked")) {
-			conn->req.is_chunked = 1;
-		} else if (str_is_case(conn->method, "POST") || str_is_case(conn->method, "PUT")) {
-			/* POST or PUT request without content length set */
-			conn->req.content_len = -1;
-		} else if (str_has(conn->protocol, "HTTP/")) {
-			/* Response without content length set */
-			conn->req.content_len = -1;
-		} else {
-			/* Other request */
-			conn->req.content_len = 0;
-		}
+		return 0;
 	}
 
-	return true;
+	return 1;
+}
+
+static int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
+	string_t cl;
+
+	conn->action = HTTP_REQUEST; /* request (valid of not) */
+
+	if (!get_message(conn, ebuf, ebuf_len, err)) {
+		return 0;
+	}
+
+	if (parse_http(HTTP_REQUEST, conn, conn->req.buf) <= 0) {
+		http_snprintf(conn,
+			NULL, /* No truncation check for ebuf */
+			ebuf,
+			ebuf_len,
+			"%s",
+			"Bad request");
+		*err = 400;
+		return 0;
+	}
+
+	/* Message is a valid request */
+	if (!http_switch_domain(conn)) {
+		http_snprintf(conn,
+			NULL, /* No truncation check for ebuf */
+			ebuf,
+			ebuf_len,
+			"%s",
+			"Bad request: Host mismatch");
+		*err = 400;
+		return 0;
+	}
+
+	if (((cl = http_get_header(conn, "Accept-Encoding"))
+		!= NULL)
+		&& strstr(cl, "gzip")) {
+		conn->req.accept_gzip = 1;
+	}
+
+	if (((cl = http_get_header(conn, "Transfer-Encoding"))
+		!= NULL)
+		&& !str_is_case(cl, "identity")) {
+		if (!str_is_case(cl, "chunked")) {
+			http_snprintf(conn,
+				NULL, /* No truncation check for ebuf */
+				ebuf,
+				ebuf_len,
+				"%s",
+				"Bad request");
+			*err = 400;
+			return 0;
+		}
+		conn->req.is_chunked = 1;
+		conn->req.content_len = 0; /* not yet read */
+	} else if ((cl = http_get_header(conn, "Content-Length"))
+		!= NULL) {
+ 		/* Request has content length set */
+		char *endptr = NULL;
+		conn->req.content_len = strtoll(cl, &endptr, 10);
+		if ((endptr == cl) || (conn->req.content_len < 0)) {
+			http_snprintf(conn,
+				NULL, /* No truncation check for ebuf */
+				ebuf,
+				ebuf_len,
+				"%s",
+				"Bad request");
+			*err = 411;
+			return 0;
+		}
+		/* Publish the content length back to the request info. */
+		conn->content_length = conn->req.content_len;
+	} else {
+		/* There is no exception, see RFC7230. */
+		conn->req.content_len = 0;
+	}
+
+	return 1;
 }
 
 bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep) {
@@ -2022,6 +2007,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 	int keep_alive;
 	int discard_len;
 	bool was_error;
+	char ebuf[100];
 	string_t uri, hostend;
 	int reqerr;
 	enum uri_type_t uri_type;
@@ -2044,7 +2030,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 	conn->req.data_len = 0;
 	was_error = false;
 	do {
-		if (!http_get_request(ctx, conn, &reqerr)) {
+		if (!get_request(conn, ebuf, sizeof(ebuf), &reqerr)) {
 			/*
 			 * The request sent by the client could not be understood by
 			 * the server, or it was incomplete or a timeout. Send an
@@ -2149,6 +2135,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 
 		if (conn->req.data_len < 0 || conn->req.data_len > conn->req.buf_size)
 			break;
+		conn->req.handled_requests++;
 	} while (keep_alive);
 }
 

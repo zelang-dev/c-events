@@ -661,6 +661,14 @@ int http_match_prefix(string_t pattern, size_t pattern_len, string_t str) {
 	return j;
 }
 
+FORCEINLINE ptrdiff_t http_match_prefix_strlen(string_t pattern, string_t str) {
+	if (pattern == NULL) {
+		return -1;
+	}
+
+	return http_match_prefix(pattern, strlen(pattern), str, NULL);
+}
+
 bool http_must_hide_file(http_ini_t *ctx, string_t path) {
 	string_t pw_pattern;
 	string_t pattern;

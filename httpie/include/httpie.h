@@ -94,18 +94,6 @@ extern "C"
 {
 #endif
 
-/*
- * Keeps reading the input into buffer buf,
- * until \r\n\r\n appears in the buffer which marks the end
- * of the HTTP request. The buffer buf may already have some data. The length
- * of the data is stored in nread. Upon every read operation the value of nread
- * is incremented by the number of bytes read. */
-C_API int http_read_request(http_t *conn, string buf, int bufsiz, int *nread);
-
-/* Forwards body data to the client.
-The function returns true if successful, and false otherwise. */
-C_API bool http_forward_body(http_t *conn, FILE *fp);
-
 /* Send contents of the entire file together with HTTP headers.
  *
  *  Parameters:
@@ -116,8 +104,7 @@ C_API bool http_forward_body(http_t *conn, FILE *fp);
  * - `additional_headers`: Additional custom header fields appended to the header.
  * Each header should start with an X-, to ensure it is not included twice.
  * `NULL` does not append anything. */
-C_API void http_file(http_t *conn, const char *path, const char *mime_type,
-	const char *additional_headers);
+C_API void http_file(http_t *conn, string_t path, string_t mime_type, string_t additional_headers);
 
 /* Send data to the client using printf() semantics.
    Works exactly like `http_write()`, but allows to do message formatting. */
@@ -194,7 +181,7 @@ int http_redirect(http_t *conn, string_t target_url, int redirect_code);
 /* URL-encode input buffer into destination buffer.
    returns the length of the resulting buffer or -1
    is the buffer is too small. */
-C_API int http_url_encode(const char *src, char *dst, size_t dst_len);
+C_API int http_url_encode(string_t src, char *dst, size_t dst_len);
 
 /* URL-decode input buffer into destination buffer.
    0-terminate the destination buffer.
@@ -202,11 +189,11 @@ C_API int http_url_encode(const char *src, char *dst, size_t dst_len);
    uses '+' as character for space, see RFC 1866 section 8.2.1
    http://ftp.ics.uci.edu/pub/ietf/html/rfc1866.txt
    Return: length of the decoded data, or -1 if dst buffer is too small. */
-C_API int http_url_decode(const char *src, int src_len, char *dst, int dst_len, int is_form_url_encoded);
+C_API int http_url_decode(string_t src, int src_len, char *dst, int dst_len, int is_form_url_encoded);
 
 /* Return builtin mime type for the given file name.
    For unrecognized extensions, "text/plain" is returned. */
-C_API const char *http_get_builtin_mime_type(const char *path);
+C_API string_t http_get_builtin_mime_type(string_t path);
 
 /* Send a part of the message body, if chunked transfer encoding is set.
  * Only use this function after sending a complete HTTP request or response
@@ -276,17 +263,17 @@ C_API string_t http_suggest_connection_header(http_t *conn);
 C_API void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...);
 
 /* Public function to check http digest authentication header */
-C_API int http_check_digest_access_authentication(http_t *conn, const char *realm, const char *filename);
+C_API int http_check_digest_access_authentication(http_t *conn, string_t realm, string_t filename);
 
 /* Interface function. Parameters are provided by the user, so do
  * at least some basic checks. */
-int http_send_digest_access_authentication_request(http_t *conn, const char *realm);
+int http_send_digest_access_authentication_request(http_t *conn, string_t realm);
 
 /* Return stringified MD5 hash for list of strings. Buffer must be 33 bytes. */
 C_API char *http_md5(char buf[33], ...);
 
-C_API int http_modify_passwords_file_ha1(const char *fname, const char *domain, const char *user, const char *ha1);
-C_API int http_modify_passwords_file(const char *fname,	const char *domain,	const char *user, const char *pass);
+C_API int http_modify_passwords_file_ha1(string_t fname, string_t domain, string_t user, string_t ha1);
+C_API int http_modify_passwords_file(string_t fname,	string_t domain,	string_t user, string_t pass);
 
 /* Sends a list of allowed options a client can use to connect to the server. */
 C_API void http_options(http_t *conn);

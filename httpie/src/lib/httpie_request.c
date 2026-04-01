@@ -32,33 +32,28 @@ static int is_webdav_method(const http_t *conn) {
 	return 0;
 }
 
-#if !defined(NO_FILES)
 /* in: request (must be valid) */
 /* in: filename  (must be valid) */
 static int extention_matches_script(http_t *conn, string_t filename) {
-#if !defined(NO_CGI)
 	int cgi_config_idx, inc, max;
-#endif
 #if defined(USE_DUKTAPE)
-	if (match_prefix_strlen(conn->domain->config[DUKTAPE_SCRIPT_EXTENSIONS],
+	if (http_match_prefix_strlen(conn->domain->config[DUKTAPE_SCRIPT_EXTENSIONS],
 		filename)
 		> 0) {
 		return 1;
 	}
 #endif
-#if !defined(NO_CGI)
 	inc = CGI2_EXTENSIONS - CGI_EXTENSIONS;
 	max = PUT_DELETE_PASSWORDS_FILE - CGI_EXTENSIONS;
 	for (cgi_config_idx = 0; cgi_config_idx < max; cgi_config_idx += inc) {
 		if ((conn->domain->config[CGI_EXTENSIONS + cgi_config_idx] != NULL)
-			&& (match_prefix_strlen(
+			&& (http_match_prefix_strlen(
 				conn->domain->config[CGI_EXTENSIONS + cgi_config_idx],
 				filename)
 	> 0)) {
 			return 1;
 		}
 	}
-#endif
 	/* filename and conn could be unused, if all preocessor conditions
 	 * are false (no script language supported). */
 	(void)filename;
@@ -70,7 +65,7 @@ static int extention_matches_script(http_t *conn, string_t filename) {
 /* in: request (must be valid) */
 /* in: filename  (must be valid) */
 static int extention_matches_template_text(http_t *conn, string_t filename) {
-	if (match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], filename)
+	if (http_match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], filename)
 		> 0) {
 		return 1;
 	}
@@ -172,7 +167,6 @@ static int substitute_index_file(http_t *conn, char *path, size_t path_len, stru
 	}
 	return ret;
 }
-#endif
 
 /*
  * Interprets an URI and decides what
@@ -1292,7 +1286,7 @@ void handle_file_based_request(http_t *conn,
 	}
 
 #if defined(USE_DUKTAPE)
-	if (match_prefix_strlen(conn->domain->config[DUKTAPE_SCRIPT_EXTENSIONS],
+	if (http_match_prefix_strlen(conn->domain->config[DUKTAPE_SCRIPT_EXTENSIONS],
 		path)
 	> 0) {
 		if (is_in_script_path(conn, path)) {
@@ -1310,7 +1304,7 @@ void handle_file_based_request(http_t *conn,
 	max = PUT_DELETE_PASSWORDS_FILE - CGI_EXTENSIONS;
 	for (cgi_config_idx = 0; cgi_config_idx < max; cgi_config_idx += inc) {
 		if (conn->domain->config[CGI_EXTENSIONS + cgi_config_idx] != NULL) {
-			if (match_prefix_strlen(
+			if (http_match_prefix_strlen(
 				conn->domain->config[CGI_EXTENSIONS + cgi_config_idx],
 				path)
 	> 0) {
@@ -1326,7 +1320,7 @@ void handle_file_based_request(http_t *conn,
 		}
 	}
 
-	if (match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], path) > 0) {
+	if (http_match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], path) > 0) {
 		if (is_in_script_path(conn, path)) {
 			handle_ssi_file_request(conn, path, file);
 		} else {
@@ -1415,6 +1409,271 @@ static void release_handler_ref(http_t *conn, struct http_cb_info *handler_info)
 	}
 }
 
+static int push_all(http_ini_t *ctx, FILE *fp,	string_t buf, int len) {
+	double timeout = -1.0;
+	int n, nwritten = 0;
+
+	if (ctx == NULL) {
+		return -1;
+	}
+
+	if (ctx->host.config[REQUEST_TIMEOUT]) {
+		timeout = atoi(ctx->host.config[REQUEST_TIMEOUT]) / 1000.0;
+	}
+	if (timeout <= 0.0) {
+		timeout = strtod(http_get_default_option(REQUEST_TIMEOUT), NULL)
+			/ 1000.0;
+	}
+
+	while ((len > 0) && ctx->status == HTTP_STATUS_RUNNING) {
+		n = fs_fwrite(buf + nwritten, 1, len, fp);
+		if (ferror(fp) || n < 0) {
+			if (nwritten == 0) {
+				nwritten = -1; /* Propagate the error */
+			}
+			break;
+		} else if (n == 0) {
+			break; /* No more data to write */
+		} else {
+			nwritten += n;
+			len -= n;
+		}
+	}
+
+	return nwritten;
+}
+
+static int forward_body_data(http_t *conn, FILE *fp) {
+	string_t expect;
+	char buf[BUF_LEN];
+	int success = 0;
+
+	if (!conn) {
+		return 0;
+	}
+
+	expect = http_get_header(conn, "Expect");
+	if (!fp) {
+		http_error(conn, 500, "%s", "Error: NULL File");
+		return 0;
+	}
+
+	if ((expect != NULL) && !str_is_case(expect, "100-continue")) {
+		/* Client sent an "Expect: xyz" header and xyz is not 100-continue.
+		 */
+		http_error(conn, 417, "Error: Can not fulfill expectation");
+	} else {
+		if (expect != NULL) {
+			(void)http_printf(conn, "%s", "HTTP/1.1 100 Continue\r\n\r\n");
+			conn->status = 100;
+		} else {
+			conn->status = 200;
+		}
+
+		if (conn->req.consumed_content != 0) {
+			http_error(conn, 500, "%s", "Error: Size mismatch");
+			return 0;
+		}
+
+		for (;;) {
+			int nread = http_read(conn, buf, sizeof(buf));
+			if (nread <= 0) {
+				success = (nread == 0);
+				break;
+			}
+			if (push_all(conn->ctx, fp, buf, nread) != nread) {
+				break;
+			}
+		}
+
+		/* Each error code path in this function must send an error */
+		if (!success) {
+			/* NOTE: Maybe some data has already been sent. */
+			/* TODO (low): If some data has been sent, a correct error
+			 * reply can no longer be sent, so just close the connection */
+			http_error(conn, 500, "%s", "");
+		}
+	}
+
+	return success;
+}
+
+static void put_file(http_t *conn, string_t path) {
+	struct file file = STRUCT_FILE_INITIALIZER;
+	string_t range;
+	int64_t r1, r2;
+	int rc;
+
+	if (conn == NULL) {
+		return;
+	}
+
+	debug_info("store %s", path);
+	if (http_stat(conn, path, &file)) {
+		/* File already exists */
+		conn->status = 200;
+
+		if (file.is_directory) {
+			/* This is an already existing directory,
+			 * so there is nothing to do for the server. */
+			rc = 0;
+
+		} else {
+			/* File exists and is not a directory. */
+			/* Can it be replaced? */
+
+			/* Check if the server may write this file */
+			if (fs_access(path, W_OK) == 0) {
+				/* Access granted */
+				rc = 1;
+			} else {
+				http_error(conn, 403,
+					"Error: Put not possible\nReplacing %s is not allowed",
+					path);
+				return;
+			}
+		}
+	} else {
+		/* File should be created */
+		conn->status = 201;
+		rc = http_put_dir(conn->ctx, conn, path);
+	}
+
+	if (rc == 0) {
+		/* put_dir returns 0 if path is a directory */
+
+		/* Create response */
+		http_response_start(conn, conn->status);
+		http_no_cache_header(conn);
+		http_domain_header(conn);
+		http_response_add(conn, "Content-Length", "0", -1);
+
+		/* Send all headers - there is no body */
+		http_response_send(conn);
+
+		/* Request to create a directory has been fulfilled successfully.
+		 * No need to put a file. */
+		return;
+	}
+
+	if (rc == -1) {
+		/* put_dir returns -1 if the path is too long */
+		http_error(conn, 414, "Error: Path too long\nput_dir(%s): %s",
+			path,
+			strerror(os_geterror()));
+		return;
+	}
+
+	if (rc == -2) {
+		/* put_dir returns -2 if the directory can not be created */
+		http_error(conn, 500, "Error: Can not create directory\nput_dir(%s): %s",
+			path, strerror(os_geterror()));
+		return;
+	}
+
+	/* A file should be created or overwritten. */
+	/* Currently `httpie` does not need read+write access. */
+	if (!http_fopen(conn->ctx, conn, path, "wb", &file)
+		|| file.fp == NULL) {
+		(void)http_fclose(&file);
+		http_error(conn, 500, "Error: Can not create file\nfopen(%s): %s",
+			path,
+			strerror(os_geterror()));
+		return;
+	}
+
+	http_set_close_on_exec(fd2socket(fileno(file.fp)));
+	range = http_get_header(conn, "Content-Range");
+	r1 = r2 = 0;
+	if ((range != NULL) && parse_range_header(range, &r1, &r2) > 0) {
+		conn->status = 206; /* Partial content */
+		if (0 != fseek(file.fp, r1, SEEK_SET)) {
+			http_error(conn,
+				500,
+				"Error: Internal error processing file %s",
+				path);
+			return;
+		}
+	}
+
+	if (!forward_body_data(conn, file.fp)) {
+		/* forward_body_data failed.
+		 * The error code has already been sent to the client,
+		 * and conn->status_code is already set. */
+		(void)http_fclose(&file);
+		return;
+	}
+
+	if (http_fclose(&file) != 0) {
+		/* fclose failed. This might have different reasons, but a likely
+		 * one is "no space on disk", http 507. */
+		conn->status = 507;
+	}
+
+	/* Create response (status_code has been set before) */
+	http_response_start(conn, conn->status);
+	http_no_cache_header(conn);
+	http_domain_header(conn);
+	http_response_add(conn, "Content-Length", "0", -1);
+
+	/* Send all headers - there is no body */
+	http_response_send(conn);
+}
+
+static void delete_file(http_t *conn, string_t path) {
+	struct de de;
+	memset(&de.file, 0, sizeof(de.file));
+	if (!http_stat(conn, path, &de.file)) {
+		/* mg_stat returns 0 if the file does not exist */
+		http_error(conn,
+			404,
+			"Error: Cannot delete file\nFile %s not found",
+			path);
+		return;
+	}
+
+	debug_info("delete %s", path);
+	if (de.file.is_directory) {
+		if (remove_directory(conn, path)) {
+			/* Delete is successful: Return 204 without content. */
+			http_error(conn, 204, "%s", "");
+		} else {
+			/* Delete is not successful: Return 500 (Server error). */
+			http_error(conn, 500, "Error: Could not delete %s", path);
+		}
+		return;
+	}
+
+	/* This is an existing file (not a directory).
+	 * Check if write permission is granted. */
+	if (fs_access(path, W_OK) != 0) {
+		/* File is read only */
+		http_error(
+			conn,
+			403,
+			"Error: Delete not possible\nDeleting %s is not allowed",
+			path);
+		return;
+	}
+
+	/* Try to delete it. */
+	if (fs_unlink(path) == 0) {
+		/* Delete was successful: Return 204 without content. */
+		http_response_start(conn, 204);
+		http_no_cache_header(conn);
+		http_domain_header(conn);
+		http_response_add(conn, "Content-Length", "0", -1);
+		http_response_send(conn);
+	} else {
+		/* Delete not successful (file locked). */
+		http_error(conn,
+			423,
+			"Error: Cannot delete file\nremove(%s): %s",
+			path,
+			strerror(os_geterror()));
+	}
+}
+
 void http_handle_request(http_t *conn) {
 	httpie_t *ri = &conn->req;
 	char path[UTF8_PATH_MAX];
@@ -1466,7 +1725,6 @@ void http_handle_request(http_t *conn) {
 		}
 		return;
 	}
-
 
 	/* 1.3. decode url (if config says so) */
 	if (should_decode_url(conn)) {
@@ -1655,7 +1913,7 @@ void http_handle_request(http_t *conn) {
 		 * even if it is a webdav method */
 		is_webdav_request = 0; /* is_webdav_method(conn); */
 	} else {
-	no_callback_resource:
+no_callback_resource:
 			/* 5.2.2. No callback is responsible for this request. The URI
 			 * addresses a file based resource (static content or Lua/cgi
 			 * scripts in the file system). */
@@ -1828,7 +2086,13 @@ void http_handle_request(http_t *conn) {
 			//return;
 		}
 		if (is_script_resource) {
-			if (is_in_script_path(conn, path)) {
+			/* Check if the script file is in a path, allowed for script files.
+			* This can be used if uploading files is possible not only for the server
+			* admin, and the upload mechanism does not check the file extension.
+			*/
+			/* TODO (Feature): Add config value for allowed script path.
+			* Default: All allowed. */
+			if (true) {
 				/* Websocket Lua script */
 				http_websocket_request(conn,
 					path,

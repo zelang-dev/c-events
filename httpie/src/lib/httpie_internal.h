@@ -442,6 +442,11 @@ typedef struct httpie_s {
 	int websocket_deflate_client_no_context_takeover;
 	int websocket_deflate_initialized;
 	int websocket_deflate_flush;
+	/* Number of requests handled by this connection */
+	int handled_requests;
+	/* Time (since system start) when the request
+	 * was received */
+	struct timespec req_time;
 	/* Time (wall clock) when connection was established */
 	time_t conn_birth_time;
 	/* Unread data from the last chunk */
@@ -487,6 +492,9 @@ struct http_s {
 	int is_valid;
 	/* The protocol version */
 	double version;
+	/* Length (in bytes) of the request body,
+	 * can be -1 if no length was given. */
+	long long content_length;
 	/* The raw headers and body junction position from server */
 	size_t raw_pos;
 	/* The unchanged data from server */
@@ -567,6 +575,18 @@ struct read_auth_file_struct {
 	string_t f_user;
 	string_t f_domain;
 	string_t f_ha1;
+};
+
+/* Directory entry */
+struct de {
+	char *file_name;
+	struct file file;
+};
+
+struct dir_scan_data {
+	struct de *entries;
+	size_t num_entries;
+	size_t arr_size;
 };
 
 bool http_fopen(http_ini_t *ctx, const http_t *conn,
@@ -658,8 +678,31 @@ void http_set_close_on_exec(fds_t sock);
 
 string http_error_string(int error_code, string buf, size_t buf_len);
 
-/* Perform case-insensitive match of string against pattern */
+/* Perform case-insensitive match of string against pattern
+ *
+ * Parameters:
+ * `pat`: Pattern string.
+ * `pattern_len`: Pattern length to search for match.
+ * `str`: String to search for match patterns.
+ *
+ * Return:
+ * - `Number` of characters matched.
+ * -	`-1` if no valid match was found.
+ *
+ * Note: `0` characters might be a valid match for some patterns.
+ *
+ * `Pattern` match starts at the beginning of the string, so essentially
+ * patterns are prefix patterns.
+ *
+ * Syntax is as follows:
+ *
+ * - `**` 	Matches everything
+ * - `*`	Matches everything but the slash character ('/')
+ * - `?` 	Matches any character but the slash character ('/')
+ * - `$` 	Matches the end of the string
+ * - `|` 	Matches if pattern on the left side or the right side matches.*/
 int http_match_prefix(string_t pattern, size_t pattern_len, string_t str);
+ptrdiff_t http_match_prefix_strlen(string_t pattern, string_t str);
 
 /* Send all current and obsolete cache opt-out directives. */
 void http_no_cache_header(http_t *conn);
@@ -752,6 +795,8 @@ void send_authorization_request(http_t *conn, string_t realm);
 int check_authorization(http_t *conn, string_t path);
 /* Authorize against the opened passwords file. Return 1 if authorized. */
 int authorize(http_t *conn, struct file *filep, string_t realm);
+int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
+int remove_directory(http_t *conn, string_t dir);
 
 int is_authorized_for_put(http_t *conn);
 void http_compressed_data(http_t *conn, struct file *filep);

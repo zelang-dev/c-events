@@ -384,12 +384,8 @@ static void parse_multipart(http_t *this) {
 		snprintf(scrape, ARRAY_SIZE, "--%s", this->boundary);
 		if (this->is_valid == 2) {
 			this->raw[this->raw_pos] = '\n';
-			this->raw[this->raw_pos + 1] = '\n';
 		} else {
 			this->raw[this->raw_pos] = '\r';
-			this->raw[this->raw_pos + 1] = '\n';
-			this->raw[this->raw_pos + 2] = '\r';
-			this->raw[this->raw_pos + 3] = '\n';
 		}
 
 		boundary = str_split_ex(this->raw, scrape, &count);
