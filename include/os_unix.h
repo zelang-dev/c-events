@@ -121,6 +121,10 @@ extern "C" {
 #endif
 
 C_API int os_open(const char *path, int flags, mode_t mode);
+
+/* Unix equivalent of Win32's `CopyFile` Source - https://stackoverflow.com/a/2180788 */
+C_API int copyfile(const char *to, const char *from);
+
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 C_API int inotify_init(void);
 C_API int inotify_init1(int flags);

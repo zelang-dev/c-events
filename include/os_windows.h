@@ -100,6 +100,9 @@ typedef int id_t;
 #define write 	os_write
 #undef socketpair
 
+/* platform `file` copy */
+#define copyfile(wSource, wDest)	 CopyFileA(wSource, wDest, 1)
+
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {
 #endif

@@ -255,6 +255,7 @@ static void *queue_work_handler(param_t args) {
 	os_worker_t *thrd = args[0].object;
 	os_request_t *job = args[1].object;
 	job->id = task_id();
+	job->erred = 0;
 
 	task_name("queue_work #%d", job->id);
 	atomic_flag_test_and_set(&thrd->queue->started);
@@ -265,6 +266,9 @@ static void *queue_work_handler(param_t args) {
 		tasks_info(active_task(), 1);
 		yield_task();
 	}
+
+	if (job->erred)
+		errno = job->erred;
 
 	defer_free(job);
 	return job->result->value.object;
@@ -503,6 +507,27 @@ EVENTS_INLINE size_t fs_filesize(const char *path) {
 
 EVENTS_INLINE bool fs_touch(const char *path) {
 	return fs_writefile(path, "") == 0;
+}
+
+static EVENTS_INLINE void *_os_rename(param_t args) {
+	return casting(rename((const void *)args[0].const_char_ptr, args[1].const_char_ptr));
+}
+
+EVENTS_INLINE int fs_rename(const char *oldfile, const char *newfile) {
+	return await_for(queue_work(events_pool(), _os_rename, 2, oldfile, newfile)).integer;
+}
+
+static EVENTS_INLINE void *_os_copyfile(param_t args) {
+	int err = copyfile((const void *)args[0].const_char_ptr, args[1].const_char_ptr);
+#ifdef _WIN32
+	return casting(err ? 0 : -1);
+#else
+	return casting(err);
+#endif
+}
+
+EVENTS_INLINE int fs_copyfile(const char *oldfile, const char *newfile) {
+	return await_for(queue_work(events_pool(), _os_copyfile, 2, oldfile, newfile)).integer;
 }
 
 int fs_writefile(const char *path, char *text) {

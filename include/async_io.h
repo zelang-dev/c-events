@@ -384,6 +384,8 @@ C_API size_t fs_filesize(const char *path);
 C_API int fs_writefile(const char *path, char *text);
 C_API char *fs_readfile(const char *path);
 C_API bool fs_touch(const char *path);
+C_API int fs_rename(const char *oldfile, const char *newfile);
+C_API int fs_copyfile(const char *oldfile, const char *newfile);
 
 /* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
 - This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.

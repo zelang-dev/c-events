@@ -357,6 +357,7 @@ C_API void *RPMALLOC_CDECL rp_memalign(size_t alignment, size_t size);
 C_API void *RPMALLOC_CDECL rp_malloc(size_t size);
 C_API void *RPMALLOC_CDECL rp_calloc(size_t count, size_t size);
 C_API void *RPMALLOC_CDECL rp_realloc(void *ptr, size_t size);
+C_API size_t RPMALLOC_CDECL rp_malloc_usable_size(void *ptr);
 C_API void RPMALLOC_CDECL rp_free(void *ptr);
 
 #if defined(__TINYC__)

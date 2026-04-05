@@ -2363,7 +2363,10 @@ static bool task_take(events_deque_t *queue) {
 
 void thread_result_set(os_request_t *p, void *res) {
 	atomic_lock(&p->mutex);
-	if (res != NULL) {
+	if (!is_empty(res)) {
+		if (res == casting(-1))
+			p->erred = errno;
+
 		if (is_data(res)) {
 			p->result->value.object = data_copy((array_t)p->result->extended, res);
 		} else {
@@ -2510,6 +2513,7 @@ static int __threads_wrapper(void *arg) {
 		if ((int)atomic_load(&queue->available) > 0) {
 			atomic_fetch_sub(&queue->available, 1);
 			atomic_lock(&work->mutex);
+			errno = 0;
 			os_request_t *worker = (os_request_t *)$shift(queue->jobs).object;
 			atomic_unlock(&work->mutex);
 			res->object = worker->func(worker->args);

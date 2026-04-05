@@ -185,6 +185,7 @@ struct _thread_tasks_worker {
 struct _request_worker {
 	data_types type;
 	int id;
+	int erred;
 	param_t args;
 	param_func_t func;
 	data_values_t result[1];

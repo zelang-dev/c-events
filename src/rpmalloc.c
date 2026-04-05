@@ -3166,6 +3166,11 @@ void *rp_realloc(void *ptr, size_t size) {
 	return rprealloc(ptr, size);
 }
 
+size_t rp_malloc_usable_size(void *ptr) {
+	rpmalloc_init();
+	return rpmalloc_usable_size(ptr);
+}
+
 void rp_free(void *ptr) {
 	rpfree(ptr);
 	rpmalloc_thread_finalize(1);
