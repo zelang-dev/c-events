@@ -222,10 +222,7 @@ int remove_directory(http_t *conn, string_t dir) {
 	return ok;
 }
 
-static int scan_directory(http_t *conn,
-	string_t dir,
-	void *data,
-	int (*cb)(struct de *, void *)) {
+int scan_directory(http_t *conn,	string_t dir, void *data, int (*cb)(struct de *, void *)) {
 	char path[UTF8_PATH_MAX];
 	struct dirent *dp;
 	DIR *dirp;
@@ -310,7 +307,7 @@ static FORCEINLINE void *_scan_directory(param_t args) {
 	return casting(scan_directory((http_t *)args[0].object, args[1].const_char_ptr, args[2].object, (int (*)(struct de *, void *))args[3].func));
 }
 
-FORCEINLINE int fs_scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *)) {
+int fs_scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *)) {
 	return await_for(queue_work(events_pool(), _scan_directory, 4, conn, dir, data, cb)).integer;
 }
 
@@ -440,7 +437,7 @@ void sockaddr_to_str(char *buf, size_t len, const union usa *usa) {
 		/* TODO: Define a remote address for unix domain sockets.
 		* This code will always return "localhost", identical to http+tcp:*/
 		getnameinfo(&usa->sa, sizeof(usa->sun), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
-		//str_lcpy(buf, UNIX_DOMAIN_SOCKET_SERVER_NAME, len);
+		//str_lcpy(buf, UDS_SERVER_NAME, len);
 	}
 }
 
@@ -1340,27 +1337,27 @@ FORCEINLINE string_t http_suggest_connection_header(http_t *conn) {
 }
 
 void http_options(http_t *conn) {
-	char date[64];
-	time_t curtime;
+	if (is_empty(conn))
+		return;
 
-	if (is_empty(conn)) return;
-	if (is_empty(conn->ctx->document_root)) return;
+	/* We do not set a "Cache-Control" header here, but leave the default.
+	 * Since browsers do not send an OPTIONS request, we can not test the
+	 * effect anyway. */
 
-	curtime = time(NULL);
-	conn->status = (http_status)200;
-	conn->req.must_close = true;
+	http_response_start(conn, 200);
+	http_response_add(conn, "Content-Type", "text/html", -1);
 
-	http_gmt_time_str(date, sizeof(date), &curtime);
-	http_printf(conn,
-		"HTTP/1.1 200 OK" CRLF
-		"Date: %s" CRLF
-		/* TODO: "Cache-Control" (?) */
-		"Connection: %s" CRLF
-		"Allow: GET, POST, HEAD, CONNECT, PUT, DELETE, OPTIONS, "
-		"PROPFIND, MKCOL" CRLF
-		"DAV: 1" CRLF CRLF,
-		date,
-		http_suggest_connection_header(conn));
+	if (conn->req.proto == PROTOCOL_HTTP1) {
+		/* Use the same as before */
+		http_response_add(conn, "Allow",
+			"GET, POST, HEAD, CONNECT, PUT, DELETE, OPTIONS, PROPFIND, MKCOL", -1);
+		http_response_add(conn, "DAV", "1", -1);
+	} else {
+		/* TODO: Check this later for HTTP/2 */
+		http_response_add(conn, "Allow", "GET, POST", -1);
+	}
+	http_domain_header(conn);
+	http_response_send(conn);
 }
 
 static string_t log_level_str(enum http_dbg debug_level) {
@@ -1574,7 +1571,7 @@ static int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	return 1;
 }
 
-static int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
+int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	string_t cl;
 
 	conn->action = HTTP_REQUEST; /* request (valid of not) */

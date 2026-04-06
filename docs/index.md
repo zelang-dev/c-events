@@ -1191,8 +1191,8 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.7.0.zip
-        URL_MD5 093460e3f4fdd9f95e8c60c3b5cad919
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.7.1.zip
+        URL_MD5 0353278d6be4142db9e5b7ce85213a3d
     )
     FetchContent_MakeAvailable(events)
 endif()

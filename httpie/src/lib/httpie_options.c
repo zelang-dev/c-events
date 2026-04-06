@@ -666,7 +666,7 @@ FORCEINLINE ptrdiff_t http_match_prefix_strlen(string_t pattern, string_t str) {
 		return -1;
 	}
 
-	return http_match_prefix(pattern, strlen(pattern), str, NULL);
+	return http_match_prefix(pattern, strlen(pattern), str);
 }
 
 bool http_must_hide_file(http_ini_t *ctx, string_t path) {
@@ -1290,12 +1290,12 @@ enum uri_type_t http_get_uri_type(string_t uri) {
 		if (uri[i] == '%') {
 			if (uri[i + 1] == '0' && (uri[i + 2] == 'd' || uri[i + 2] == 'D')) {
 				/* Found %0d (CR) */
-				cerr("CRLF injection attempt detected: %s\r\n", uri);
+				debug_info("CRLF injection attempt detected: %s\r\n", uri);
 				return URI_TYPE_UNKNOWN;
 			}
 			if (uri[i + 1] == '0' && (uri[i + 2] == 'a' || uri[i + 2] == 'A')) {
 				/* Found %0a (LF) */
-				cerr("CRLF injection attempt detected: %s\r\n", uri);
+				debug_info("CRLF injection attempt detected: %s\r\n", uri);
 				return URI_TYPE_UNKNOWN;
 			}
 		}

@@ -6,13 +6,16 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
+#define _free free
 #if defined(RP_MALLOC_H)
 #	define memalign rp_memalign
 #	define malloc rp_malloc
 #	define calloc rp_calloc
 #	define realloc rp_realloc
+#	define malloc_usable_size rp_malloc_usable_size
 #	define free(ptr) rpfree((void*)(ptr))
-#	define free_final rp_free
+#	undef _free
+#	define _free rpfree
 #endif
 
 /* Unsigned types. */

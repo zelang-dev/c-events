@@ -15,6 +15,7 @@ set(httpie_files ${httpie_files}
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_ws.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_response.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_zlib.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_quickjs.c
 )
 
 if(BUILD_SHARED_LIBS)
@@ -55,6 +56,22 @@ endif()
 target_include_directories(${SUB_PROJECT}
 	PRIVATE $<BUILD_INTERFACE:${ZLIB_INCLUDE_DIRS} $<INSTALL_INTERFACE:${ZLIB_INCLUDE_DIRS})
 target_link_libraries(${SUB_PROJECT} PUBLIC ${ZLIB_LIBRARIES})
+
+find_package(quickjs QUIET)
+if(NOT quickjs_FOUND)
+    FetchContent_Declare(quickjs
+        URL https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.13.0.zip
+        URL_MD5 f78a59d68dfb75f90b4320c1901237f2
+    )
+    option(QJS_BUILD_LIBC "Enable building standard library" ON)
+    set(QJS_BUILD_LIBC ON CACHE BOOL "BUILD standard library" FORCE)
+    option(QJS_BUILD_EXAMPLES "Enable Test building" OFF)
+    set(QJS_BUILD_EXAMPLES OFF CACHE BOOL "BUILD Tests" FORCE)
+    FetchContent_MakeAvailable(quickjs)
+endif()
+target_include_directories(${SUB_PROJECT}
+	PRIVATE $<BUILD_INTERFACE:${quickjs_INCLUDE_DIRS} $<INSTALL_INTERFACE:${quickjs_INCLUDE_DIRS})
+target_link_libraries(${SUB_PROJECT} PUBLIC qjs)
 
 set_target_properties(${SUB_PROJECT} PROPERTIES
 	OUTPUT_NAME ${SUB_PROJECT}

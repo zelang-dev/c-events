@@ -42,8 +42,16 @@
 #define FILE_COMPRESSION_SIZE_LIMIT (1024) /* in bytes */
 #endif
 
-#if !defined(UNIX_DOMAIN_SOCKET_SERVER_NAME)
-#define UNIX_DOMAIN_SOCKET_SERVER_NAME "*"
+#if !defined(UDS_SERVER_NAME)
+#define UDS_SERVER_NAME "*"
+#endif
+
+#if !defined(NUM_WEBDAV_LOCKS)
+#define NUM_WEBDAV_LOCKS 10
+#endif
+
+#if !defined(LOCK_DURATION_S)
+#define LOCK_DURATION_S 60
 #endif
 
 #define PASSWORDS_FILE_NAME	".htpasswd"
@@ -360,6 +368,13 @@ struct ini_domain_s {
 	struct http_cb_info *handlers; /* linked list of uri handlers */
 };
 
+struct twebdav_lock {
+	uint64_t locktime;
+	char token[33];
+	char path[UTF8_PATH_MAX * 2];
+	char user[UTF8_PATH_MAX * 2];
+};
+
 struct http_ini_s {
 	/* Should we stop event loop */
 	volatile enum http_status_t status;
@@ -371,6 +386,8 @@ struct http_ini_s {
 	/* Memory related */
 	/* The max request size */
 	unsigned int max_request_size;
+	/* WebDAV lock structures */
+	struct twebdav_lock webdav_lock[NUM_WEBDAV_LOCKS];
 	/* Server start time, used for authentication */
 	time_t start_time;
 	/* Server nonce */
@@ -655,6 +672,7 @@ bool http_set_uid_option(http_ini_t *ctx);
 
 /* Sets the ACL option for a context. */
 bool http_set_acl_option(http_ini_t *ctx);
+int http_get_option_index(string_t name);
 
 /* A helper function for traversing a comma separated list of values.
  * It returns a list pointer shifted to the next value, or NULL if the end
@@ -666,7 +684,7 @@ string_t http_next_option(string_t list, struct vec *val, struct vec *eq_val);
 int http_parse_match_net(const struct vec *vec, const union usa *sa, int no_strict);
 
 /* Processes a request from a remote client. */
-bool http_get_request(http_ini_t *ctx, http_t *conn, int *err);
+int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
 
 /*
  * Set the port options for a context.
@@ -797,6 +815,7 @@ int check_authorization(http_t *conn, string_t path);
 int authorize(http_t *conn, struct file *filep, string_t realm);
 int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
 int remove_directory(http_t *conn, string_t dir);
+int fs_scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *));
 
 int is_authorized_for_put(http_t *conn);
 void http_compressed_data(http_t *conn, struct file *filep);

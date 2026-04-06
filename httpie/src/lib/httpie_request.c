@@ -777,6 +777,500 @@ C_API int http_get_request_link(http_t *conn, char *buf, size_t buflen) {
 	return construct_local_link((const http_t *)conn, buf, buflen, NULL, -1, NULL);
 }
 
+/* Writes PROPFIND properties for a collection element */
+static int print_props(http_t *conn, const char *uri, const char *name, struct file *filep) {
+	size_t i;
+	char mtime[64];
+	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
+	char *link_concat;
+	size_t link_concat_len;
+
+	if ((conn == NULL) || (uri == NULL) || (name == NULL) || (filep == NULL)) {
+		return 0;
+	}
+
+	link_concat_len = strlen(uri) + strlen(name) + 1;
+	link_concat = malloc(link_concat_len);
+	if (!link_concat) {
+		return 0;
+	}
+
+	strcpy(link_concat, uri);
+	strcat(link_concat, name);
+
+	/* Get full link used in request */
+	construct_local_link(conn, link_buf, sizeof(link_buf), NULL, 0, link_concat);
+
+	http_gmt_time_str(mtime, sizeof(mtime), &filep->last_modified);
+	http_printf(conn,
+		"<d:response>"
+		"<d:href>%s</d:href>"
+		"<d:propstat>"
+		"<d:prop>"
+		"<d:resourcetype>%s</d:resourcetype>"
+		"<d:getcontentlength>%" INT64_FMT "</d:getcontentlength>"
+		"<d:getlastmodified>%s</d:getlastmodified>"
+		"<d:lockdiscovery>",
+		link_buf,
+		filep->is_directory ? "<d:collection/>" : "",
+		filep->size,
+		mtime);
+
+	for (i = 0; i < NUM_WEBDAV_LOCKS; i++) {
+		struct twebdav_lock *dav_lock = conn->ctx->webdav_lock;
+		if (!strcmp(dav_lock[i].path, link_buf)) {
+			http_printf(conn,
+				"<d:activelock>"
+				"<d:locktype><d:write/></d:locktype>"
+				"<d:lockscope><d:exclusive/></d:lockscope>"
+				"<d:depth>0</d:depth>"
+				"<d:owner>%s</d:owner>"
+				"<d:timeout>Second-%u</d:timeout>"
+				"<d:locktoken>"
+				"<d:href>%s</d:href>"
+				"</d:locktoken>"
+				"</d:activelock>\n",
+				dav_lock[i].user,
+				(unsigned)LOCK_DURATION_S,
+				dav_lock[i].token);
+		}
+	}
+
+	http_printf(conn,
+		"</d:lockdiscovery>"
+		"</d:prop>"
+		"<d:status>HTTP/1.1 200 OK</d:status>"
+		"</d:propstat>"
+		"</d:response>\n");
+
+	free(link_concat);
+	return 1;
+}
+
+static int print_dav_dir_entry(struct de *de, void *data) {
+	http_t *conn = (http_t *)data;
+	if (!de || !conn
+		|| !print_props(conn, conn->req.local_uri, de->file_name, &de->file)) {
+	 	/* stop scan */
+		return 1;
+	}
+	return 0;
+}
+
+static void handle_propfind(http_t *conn, const char *path, struct file *filep) {
+	const char *depth = http_get_header(conn, "Depth");
+
+	if (!conn || !path || !filep || !conn->domain) {
+		return;
+	}
+
+	/* return 207 "Multi-Status" */
+	conn->req.must_close = 1;
+	http_response_start(conn, 207);
+	http_static_cache_header(conn);
+	http_domain_header(conn);
+	http_response_add(conn,
+		"Content-Type",
+		"application/xml; charset=utf-8",
+		-1);
+	http_response_send(conn);
+
+	/* Content */
+	http_printf(conn,
+		"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+		"<d:multistatus xmlns:d='DAV:'>\n");
+
+	/* Print properties for the requested resource itself */
+	print_props(conn, conn->req.local_uri, "", filep);
+
+	/* If it is a directory, print directory entries too if Depth is not 0 */
+	if (filep->is_directory && str_is_case(conn->domain->config[ENABLE_DIRECTORY_LISTING], "yes")
+		&& ((depth == NULL) || (strcmp(depth, "0") != 0))) {
+		//fs_scan_directory(conn, path, conn, &print_dav_dir_entry);
+	}
+
+	http_printf(conn, "%s\n", "</d:multistatus>");
+}
+
+static void dav_lock_file(http_t *conn, const char *path) {
+	/* internal function - therefore conn is assumed to be valid */
+	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
+	uint64_t new_locktime;
+	int lock_index = -1;
+	int i;
+	uint64_t LOCK_DURATION_NS =
+		(uint64_t)(LOCK_DURATION_S) * (uint64_t)1000000000;
+	struct twebdav_lock *dav_lock = NULL;
+
+	if (!path || !conn || !conn->domain || !conn->req.remote_user
+		|| !conn->ctx) {
+		return;
+	}
+
+	dav_lock = conn->ctx->webdav_lock;
+	http_get_request_link(conn, link_buf, sizeof(link_buf));
+
+	/* const char *refresh = http_get_header(conn, "If"); */
+	/* Link refresh should have an "If" header:
+	 * http://www.webdav.org/specs/rfc2518.html#n-example---refreshing-a-write-lock
+	 * But it seems Windows Explorer does not send them.
+	 */
+
+	atomic_lock(&conn->ctx->nonce_mutex);
+	new_locktime = events_now();
+
+	/* Find a slot for a lock */
+	while (lock_index < 0) {
+		/* find existing lock */
+		for (i = 0; i < NUM_WEBDAV_LOCKS; i++) {
+			if (!strcmp(dav_lock[i].path, link_buf)) {
+				if (!strcmp(conn->req.remote_user, dav_lock[i].user)) {
+					/* locked by the same user */
+					dav_lock[i].locktime = new_locktime;
+					lock_index = i;
+					break;
+				} else {
+					/* already locked by someone else */
+					if (new_locktime > (dav_lock[i].locktime + LOCK_DURATION_NS)) {
+						/* Lock expired */
+						dav_lock[i].path[0] = 0;
+					} else {
+						/* Lock still valid */
+						atomic_unlock(&conn->ctx->nonce_mutex);
+						http_error(conn, 423, "%s", "Already locked");
+						return;
+					}
+				}
+			}
+		}
+
+		/* create new lock token */
+		for (i = 0; i < NUM_WEBDAV_LOCKS; i++) {
+			if (dav_lock[i].path[0] == 0) {
+				char s[32];
+				dav_lock[i].locktime = events_now();
+				sprintf(s, "%" UINT64_FMT, (uint64_t)dav_lock[i].locktime);
+				http_md5(dav_lock[i].token,
+					link_buf,
+					"\x01",
+					s,
+					"\x01",
+					conn->req.remote_user,
+					NULL);
+				str_lcpy(dav_lock[i].path,
+					link_buf,
+					sizeof(dav_lock[i].path));
+				str_lcpy(dav_lock[i].user,
+					conn->req.remote_user,
+					sizeof(dav_lock[i].user));
+				lock_index = i;
+				break;
+			}
+		}
+		if (lock_index < 0) {
+			/* too many locks. Find oldest lock */
+			uint64_t oldest_locktime = dav_lock[0].locktime;
+			lock_index = 0;
+			for (i = 1; i < NUM_WEBDAV_LOCKS; i++) {
+				if (dav_lock[i].locktime < oldest_locktime) {
+					oldest_locktime = dav_lock[i].locktime;
+					lock_index = i;
+				}
+			}
+			/* invalidate oldest lock */
+			dav_lock[lock_index].path[0] = 0;
+		}
+	}
+	atomic_unlock(&conn->ctx->nonce_mutex);
+
+	/* return 200 "OK" */
+	conn->req.must_close = 1;
+	http_response_start(conn, 200);
+	http_static_cache_header(conn);
+	http_domain_header(conn);
+	http_response_add(conn,
+		"Content-Type",
+		"application/xml; charset=utf-8",
+		-1);
+	http_response_add(conn, "Lock-Token", dav_lock[lock_index].token, -1);
+	http_response_send(conn);
+
+	/* Content */
+	http_printf(conn,
+		"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+		"<d:prop xmlns:d=\"DAV:\">\n"
+		"     <d:lockdiscovery>\n"
+		"       <d:activelock>\n"
+		"         <d:lockscope><d:exclusive/></d:lockscope>\n"
+		"         <d:locktype><d:write/></d:locktype>\n"
+		"         <d:owner>\n"
+		"           <d:href>%s</d:href>\n"
+		"         </d:owner>\n"
+		"         <d:timeout>Second-%u</d:timeout>\n"
+		"         <d:locktoken><d:href>%s</d:href></d:locktoken>\n"
+		"         <d:lockroot>\n"
+		"           <d:href>%s</d:href>\n"
+		"         </d:lockroot>\n"
+		"       </d:activelock>\n"
+		"     </d:lockdiscovery>\n"
+		"   </d:prop>\n",
+		dav_lock[lock_index].user,
+		(LOCK_DURATION_S),
+		dav_lock[lock_index].token,
+		dav_lock[lock_index].path);
+}
+
+static void dav_unlock_file(http_t *conn, const char *path) {
+	/* internal function - therefore conn is assumed to be valid */
+	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
+	struct twebdav_lock *dav_lock = conn->ctx->webdav_lock;
+	int lock_index;
+
+	if (!path || !conn->domain || !conn->req.remote_user) {
+		return;
+	}
+
+	http_get_request_link(conn, link_buf, sizeof(link_buf));
+
+	atomic_lock(&conn->ctx->nonce_mutex);
+	/* find existing lock */
+	for (lock_index = 0; lock_index < NUM_WEBDAV_LOCKS; lock_index++) {
+		if (!strcmp(dav_lock[lock_index].path, link_buf)) {
+			/* Success: return 204 "No Content" */
+			atomic_unlock(&conn->ctx->nonce_mutex);
+			conn->req.must_close = 1;
+			http_response_start(conn, 204);
+			http_response_send(conn);
+			return;
+		}
+	}
+	atomic_unlock(&conn->ctx->nonce_mutex);
+
+	/* Error: Cannot unlock a resource that is not locked */
+	http_error(conn, 423, "%s", "Lock not found");
+}
+
+static void dav_proppatch(http_t *conn, const char *path) {
+	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
+
+	if (!conn || !path || !conn->domain) {
+		return;
+	}
+
+	/* return 207 "Multi-Status" */
+	conn->req.must_close = 1;
+	http_response_start(conn, 207);
+	http_static_cache_header(conn);
+	http_domain_header(conn);
+	http_response_add(conn,
+		"Content-Type",
+		"application/xml; charset=utf-8",
+		-1);
+	http_response_send(conn);
+
+	http_get_request_link(conn, link_buf, sizeof(link_buf));
+
+	/* Content */
+	http_printf(conn,
+		"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+		"<d:multistatus xmlns:d='DAV:'>\n"
+		"<d:response>\n<d:href>%s</d:href>\n",
+		link_buf);
+	http_printf(conn,
+		"<d:propstat><d:status>HTTP/1.1 403 "
+		"Forbidden</d:status></d:propstat>\n");
+	http_printf(conn, "%s\n", "</d:response></d:multistatus>");
+}
+
+static void dav_mkcol(http_t *conn, const char *path) {
+	int rc, body_len;
+	struct de de;
+
+	if (conn == NULL) {
+		return;
+	}
+
+	/* TODO (mid): Check the `http_error` situations in this function
+	 */
+
+	memset(&de.file, 0, sizeof(de.file));
+	if (!http_stat(conn, path, &de.file)) {
+		http_log(DEBUG_ERROR, conn,
+			"%s: http_stat(%s) failed: %s",
+			__func__,
+			path,
+			strerror(os_geterror()));
+	}
+
+	if (de.file.last_modified) {
+		/* TODO (mid): This check does not seem to make any sense ! */
+		/* TODO (mid): Add a webdav unit test first, before changing
+		 * anything here. */
+		http_error(
+			conn, 405, "Error: mkcol(%s): %s", path, strerror(os_geterror()));
+		return;
+	}
+
+	body_len = conn->req.data_len - conn->req.request_len;
+	if (body_len > 0) {
+		http_error(
+			conn, 415, "Error: mkcol(%s): %s", path, strerror(os_geterror()));
+		return;
+	}
+
+	rc = fs_mkdir(path, 0755);
+	debug_info("mkdir %s: %i", path, rc);
+	if (rc == 0) {
+		/* Create 201 "Created" response */
+		http_response_start(conn, 201);
+		http_static_cache_header(conn);
+		http_domain_header(conn);
+		http_response_add(conn, "Content-Length", "0", -1);
+
+		/* Send all headers - there is no body */
+		http_response_send(conn);
+	} else {
+		int http_status = 500;
+		switch (errno) {
+			case EEXIST:
+				http_status = 405;
+				break;
+			case EACCES:
+				http_status = 403;
+				break;
+			case ENOENT:
+				http_status = 409;
+				break;
+		}
+
+		http_error(conn,
+			http_status,
+			"Error processing %s: %s",
+			path,
+			strerror(os_geterror()));
+	}
+}
+
+static void dav_move_file(http_t *conn, const char *path, int do_copy) {
+	const char *overwrite_hdr;
+	const char *destination_hdr;
+	const char *root;
+	enum uri_type_t dest_uri_type;
+	int rc;
+	int http_status = 400;
+	int do_overwrite = 0;
+	int destination_ok = 0;
+	char dest_path[UTF8_PATH_MAX];
+	struct file ignored;
+
+	if (conn == NULL) {
+		return;
+	}
+
+	root = conn->domain->config[DOCUMENT_ROOT];
+	overwrite_hdr = http_get_header(conn, "Overwrite");
+	destination_hdr = http_get_header(conn, "Destination");
+	if ((overwrite_hdr != NULL) && (toupper(overwrite_hdr[0]) == 'T')) {
+		do_overwrite = 1;
+	}
+
+	if ((destination_hdr == NULL) || (destination_hdr[0] == 0)) {
+		http_error(conn, 400, "%s", "Missing destination");
+		return;
+	}
+
+	if (root != NULL) {
+		char *local_dest = NULL;
+		dest_uri_type = http_get_uri_type(destination_hdr);
+		if (dest_uri_type == URI_TYPE_RELATIVE) {
+			local_dest = str_dup_ex(destination_hdr);
+		} else if ((dest_uri_type == URI_TYPE_ABS_NOPORT) || (dest_uri_type == URI_TYPE_ABS_PORT)) {
+			const char *h =	http_get_rel_url_at_current_server(destination_hdr, conn);
+			if (h) {
+				size_t len = strlen(h);
+				local_dest = malloc(len + 1);
+				http_url_decode(h, (int)len, local_dest, (int)len + 1, 0);
+			}
+		}
+		if (local_dest != NULL) {
+			remove_dot_segments(local_dest);
+			if (local_dest[0] == '/') {
+				int trunc_check = 0;
+				http_snprintf(conn,
+					&trunc_check,
+					dest_path,
+					sizeof(dest_path),
+					"%s/%s",
+					root,
+					local_dest);
+				if (trunc_check == 0) {
+					destination_ok = 1;
+				}
+			}
+			free(local_dest);
+		}
+	}
+
+	if (!destination_ok) {
+		http_error(conn, 502, "%s", "Illegal destination");
+		return;
+	}
+
+	/* Check now if this file exists */
+	if (http_stat(conn, dest_path, &ignored)) {
+		/* File exists */
+		if (do_overwrite) {
+			/* Overwrite allowed: delete the file first */
+			if (0 != fs_unlink(dest_path)) {
+				/* No overwrite: return error */
+				http_error(conn, 403, "Cannot overwrite file: %s",
+					dest_path);
+				return;
+			}
+		} else {
+			/* No overwrite: return error */
+			http_error(conn, 412, "Destination already exists: %s",
+				dest_path);
+			return;
+		}
+	}
+
+	/* Copy / Move / Rename operation. */
+	debug_info("%s %s to %s", (do_copy ? "copy" : "move"), path, dest_path);
+	{
+		if (do_copy) {
+			rc = fs_copyfile(path, dest_path);
+		} else {
+			rc = fs_rename(path, dest_path);
+		}
+
+		if (rc) {
+			switch (errno) {
+				case EEXIST:
+					http_status = 412;
+					break;
+				case EACCES:
+					http_status = 403;
+					break;
+				case ENOENT:
+					http_status = 409;
+					break;
+			}
+		}
+	}
+
+	if (rc == 0) {
+		/* Create 204 "No Content" response */
+		http_response_start(conn, 204);
+		http_response_add(conn, "Content-Length", "0", -1);
+
+		/* Send all headers - there is no body */
+		http_response_send(conn);
+	} else {
+		http_error(conn, http_status, "Operation failed");
+	}
+}
+
 static void redirect_to_https_port(http_t *conn, int port) {
 	char target_url[BUF_LEN];
 	int truncated = 0;
@@ -1276,6 +1770,18 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 	(void)http_fclose(&filep); /* ignore error on read only file */
 }
 
+/* Check if the script file is in a path, allowed for script files.
+ * This can be used if uploading files is possible not only for the server
+ * admin, and the upload mechanism does not check the file extension.  */
+static int is_in_script_path(http_t *conn, const char *path)
+{
+	/* TODO (Feature): Add config value for allowed script path.
+	 * Default: All allowed. */
+	(void)conn;
+	(void)path;
+	return 1;
+}
+
 void handle_file_based_request(http_t *conn,
 	string_t path,
 	struct file *file) {
@@ -1294,7 +1800,7 @@ void handle_file_based_request(http_t *conn,
 			mg_exec_duktape_script(conn, path);
 		} else {
 			/* Script was in an illegal path */
-			mg_send_http_error(conn, 403, "%s", "Forbidden");
+			http_error(conn, 403, "%s", "Forbidden");
 		}
 		return;
 	}
@@ -1305,12 +1811,10 @@ void handle_file_based_request(http_t *conn,
 	for (cgi_config_idx = 0; cgi_config_idx < max; cgi_config_idx += inc) {
 		if (conn->domain->config[CGI_EXTENSIONS + cgi_config_idx] != NULL) {
 			if (http_match_prefix_strlen(
-				conn->domain->config[CGI_EXTENSIONS + cgi_config_idx],
-				path)
-	> 0) {
+				conn->domain->config[CGI_EXTENSIONS + cgi_config_idx], path) > 0) {
 				if (is_in_script_path(conn, path)) {
 					/* CGI scripts may support all HTTP methods */
-					handle_cgi_request(conn, path, cgi_config_idx);
+					//handle_cgi_request(conn, path, cgi_config_idx);
 				} else {
 					/* Script was in an illegal path */
 					http_error(conn, 403, "%s", "Forbidden");
@@ -1322,7 +1826,7 @@ void handle_file_based_request(http_t *conn,
 
 	if (http_match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], path) > 0) {
 		if (is_in_script_path(conn, path)) {
-			handle_ssi_file_request(conn, path, file);
+			//handle_ssi_file_request(conn, path, file);
 		} else {
 			/* Script was in an illegal path */
 			http_error(conn, 403, "%s", "Forbidden");
