@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
 		waitgroup_t wg = waitgroup(10);
 		ASSERT_FALSE(is_waitgroup(wg));
 
-		events_t *loop = events_thread_init();
+		events_t *loop = events_init_pool();
 		async_run(loop);
 		events_destroy(loop);
 	} else {

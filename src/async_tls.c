@@ -445,7 +445,7 @@ EVP_PKEY *rsa_pkey(int keylength) {
         return NULL;
     }
 
-	uint32_t fut = queue_work(events_pool(), thrd_worker_thread, 4, casting(ssl_generate_pkey), pkey, casting(keylength), casting(EVP_PKEY_RSA));
+	uint32_t fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_generate_pkey), pkey, casting(keylength), casting(EVP_PKEY_RSA));
 
 	if (!await_for(fut).boolean) {
 		EVP_PKEY_free(pkey);
@@ -495,13 +495,13 @@ X509 *x509_self(EVP_PKEY *pkey, const char *country, const char *org, const char
 }
 
 EVENTS_INLINE bool x509_self_export(EVP_PKEY *pkey, X509 *x509, const char *path_noext) {
-	uint32_t fut = queue_work(events_pool(), thrd_worker_thread, 4, casting(ssl_create_self), pkey, x509, path_noext);
+	uint32_t fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_create_self), pkey, x509, path_noext);
 
 	return await_for(fut).boolean;
 }
 
 EVENTS_INLINE bool x509_pkey_write(EVP_PKEY *pkey, X509 *x509) {
-	uint32_t fut = queue_work(events_pool(), thrd_worker_thread, 3, casting(ssl_x509_pkey_write), pkey, x509);
+	uint32_t fut = queue_work(futures_pool(), thrd_worker_thread, 3, casting(ssl_x509_pkey_write), pkey, x509);
 
 	return await_for(fut).boolean;
 }
@@ -934,8 +934,8 @@ static void *tls_client_handler(param_t args) {
 }
 
 EVENTS_INLINE void tls_handler(tls_client_cb connected, int client) {
-	if (!is_data(sys_event.cpu_index)
-		&& events_tasks_pool(events_create(sys_event.cpu_count)) < 0) {
+	if (!is_data(sys_event.tasks_cpu_idx)
+		&& events_create_pool(events_create(sys_event.cpu_count)) < 0) {
 		launch((launch_func_t)tls_client_handler, 2, client, connected);
 	} else {
 		int rid = go(tls_client_handler, 2, client, connected);

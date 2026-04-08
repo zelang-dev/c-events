@@ -110,15 +110,17 @@ static JSValue qjs_getoption(JSContext *ctx, JSValue this_val,
 }
 
 static FORCEINLINE void qjs_add_http_headers(JSContext *ctx, JSValue this_obj, http_t *conn) {
-	int i, cap = (int)hash_capacity(conn->headers);
+	int i, counter = 0, count = (int)hash_count(conn->headers), cap = (int)hash_capacity(conn->headers);
 	hash_pair_t *pair;
-	if (cap > 0) {
+	if (cap > 0 && count > 0) {
 		for (i = 0; i < cap; i++) {
 			pair = hash_buckets(conn->headers, i);
 			if (!hash_pair_is_null(pair)) {
 				string_t key = hash_pair_key(pair);
 				string_t value = hash_pair_value(pair).const_char_ptr;
 				JS_DefinePropertyValueStr(ctx, this_obj, key, JS_NewString(ctx, value), JS_PROP_C_W_E);
+				if (++counter == count)
+					break;
 			}
 		}
 	}

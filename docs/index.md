@@ -56,7 +56,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Add/recreate *tests and examples* some derived from **[libevent](https://github.com/libevent/libevent)**.
 * [x] Bug fix *tests and examples* for proper execution under **Windows** and **Linux**.
 * [x] Bug fix *tests and examples* for proper execution under **Apple macOS**.
-* [x] Complete implementation of `events_tasks_pool()`, a coroutine *thread pool* creation function for **Events API**.
+* [x] Complete implementation of `events_create_pool()`, a coroutine *thread pool* creation function for **Events API**.
 * [x] Implement `go()`, `waitgroup()` and `waitfor()`, functions to *manage/create* **tasks** to run in coroutine *thread pool*. Same behavior as **goroutine**.
 * [x] Complete implementation of a **Linux** `inotify_add_watch()` function for **Windows**. This includes additional functions `inotify_mask()`, `inotify_length()`, `inotify_name()`, `inotify_added()`, `inotify_removed()`, `inotify_modified()`, `inotify_next()` for simplified cross-platform access.
 * [x] Complete implementation of `inotify_add_watch()` for **macOS** aka **BSD** *platforms*.
@@ -78,11 +78,15 @@ Most function signatures are the same, just **passthru** to the **Operating Syst
 
 The Operating System **file descriptor** is represented by `fds_t` and `filefd_t`. For Windows, this system will create a `pseudo fd` that actually has all [Windows event system](https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-concepts) **mechanisms** *attached*. This action allows the creation of simpler a alternative *Linux* functions for *Windows* like `mkfifo()` **IPC**, and still in development `inotify_add_watch()` **file/directory monitor**, with same signatures. It's also the basics for `spawn()` **child process** *input/output* control. The functions `events_new_fd()` and `events_assign_fd()` was mainly for **Windows**,  but also available for **Linux** using [eventfd](https://man7.org/linux/man-pages/man2/eventfd.2.html) interface, and **Apple macOS** using [Darwin Notify](https://developer.apple.com/documentation/darwinnotify) functionality.
 
-This would also allow nonblocking file system handling. But for cross-platform simplicity, everything is a *pass-thru* to a thread pool instead. A default of `1`, which is automatically created with first `events_create()` **loop** `events_t` handle. An thread pool `os_worker_t` is created by calling `events_add_pool()` with a **loop** handle. The `os_worker_t` must be pass as first parameter to standard file system functions, a few currently implemented, all prefixed as **~async_fs_~**. These functions constructed as a wrapper call to `queue_work()` in coroutine to call thread handler. Using `events_add_pool()` is intended for *FileSystem/CPU* intensive workload offloading, NO actual **Events API** should be run in another thread, using this *thread pool*. That can be achieved using `events_tasks_pool()`, see [TODO's](#todos).
+This would also allow non-blocking file system handling. For cross-platform ease, everything is a *pass-thru* to a thread pool instead. A default of `one` is automatically created on first `events_create()` launch for `events_t`  **loop** handle.
 
-The *behavior/process* of coroutine *execution* in **c-raii** is setup for *automatically* creating/moving and putting **coroutines** in different *threads*. In which intergrating **libuv** into **c-asio** that feature had to be completely disabled on first `yield()` encounter, it's possibale, but reqquire more complexity or **thread local storage** introduction to **libuv** source, a major breaking change. Where `events_tasks_pool()` create a `os_tasks_t` thread pool, will be for explicitly running **Events API** in another *thread*.
+An thread pool is created by calling `events_create_future()` with a **loop** handle. This function returns an *future* handle that must be pass as first parameter to various *replacement* standard file system functions, a few currently implemented, all prefixed as **~async_fs_~**.
 
-The following "simple TCP proxy" example demonstrate the simplicity of using `events_add()` by way of a `async_wait()` call. The `read()` and `write()` functions only has `async_wait` called added. These routines only work correctly when user set **file descriptor** to *non-blocking*. The standard process of creating a **socket** is in embedded in `async_bind()`, `async_connect()`, `async_accept()`, and are the only functions that will set **non-blocking** by default. Functions `async_connect`, `async_accept` includes a `async_wait` call.
+* These functions are constructed as a wrapper call to `queue_work()` as a *coroutine/task* to *enqueue* the call to the actual thread handler.
+* Usage of `events_create_future()` is intended for *FileSystem/CPU* intensive workload offloading, NO actual **Events API** should be run in this thread, the **loop** handle is just required for internal setup.
+* The **Events API** behavior is more like [other languages Green threads](https://en.wikipedia.org/wiki/Green_thread#Green_threads_in_other_languages), it uses a different *thread pool* construction `events_create_pool()` with a **loop** handle. Only the `go()`, `uds_handler()`, `fs_events()`, `tls_handler()` and`accept_handler()` functions directly creates a *coroutine/task* to be executed in this separate thread pool.
+
+The following "simple TCP proxy" example demonstrate the **Events API** simplicity of using `events_add()` by way of a `async_wait()` call. The `read()` and `write()` functions only has `async_wait` called added. These routines only work correctly when user set **file descriptor** to *non-blocking*. The standard process of creating a **socket** is in embedded in `async_bind()`, `async_connect()`, `async_accept()`, and are the only functions that will set **non-blocking** by default. Functions `async_connect`, `async_accept` includes a `async_wait` call.
 
 **Run:**
 
@@ -403,28 +407,28 @@ C_API void tasks_stack_check(int n);
 /* Return `current` ~thread~ `events_t` ~loop~ handle. */
 C_API events_t *tasks_loop(void);
 
-/* Register an `event loop` handle to an `new` thread pool `os_worker_t` instance,
+/* Register an `event loop` handle to an `new` thread pool `future` instance,
 for `blocking` file/cpu ~system~ handling calls. */
-C_API os_worker_t *events_add_pool(events_t *loop);
+C_API future *events_create_future(events_t *loop);
 
 /* Send `signal` for all `thread` pool ~handles~ to shutdown,
 break `async_run()` loop. */
-C_API void events_shutdown_pool(void);
+C_API void events_pool_shutdown(void);
 
-/* Return `current/default` ~thread~ pool `os_worker_t` handle. */
-C_API os_worker_t *events_pool(void);
+/* Return an ~thread~ pool `future` handle. */
+C_API future *futures_pool(void);
 
 /* Register an `event loop` handle to an `new` ~thread~ `tasks/coroutine` pool.
 - This ~pool~ is where `go()` calls are executed in.
 - This function MUST be called at least ONCE before any ~`go()`~ execution,
 otherwise system will `panic/abort` on `go()`.
 - The maximin number of `pools` possible is tried to Operating System `cpu cores` available. */
-C_API int events_tasks_pool(events_t *loop);
+C_API int events_create_pool(events_t *loop);
 
 /* Setup/initialize all available `cpu cores`, and return `events_t` ~loop~ handle.
-- This function possibly calls `events_add_pool()` once, if not previous executed.
-- All remainding `cores` assigned by calling `events_tasks_pool()`. */
-C_API events_t *events_thread_init(void);
+- This function possibly calls `events_create_future()` once, if not previous executed.
+- All remainding `cores` assigned by calling `events_create_pool()`. */
+C_API events_t *events_init_pool(void);
 
 /* This runs the function `fn` in thread `thrd` pool,
 asynchronously in a separate `task`. Returns a `result id`
@@ -436,7 +440,7 @@ https://en.cppreference.com/w/cpp/thread/packaged_task.html
 MUST call `await_for()` to get any result.
 
 NOTE: This is setup to be just an `pass thru` for any function in an separate thread. */
-C_API uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...);
+C_API uint32_t queue_work(future *thrd, param_func_t fn, size_t num_args, ...);
 
 /* This waits aka `yield` until the `result id` termination, then retrieves
 the value stored. This is mainly for `queue_work()`, but also useful elsewhere.
@@ -460,7 +464,7 @@ to `x6` larger, if ~first~ aka `main task`. */
 C_API void async_ex(size_t stacksize, launch_func_t fn, uint32_t num_args, ...);
 
 /* Same as `async_task()`, except the ~`coroutine`~ `added/executed` in ~thread~ pool.
-WILL `panic/abort`, if `events_tasks_pool()` not set. */
+WILL `panic/abort`, if `events_create_pool()` not set. */
 C_API uint32_t go(param_func_t fn, size_t num_of_args, ...);
 
 /*  Low-level call sitting underneath `async_read` and `async_write`.
@@ -525,46 +529,46 @@ C_API char *gethostbyname_ip(struct hostent *host);
 
 /** Preform a non-blocking DNS lockup in separate `thrd` thread ~pool~ provided,
  returns ~struct~ `hostent` address. */
-C_API struct hostent *async_get_hostbyname(os_worker_t *thrd, char *hostname);
+C_API struct hostent *async_get_hostbyname(future *thrd, char *hostname);
 
 /** Preform a non-blocking DNS lockup in separate `thread`,
  returns ~struct~ `hostent` address. */
 C_API struct hostent *async_gethostbyname(char *hostname);
 
-C_API int async_get_addrinfo(os_worker_t *thrd, const char *name,
+C_API int async_get_addrinfo(future *thrd, const char *name,
  const char *service, const struct addrinfo *hints, addrinfo_t result);
 
 C_API int async_getaddrinfo(const char *name,
  const char *service, const struct addrinfo *hints, addrinfo_t result);
 
-C_API int async_fs_open(os_worker_t *thrd, const char *path, int flag, int mode);
+C_API int async_fs_open(future *thrd, const char *path, int flag, int mode);
 C_API int fs_open(const char *path, int flag, int mode);
 
-C_API int async_fs_read(os_worker_t *thrd, int fd, void *buf, uint32_t count);
+C_API int async_fs_read(future *thrd, int fd, void *buf, uint32_t count);
 C_API int fs_read(int fd, void *buf, uint32_t count);
 
-C_API int async_fs_write(os_worker_t *thrd, int fd, const void *buf, uint32_t count);
+C_API int async_fs_write(future *thrd, int fd, const void *buf, uint32_t count);
 C_API int fs_write(int fd, const void *buf, uint32_t count);
 
-C_API ssize_t async_fs_sendfile(os_worker_t *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
+C_API ssize_t async_fs_sendfile(future *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
 C_API ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
 
-C_API int async_fs_close(os_worker_t *thrd, int fd);
+C_API int async_fs_close(future *thrd, int fd);
 C_API int fs_close(int fd);
 
-C_API int async_fs_unlink(os_worker_t *thrd, const char *path);
+C_API int async_fs_unlink(future *thrd, const char *path);
 C_API int fs_unlink(const char *path);
 
-C_API int async_fs_mkdir(os_worker_t *thrd, const char *path, mode_t mode);
+C_API int async_fs_mkdir(future *thrd, const char *path, mode_t mode);
 C_API int fs_mkdir(const char *path, mode_t mode);
 
-C_API int async_fs_rmdir(os_worker_t *thrd, const char *path);
+C_API int async_fs_rmdir(future *thrd, const char *path);
 C_API int fs_rmdir(const char *path);
 
-C_API int async_fs_stat(os_worker_t *thrd, const char *path, struct stat *st);
+C_API int async_fs_stat(future *thrd, const char *path, struct stat *st);
 C_API int fs_stat(const char *path, struct stat *st);
 
-C_API int async_fs_access(os_worker_t *thrd, const char *path, int mode);
+C_API int async_fs_access(future *thrd, const char *path, int mode);
 C_API int fs_access(const char *path, int mode);
 
 C_API bool fs_exists(const char *path);

@@ -35,7 +35,7 @@ void *main_main(param_t args) {
 int main(int argc, char **argv) {
 	events_init(1024);
 	async_task(main_main, 0);
-	events_t *loop = events_thread_init();
+	events_t *loop = events_init_pool();
 	async_run(loop);
 	events_destroy(loop);
 

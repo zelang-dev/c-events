@@ -160,13 +160,14 @@ typedef struct events_deque_s {
 	array_t jobs;
 	waitgroup_t tasks;
 	events_t *loop;
+	future *pool;
 	events_cacheline_t _pad;
 	atomic_flag started, shutdown;
 	atomic_size_t available, top, bottom;
 	atomic_task_array_t array;
 } events_deque_t;
 
-struct _thread_worker {
+struct _future {
 	data_types type;
 	int id;
 	int last_fd;
@@ -175,14 +176,13 @@ struct _thread_worker {
 	char buffer[MAX_PATH];
 };
 
-struct _thread_tasks_worker {
+struct _future_tasks {
 	data_types type;
 	int id;
-	os_worker_t *pool;
 	events_deque_t *queue;
 };
 
-struct _request_worker {
+struct _promise {
 	data_types type;
 	int id;
 	int erred;
@@ -258,7 +258,10 @@ struct sys_events_s {
 	filefd_t pHandle;
 	char pNamed[FILENAME_MAX];
 	array_t gc;
-	array_t cpu_index;
+	/* `future` thread id index for `promise` pool */
+	array_t future_cpu_idx;
+	/* `tasks` thread id index for `run queue` pool */
+	array_t tasks_cpu_idx;
 	events_deque_t **local;
 	events_cacheline_t pad;
 	atomic_spinlock lock;
@@ -268,9 +271,11 @@ struct sys_events_s {
 	/* result id generator */
 	atomic_size_t result_id_generate;
 	/* Used to determent which thread's `run queue`
-	receive next `task`, `count % (task thread pool)`,
-	must not be greater than cpu cores */
-	atomic_size_t thrd_id_count;
+	receive next `task`, `count % (thread tasks pool)` */
+	atomic_size_t tasks_id_count;
+	/* Used to determent which thread's `job queue`
+	receive next `promise`, `count % (thread future pool)` */
+	atomic_size_t future_id_count;
 	atomic_size_t num_loops;
 #if __APPLE__ && __MACH__
 	atomic_results_t results;
@@ -582,7 +587,7 @@ void task_func(void);
 tasks_t *task_derive(void *memory, size_t heapsize, bool is_thread);
 void task_switch(tasks_t *co);
 uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
-void thread_result_set(os_request_t *p, void *res);
+void promise_set(promise *p, void *res);
 uint32_t task_push(tasks_t *t, bool has_result);
 void *task_erred(tasks_t *t, int code);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping);

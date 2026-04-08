@@ -1084,7 +1084,7 @@ int scope_deferred(ex_memory_t *scope, func_t func, void *data) {
 	return TASK_ERRED;
 }
 
-void scope_request_erred(os_request_t *p, ex_context_t err) {
+void promise_erred(promise *p, ex_context_t err) {
 	atomic_lock(&p->mutex);
 	p->scope->err = (void *)err.ex;
 	p->scope->_panic = err._panic;
@@ -1093,7 +1093,7 @@ void scope_request_erred(os_request_t *p, ex_context_t err) {
 	atomic_flag_test_and_set(&p->done);
 }
 
-void scope_request_rethrow(os_request_t *p) {
+void promise_rethrow(promise *p) {
 	if (data_type(p) == DATA_JOBS) {
 		p->type = DATA_INVALID;
 		atomic_flag_clear(&p->mutex);

@@ -189,7 +189,7 @@ void http_stop(http_ini_t *ctx) {
 	if (ctx->status == HTTP_STATUS_RUNNING)
 		ctx->status = HTTP_STATUS_TERMINATED;
 
-	events_shutdown_pool();
+	events_pool_shutdown();
 	/* Wait until everything has stopped. */
 	os_sleep(5);
 	http_free_ini(ctx);
@@ -336,7 +336,7 @@ static void http_server_task(param_t args) {
 
 int http_server(http_ini_t *ctx) {
 	int i;
-	events_t *loop = events_thread_init();
+	events_t *loop = events_init_pool();
 	if (!is_empty(ctx) && !is_empty(loop)) {
 		ctx->status = HTTP_STATUS_RUNNING;
 		for (i = 0; i < ctx->num_listening_sockets; i++)

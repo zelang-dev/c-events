@@ -148,8 +148,9 @@ typedef struct {
 typedef struct coro_events_s coroutine_t;
 typedef struct events_task_s tasks_t;
 typedef struct execinfo_s execinfo_t;
-typedef struct _thread_worker os_worker_t;
-typedef struct _thread_tasks_worker os_tasks_t;
+/* thread pool handle */
+typedef struct _future future;
+typedef struct _future_tasks future_tasks_t;
 typedef void (*exit_cb)(int exit_status, int term_signal);
 typedef void (*watch_cb)(int wd, events_monitors mask, const char *namepath, void *filter);
 typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
@@ -337,46 +338,46 @@ C_API char *gethostbyname_ip(struct hostent *host);
 
 /** Preform a non-blocking DNS lockup in separate `thrd` thread ~pool~ provided,
  returns ~struct~ `hostent` address. */
-C_API struct hostent *async_get_hostbyname(os_worker_t *thrd, char *hostname);
+C_API struct hostent *async_get_hostbyname(future *thrd, char *hostname);
 
 /** Preform a non-blocking DNS lockup in separate `thread`,
  returns ~struct~ `hostent` address. */
 C_API struct hostent *async_gethostbyname(char *hostname);
 
-C_API int async_get_addrinfo(os_worker_t *thrd, const char *name,
+C_API int async_get_addrinfo(future *thrd, const char *name,
 	const char *service, const struct addrinfo *hints, addrinfo_t result);
 
 C_API int async_getaddrinfo(const char *name,
 	const char *service, const struct addrinfo *hints, addrinfo_t result);
 
-C_API int async_fs_open(os_worker_t *thrd, const char *path, int flag, int mode);
+C_API int async_fs_open(future *thrd, const char *path, int flag, int mode);
 C_API int fs_open(const char *path, int flag, int mode);
 
-C_API int async_fs_read(os_worker_t *thrd, int fd, void *buf, uint32_t count);
+C_API int async_fs_read(future *thrd, int fd, void *buf, uint32_t count);
 C_API int fs_read(int fd, void *buf, uint32_t count);
 
-C_API int async_fs_write(os_worker_t *thrd, int fd, const void *buf, uint32_t count);
+C_API int async_fs_write(future *thrd, int fd, const void *buf, uint32_t count);
 C_API int fs_write(int fd, const void *buf, uint32_t count);
 
-C_API ssize_t async_fs_sendfile(os_worker_t *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
+C_API ssize_t async_fs_sendfile(future *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
 C_API ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
 
-C_API int async_fs_close(os_worker_t *thrd, int fd);
+C_API int async_fs_close(future *thrd, int fd);
 C_API int fs_close(int fd);
 
-C_API int async_fs_unlink(os_worker_t *thrd, const char *path);
+C_API int async_fs_unlink(future *thrd, const char *path);
 C_API int fs_unlink(const char *path);
 
-C_API int async_fs_mkdir(os_worker_t *thrd, const char *path, mode_t mode);
+C_API int async_fs_mkdir(future *thrd, const char *path, mode_t mode);
 C_API int fs_mkdir(const char *path, mode_t mode);
 
-C_API int async_fs_rmdir(os_worker_t *thrd, const char *path);
+C_API int async_fs_rmdir(future *thrd, const char *path);
 C_API int fs_rmdir(const char *path);
 
-C_API int async_fs_stat(os_worker_t *thrd, const char *path, struct stat *st);
+C_API int async_fs_stat(future *thrd, const char *path, struct stat *st);
 C_API int fs_stat(const char *path, struct stat *st);
 
-C_API int async_fs_access(os_worker_t *thrd, const char *path, int mode);
+C_API int async_fs_access(future *thrd, const char *path, int mode);
 C_API int fs_access(const char *path, int mode);
 
 C_API bool fs_exists(const char *path);

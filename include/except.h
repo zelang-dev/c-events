@@ -357,7 +357,7 @@ will mark exception handled, if `true`.
     } catch_if {                             	\
         scope_unwind((_g_scope)->scope);				\
         if (!(_g_scope)->scope->is_recovered && try_caught(try_message())) \
-            scope_request_erred(error, ex_err);	\
+            promise_erred(error, ex_err);	\
     } finally {                                 \
 		guard_reset(_g_scope, _g_arena, _g_set, _g_unwind);	\
     }                                     		\
@@ -395,7 +395,7 @@ C_API ex_memory_t *get_scope(void);
 C_API ex_memory_t *scope_init(void);
 C_API void *scope_arena(void);
 C_API void scope_unwind(ex_memory_t *scope);
-C_API void scope_request_erred(os_request_t *p, ex_context_t err);
+C_API void promise_erred(promise *p, ex_context_t err);
 C_API int exit_scope(void);
 
 /* Returns an ~protected~ memory pointer from ~current~ `scoped` context, aka `RAII`.

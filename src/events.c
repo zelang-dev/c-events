@@ -67,7 +67,7 @@ typedef struct {
 	uint32_t num_others_ran;
 	/* per thread event loop */
 	events_t *loop;
-	os_worker_t *pool;
+	future *pool;
 	tasks_t *sleep_handle;
 	/* record which task is executing for scheduler */
 	tasks_t *running;
@@ -108,7 +108,6 @@ static void task_scheduler_switch(void);
 static void task_sleep_switch(void);
 static int tasks_schedulering(bool do_io);
 static void *task_wait_system(void *v);
-static void defer_cleanup(tasks_t *t);
 static void enqueue_tasks(tasks_t *t);
 
 #include "deque.c"
@@ -125,15 +124,12 @@ EVENTS_INLINE bool events_is_destroy(void) {
 	return __thrd()->loop == NULL;
 }
 
-EVENTS_INLINE os_worker_t *events_pool(void) {
-	return __thrd()->pool;
-}
-
 EVENTS_INLINE int events_set_allocator(malloc_cb local_malloc, realloc_cb local_realloc, calloc_cb local_calloc,
 	free_cb local_free) {
 	if (local_malloc == NULL || local_realloc == NULL ||
 		local_calloc == NULL || local_free == NULL) {
-		return -4072;
+		errno = EINVAL;
+		return -1;
 	}
 
 	events_allocators.local_malloc = local_malloc;
@@ -202,7 +198,7 @@ int events_init(int max_fd) {
 	atomic_init(&sys_event.fds, NULL);
 	atomic_init(&sys_event.results, NULL);
 	atomic_init(&sys_event.result_id_generate, 0);
-	atomic_init(&sys_event.thrd_id_count, 0);
+	atomic_init(&sys_event.tasks_id_count, 0);
 	atomic_init(&sys_event.id_generate, 0);
 	atomic_init(&sys_event.num_loops, 0);
 	atomic_flag_clear(&sys_event.loop_signaled);
@@ -216,7 +212,8 @@ int events_init(int max_fd) {
 	atomic_init(&sys_event.fds, fds);
 	atexit(events_deinit);
 	sys_event.max_fd = max_fd;
-	sys_event.cpu_index = NULL;
+	sys_event.tasks_cpu_idx = NULL;
+	sys_event.future_cpu_idx = NULL;
 	sys_event.gc = NULL;
 	sys_event.cpu_count = tasks_cpu_count();
 	sys_event.queue_size = data_queue_size();
@@ -272,9 +269,14 @@ EVENTS_INLINE void events_deinit(void) {
 		sys_event.gc = NULL;
 	}
 
-	if (is_data(sys_event.cpu_index)) {
-		$delete(sys_event.cpu_index);
-		sys_event.cpu_index = NULL;
+	if (is_data(sys_event.tasks_cpu_idx)) {
+		$delete(sys_event.tasks_cpu_idx);
+		sys_event.tasks_cpu_idx = NULL;
+	}
+
+	if (is_data(sys_event.future_cpu_idx)) {
+		$delete(sys_event.future_cpu_idx);
+		sys_event.future_cpu_idx = NULL;
 	}
 
 	if (__thrd()->sleep_handle != NULL
@@ -699,7 +701,7 @@ int events_init_loop_internal(events_t *loop, int max_timeout) {
 		__thrd()->loop = loop;
 
 	if (__thrd()->is_main && __thrd()->pool == NULL) {
-		__thrd()->pool = events_add_pool(loop);
+		__thrd()->pool = events_create_future(loop);
 	}
 
 	return 0;
@@ -1672,12 +1674,14 @@ uint32_t task_push(tasks_t *t, bool has_result) {
 		t->cid = (uint32_t)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
 		t->rid = (has_result) ? tasks_create_result()->id : NO_RESULT;
 
+		/* keep track of tasks in waitgroup */
 		if (c->group_active && c->task_group != NULL && !c->group_finish) {
 			is_group = true;
 			t->waiting = true;
 			$append(c->task_group->group, t);
 		}
 
+		/* only single threaded tasks get directly added to `run queue` */
 		if (!t->is_threaded) {
 			t->tid = __thrd()->thrd_id;
 			__thrd()->task_count++;
@@ -1685,8 +1689,10 @@ uint32_t task_push(tasks_t *t, bool has_result) {
 			t->taken = true;
 			tasklist_t *l = __thrd()->run_queue;
 			enqueue(l, t);
-		} else if (!is_group) {
-			t->tid = sys_event.cpu_index[(atomic_fetch_add(&sys_event.thrd_id_count, 1) % $size(sys_event.cpu_index))].u_int;
+		} else if (!is_group) { /* exclude waitgroup tacks, already added */
+			/* determents which thread `run queue` receive `task` */
+			t->tid = sys_event.tasks_cpu_idx[(atomic_fetch_add(&sys_event.tasks_id_count, 1) % $size(sys_event.tasks_cpu_idx))].u_int;
+			/* only add `thread id` to global `results` array when set */
 			if (has_result) {
 				results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
 				results[t->rid]->tid = t->tid;
@@ -1709,8 +1715,8 @@ static void accept_client_handler(param_t args) {
 }
 
 EVENTS_INLINE void accept_handler(client_cb connected, int client) {
-	if (!is_data(sys_event.cpu_index)
-		&& events_tasks_pool(events_create(sys_event.cpu_count)) < 0) {
+	if (!is_data(sys_event.tasks_cpu_idx)
+		&& events_create_pool(events_create(sys_event.cpu_count)) < 0) {
 		launch((launch_func_t)accept_client_handler, 2, client, connected);
 	} else {
 		param_t params = arrays(2, client, connected);
@@ -1920,8 +1926,8 @@ static void tasks_poster(waitgroup_t wg) {
 		int c, i, k;
 		if (t->group_finish && t->task_group && !t->task_group->taken && t->task_group->threaded) {
 			t->task_group->taken = true;
-			for (i = 0; i < $size(sys_event.cpu_index); i++) {
-				k = sys_event.cpu_index[i].u_int;
+			for (i = 0; i < $size(sys_event.tasks_cpu_idx); i++) {
+				k = sys_event.tasks_cpu_idx[i].u_int;
 				events_deque_t *q = sys_event.local[k];
 				for (c = 0; c < wg->capacity; c++) {
 					tasks_t *t = (tasks_t *)$pop(wg->group).object;
@@ -1931,8 +1937,8 @@ static void tasks_poster(waitgroup_t wg) {
 				q->tasks = wg;
 			}
 
-			for (i = 0; i < $size(sys_event.cpu_index); i++) {
-				events_deque_t *q = sys_event.local[(sys_event.cpu_index[i].u_int)];
+			for (i = 0; i < $size(sys_event.tasks_cpu_idx); i++) {
+				events_deque_t *q = sys_event.local[(sys_event.tasks_cpu_idx[i].u_int)];
 				atomic_flag_test_and_set(&q->started);
 			}
 		}
@@ -1941,7 +1947,7 @@ static void tasks_poster(waitgroup_t wg) {
 
 uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 	atomic_compiler_fence();
-	if (is_data(sys_event.cpu_index) && $size(sys_event.cpu_index) > 0) {
+	if (is_data(sys_event.tasks_cpu_idx) && $size(sys_event.tasks_cpu_idx) > 0) {
 		va_list ap;
 
 		va_start(ap, num_of_args);
@@ -1955,7 +1961,7 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 #endif
 	}
 
-	panicking("MUST call `events_tasks_pool()` first!");
+	panicking("MUST call `events_create_pool()` first!");
 	return TASK_ERRED;
 }
 
@@ -1974,8 +1980,8 @@ EVENTS_INLINE events_t *tasks_loop(void) {
 waitgroup_t waitgroup(uint32_t capacity) {
 	atomic_thread_fence(memory_order_seq_cst);
 	waitgroup_t wg = NULL;
-	if (is_data(sys_event.cpu_index) && $size(sys_event.cpu_index) > 0) {
-		size_t i, active_cores = $size(sys_event.cpu_index), resized = capacity / (active_cores + 1);
+	if (is_data(sys_event.tasks_cpu_idx) && $size(sys_event.tasks_cpu_idx) > 0) {
+		size_t i, active_cores = $size(sys_event.tasks_cpu_idx), resized = capacity / (active_cores + 1);
 		wg = task_group();
 		if ($capacity(wg->group) < capacity)
 			$reserve(wg->group, capacity + 1);
@@ -1985,7 +1991,7 @@ waitgroup_t waitgroup(uint32_t capacity) {
 		wg->count = active_cores;
 
 		for (i = 0; i < active_cores; i++) {
-			events_deque_t *q = sys_event.local[sys_event.cpu_index[i].max_size];
+			events_deque_t *q = sys_event.local[sys_event.tasks_cpu_idx[i].max_size];
 			if (is_ptr_usable(q) && is_data(q->jobs)) {
 				if ($capacity(q->jobs) < resized) {
 					atomic_lock($lock(q->jobs));
@@ -2361,10 +2367,10 @@ static bool task_take(events_deque_t *queue) {
 	return work_taken;
 }
 
-void thread_result_set(os_request_t *p, void *res) {
+void promise_set(promise *p, void *res) {
 	atomic_lock(&p->mutex);
 	if (!is_empty(res)) {
-		if (res == casting(-1))
+		if (res == casting(DATA_INVALID))
 			p->erred = errno;
 
 		if (is_data(res)) {
@@ -2408,7 +2414,7 @@ static void *__tasks_pool_main(param_t args) {
 }
 
 static int __tasks_pool_wrapper(void *arg) {
-	os_tasks_t *work = (os_tasks_t *)arg;
+	future_tasks_t *work = (future_tasks_t *)arg;
 	events_deque_t *queue = work->queue;
 	events_t *loop = queue->loop;
 	uint32_t status, res = TASK_ERRED, tid = work->id;
@@ -2419,7 +2425,7 @@ static int __tasks_pool_wrapper(void *arg) {
 
 	__thrd()->loop = loop;
 	if ((int)async_task_ex(Kb(32), __tasks_pool_main, 2, queue, loop) > 0) {
-		__thrd()->pool = work->pool;
+		__thrd()->pool = work->queue->pool;
 		res = 0;
 		do {
 			if (!__thrd()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
@@ -2450,45 +2456,44 @@ static int __tasks_pool_wrapper(void *arg) {
 	return res;
 }
 
-events_t *events_thread_init(void) {
+events_t *events_init_pool(void) {
 	atomic_compiler_fence();
 	if (__thrd()->loop == NULL)
-		events_add_pool(events_create(sys_event.cpu_count));
+		events_create_future(events_create(sys_event.cpu_count));
 
 	int i = __thrd()->loop->loop_id;
 	for (i; i < sys_event.cpu_count; i++)
-		events_tasks_pool(events_create(sys_event.cpu_count));
+		events_create_pool(events_create(sys_event.cpu_count));
 
 	return __thrd()->loop;
 }
 
-int events_tasks_pool(events_t *loop) {
+int events_create_pool(events_t *loop) {
 	atomic_compiler_fence();
 	events_deque_t **local = sys_event.local;
-	os_tasks_t *t_work = NULL;
+	future_tasks_t *t_work = NULL;
 	int save_err = errno, index = loop->loop_id;
 	errno = EINVAL;
 	if (index <= sys_event.cpu_count && local[index] == NULL) {
 		errno = ENOMEM;
 		if ((local[index] = (events_deque_t *)events_malloc(sizeof(events_deque_t)))) {
 			deque_init(local[index], sys_event.queue_size);
-			if ((t_work = events_calloc(1, sizeof(os_tasks_t)))) {
+			if ((t_work = events_calloc(1, sizeof(future_tasks_t)))) {
 				t_work->id = (int)index;
 				t_work->queue = local[index];
 				t_work->queue->jobs = array();
 				t_work->queue->loop = loop;
-				t_work->pool = __thrd()->pool;
+				t_work->queue->pool = __thrd()->pool;
 				t_work->type = DATA_POOL;
 				local[index]->thread = os_create(__tasks_pool_wrapper, (void *)t_work);
 				if (local[index]->thread != OS_NULL) {
-					if (sys_event.cpu_index == NULL)
-						sys_event.cpu_index = array();
+					if (sys_event.tasks_cpu_idx == NULL)
+						sys_event.tasks_cpu_idx = array();
 
 					errno = save_err;
-					$append_unsigned(sys_event.cpu_index, index);
+					$append_unsigned(sys_event.tasks_cpu_idx, index);
 					return 0;
 				}
-				errno = EAGAIN;
 			}
 		}
 	} else if (is_ptr_usable(local[index])) {
@@ -2499,8 +2504,8 @@ int events_tasks_pool(events_t *loop) {
 	return TASK_ERRED;
 }
 
-static int __threads_wrapper(void *arg) {
-	os_worker_t *work = (os_worker_t *)arg;
+static int __future_wrapper(void *arg) {
+	future *work = (future *)arg;
 	events_deque_t *queue = work->queue;
 	values_t res[1] = {0};
 	int status = 0, tid = work->id;
@@ -2514,10 +2519,10 @@ static int __threads_wrapper(void *arg) {
 			atomic_fetch_sub(&queue->available, 1);
 			atomic_lock(&work->mutex);
 			errno = 0;
-			os_request_t *worker = (os_request_t *)$shift(queue->jobs).object;
+			promise *worker = (promise *)$shift(queue->jobs).object;
 			atomic_unlock(&work->mutex);
 			res->object = worker->func(worker->args);
-			thread_result_set(worker, res->object);
+			promise_set(worker, res->object);
 			$delete(worker->args);
 		} else {
 			os_sleep(1);
@@ -2545,23 +2550,31 @@ static int __threads_wrapper(void *arg) {
 	return status;
 }
 
-os_worker_t *events_add_pool(events_t *loop) {
+future *events_create_future(events_t *loop) {
 	events_deque_t **local = sys_event.local;
-	os_worker_t *f_work = NULL;
-	int index = loop->loop_id;
+	future *f_work = NULL;
+	int save_err = errno, index = loop->loop_id;
 	if (index <= sys_event.cpu_count && local[index] == NULL) {
+		errno = ENOMEM;
 		if ((local[index] = (events_deque_t *)events_malloc(sizeof(events_deque_t)))) {
 			deque_init(local[index], sys_event.queue_size);
-			if ((f_work = events_calloc(1, sizeof(os_worker_t)))) {
+			if ((f_work = events_calloc(1, sizeof(future)))) {
 				atomic_flag_clear(&f_work->mutex);
 				f_work->id = (int)index;
 				f_work->queue = local[index];
 				f_work->queue->jobs = array();
 				f_work->queue->loop = loop;
+				f_work->queue->pool = f_work;
 				f_work->last_fd = TASK_ERRED;
 				f_work->type = DATA_THREAD;
-				local[index]->thread = os_create(__threads_wrapper, (void *)f_work);
-				if (local[index]->thread == OS_NULL) {
+				local[index]->thread = os_create(__future_wrapper, (void *)f_work);
+				if (local[index]->thread != OS_NULL) {
+					if (sys_event.future_cpu_idx == NULL)
+						sys_event.future_cpu_idx = array();
+
+					errno = save_err;
+					$append_unsigned(sys_event.future_cpu_idx, index);
+				} else {
 					events_free(f_work);
 					f_work = NULL;
 				}
@@ -2569,13 +2582,21 @@ os_worker_t *events_add_pool(events_t *loop) {
 		}
 	}
 
-	if (f_work == NULL && __thrd()->pool)
+	if (f_work == NULL && __thrd()->pool) {
+		errno = save_err;
 		return __thrd()->pool;
+	}
 
 	return f_work;
 }
 
-void events_shutdown_pool(void) {
+EVENTS_INLINE future *futures_pool(void) {
+	return (is_data(sys_event.future_cpu_idx) && $size(sys_event.future_cpu_idx) > 0)
+		? sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count) % ($size(sys_event.future_cpu_idx)))].u_int]->pool
+		: __thrd()->pool;
+}
+
+void events_pool_shutdown(void) {
 	events_deque_t **queue = sys_event.local;
 	if (!is_empty(queue) && deque_thread_set) {
 		size_t i, count = atomic_load(&sys_event.num_loops);

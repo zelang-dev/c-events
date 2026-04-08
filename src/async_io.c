@@ -230,7 +230,7 @@ int async_write(int fd, void *buf, int n) {
 	return tot;
 }
 
-EVENTS_INLINE void enqueue_request(os_worker_t *j, os_request_t *r) {
+EVENTS_INLINE void enqueue_promise(future *j, promise *r) {
 	atomic_lock(&j->mutex);
 	events_deque_t *queue = sys_event.local[j->id];
 	$append(queue->jobs, r);
@@ -252,15 +252,15 @@ static uint32_t async_loop(events_t *loop, size_t heapsize, param_func_t fn, uin
 }
 
 static void *queue_work_handler(param_t args) {
-	os_worker_t *thrd = args[0].object;
-	os_request_t *job = args[1].object;
+	future *thrd = args[0].object;
+	promise *job = args[1].object;
 	job->id = task_id();
 	job->erred = 0;
 
 	task_name("queue_work #%d", job->id);
 	atomic_flag_test_and_set(&thrd->queue->started);
 
-	enqueue_request(thrd, job);
+	enqueue_promise(thrd, job);
 	yield_task();
 	while (!atomic_flag_load(&job->done)) {
 		tasks_info(active_task(), 1);
@@ -274,19 +274,21 @@ static void *queue_work_handler(param_t args) {
 	return job->result->value.object;
 }
 
-uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...) {
+uint32_t queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 	va_list ap;
 
 	va_start(ap, num_args);
 	array_t args = data_ex(num_args, ap);
 	va_end(ap);
 
-	os_request_t *f = (os_request_t*)events_calloc(1, sizeof(os_request_t));
+	promise *f = (promise*)events_calloc(1, sizeof(promise));
 	f->args = args;
 	f->func = fn;
 	f->type = DATA_JOBS;
 	atomic_flag_clear(&f->mutex);
 	atomic_flag_clear(&f->done);
+	if (thrd->id == sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count) % ($size(sys_event.future_cpu_idx)))].u_int]->pool->id)
+		atomic_fetch_add(&sys_event.future_id_count, 1);
 	uint32_t id = async_loop(thrd->queue->loop, Kb(64), queue_work_handler, 2, thrd, f);
 	yield_task();
 	return id;
@@ -302,15 +304,15 @@ static EVENTS_INLINE void *os_gethostbyname(param_t name) {
 
 EVENTS_INLINE char *gethostbyname_ip(struct hostent *host) {
 	struct in_addr **p1 = (struct in_addr **)host->h_addr_list;
-	return (char *)inet_ntop(AF_INET, p1[0], events_pool()->buffer, INET_ADDRSTRLEN);
+	return (char *)inet_ntop(AF_INET, p1[0], futures_pool()->buffer, INET_ADDRSTRLEN);
 }
 
-EVENTS_INLINE struct hostent *async_get_hostbyname(os_worker_t *thrd, char *hostname) {
+EVENTS_INLINE struct hostent *async_get_hostbyname(future *thrd, char *hostname) {
 	return (struct hostent *)await_for(queue_work(thrd, os_gethostbyname, 2, hostname, thrd->buffer)).object;
 }
 
 EVENTS_INLINE struct hostent *async_gethostbyname(char *hostname) {
-	return async_get_hostbyname(events_pool(), hostname);
+	return async_get_hostbyname(futures_pool(), hostname);
 }
 
 static EVENTS_INLINE void *os_getaddrinfo(param_t args) {
@@ -318,14 +320,14 @@ static EVENTS_INLINE void *os_getaddrinfo(param_t args) {
 		(const struct addrinfo *)args[2].object, (addrinfo_t)args[3].object));
 }
 
-EVENTS_INLINE int async_get_addrinfo(os_worker_t *thrd, const char *name,
+EVENTS_INLINE int async_get_addrinfo(future *thrd, const char *name,
 	const char *service, const struct addrinfo *hints, addrinfo_t result) {
 	return await_for(queue_work(thrd, os_getaddrinfo, 4, name, service, hints, result)).integer;
 }
 
 EVENTS_INLINE int async_getaddrinfo(const char *name,
 	const char *service, const struct addrinfo *hints, addrinfo_t result) {
-	return async_get_addrinfo(events_pool(), name, service, hints, result);
+	return async_get_addrinfo(futures_pool(), name, service, hints, result);
 }
 
 static EVENTS_INLINE void *_os_open(param_t args) {
@@ -403,41 +405,41 @@ static EVENTS_INLINE void *_os_mkdir(param_t args) {
 	return casting(mkdir(args[0].const_char_ptr, args[1].u_short));
 }
 
-EVENTS_INLINE int async_fs_open(os_worker_t *thrd, const char *path, int flag, int mode) {
+EVENTS_INLINE int async_fs_open(future *thrd, const char *path, int flag, int mode) {
 	thrd->last_fd = TASK_DEAD;
 	return await_for(queue_work(thrd, _os_open, 3, path, casting(flag), casting(mode))).integer;
 }
 
 EVENTS_INLINE int fs_open(const char *path, int flag, int mode) {
-	return async_fs_open(events_pool(), path, flag, mode);
+	return async_fs_open(futures_pool(), path, flag, mode);
 }
 
-EVENTS_INLINE int async_fs_read(os_worker_t *thrd, int fd, void *buf, uint32_t count) {
+EVENTS_INLINE int async_fs_read(future *thrd, int fd, void *buf, uint32_t count) {
 	return await_for(queue_work(thrd, _os_read, 3, casting(fd), buf, casting(count))).integer;
 }
 
 EVENTS_INLINE int fs_read(int fd, void *buf, uint32_t count) {
-	return async_fs_read(events_pool(), fd, buf, count);
+	return async_fs_read(futures_pool(), fd, buf, count);
 }
 
-EVENTS_INLINE int async_fs_write(os_worker_t *thrd, int fd, const void *buf, uint32_t count) {
+EVENTS_INLINE int async_fs_write(future *thrd, int fd, const void *buf, uint32_t count) {
 	return await_for(queue_work(thrd, _os_write, 3, casting(fd), buf, casting(count))).integer;
 }
 
 EVENTS_INLINE int fs_write(int fd, const void *buf, uint32_t count) {
-	return async_fs_write(events_pool(), fd, buf, count);
+	return async_fs_write(futures_pool(), fd, buf, count);
 }
 
-EVENTS_INLINE ssize_t async_fs_sendfile(os_worker_t *thrd, int fd_out, int fd_in, off_t *offset, size_t length) {
+EVENTS_INLINE ssize_t async_fs_sendfile(future *thrd, int fd_out, int fd_in, off_t *offset, size_t length) {
 	return await_for(queue_work(thrd, _os_sendfile, 4,
 		casting(fd_out), casting(fd_in), offset, casting(length))).long_long;
 }
 
 EVENTS_INLINE ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length) {
-	return async_fs_sendfile(events_pool(), fd_out, fd_in, offset, length);
+	return async_fs_sendfile(futures_pool(), fd_out, fd_in, offset, length);
 }
 
-EVENTS_INLINE int async_fs_close(os_worker_t *thrd, int fd) {
+EVENTS_INLINE int async_fs_close(future *thrd, int fd) {
 	if (thrd->last_fd == fd) {
 		thrd->last_fd = TASK_ERRED;
 		return TASK_ERRED;
@@ -450,47 +452,47 @@ EVENTS_INLINE int async_fs_close(os_worker_t *thrd, int fd) {
 }
 
 EVENTS_INLINE int fs_close(int fd) {
-	return async_fs_close(events_pool(), fd);
+	return async_fs_close(futures_pool(), fd);
 }
 
-EVENTS_INLINE int async_fs_unlink(os_worker_t *thrd, const char *path) {
+EVENTS_INLINE int async_fs_unlink(future *thrd, const char *path) {
 	return await_for(queue_work(thrd, _os_unlink, 1, path)).integer;
 }
 
 EVENTS_INLINE int fs_unlink(const char *path) {
-	return async_fs_unlink(events_pool(), path);
+	return async_fs_unlink(futures_pool(), path);
 }
 
-EVENTS_INLINE int async_fs_rmdir(os_worker_t *thrd, const char *path) {
+EVENTS_INLINE int async_fs_rmdir(future *thrd, const char *path) {
 	return await_for(queue_work(thrd, _os_rmdir, 1, path)).integer;
 }
 
 EVENTS_INLINE int fs_rmdir(const char *path) {
-	return async_fs_rmdir(events_pool(), path);
+	return async_fs_rmdir(futures_pool(), path);
 }
 
-EVENTS_INLINE int async_fs_mkdir(os_worker_t *thrd, const char *path, mode_t mode) {
+EVENTS_INLINE int async_fs_mkdir(future *thrd, const char *path, mode_t mode) {
 	return await_for(queue_work(thrd, _os_mkdir, 2, path, casting(mode))).integer;
 }
 
 EVENTS_INLINE int fs_mkdir(const char *path, mode_t mode) {
-	return async_fs_mkdir(events_pool(), path, mode);
+	return async_fs_mkdir(futures_pool(), path, mode);
 }
 
-EVENTS_INLINE int async_fs_stat(os_worker_t *thrd, const char *path, struct stat *st) {
+EVENTS_INLINE int async_fs_stat(future *thrd, const char *path, struct stat *st) {
 	return await_for(queue_work(thrd, _os_stat, 2, path, st)).integer;
 }
 
 EVENTS_INLINE int fs_stat(const char *path, struct stat *st) {
-	return async_fs_stat(events_pool(), path, st);
+	return async_fs_stat(futures_pool(), path, st);
 }
 
-EVENTS_INLINE int async_fs_access(os_worker_t *thrd, const char *path, int mode) {
+EVENTS_INLINE int async_fs_access(future *thrd, const char *path, int mode) {
 	return await_for(queue_work(thrd, _os_access, 2, path, casting(mode))).integer;
 }
 
 EVENTS_INLINE int fs_access(const char *path, int mode) {
-	return async_fs_access(events_pool(), path, mode);
+	return async_fs_access(futures_pool(), path, mode);
 }
 
 EVENTS_INLINE bool fs_exists(const char *path) {
@@ -514,7 +516,7 @@ static EVENTS_INLINE void *_os_rename(param_t args) {
 }
 
 EVENTS_INLINE int fs_rename(const char *oldfile, const char *newfile) {
-	return await_for(queue_work(events_pool(), _os_rename, 2, oldfile, newfile)).integer;
+	return await_for(queue_work(futures_pool(), _os_rename, 2, oldfile, newfile)).integer;
 }
 
 static EVENTS_INLINE void *_os_copyfile(param_t args) {
@@ -527,7 +529,7 @@ static EVENTS_INLINE void *_os_copyfile(param_t args) {
 }
 
 EVENTS_INLINE int fs_copyfile(const char *oldfile, const char *newfile) {
-	return await_for(queue_work(events_pool(), _os_copyfile, 2, oldfile, newfile)).integer;
+	return await_for(queue_work(futures_pool(), _os_copyfile, 2, oldfile, newfile)).integer;
 }
 
 int fs_writefile(const char *path, char *text) {
@@ -559,9 +561,9 @@ char *fs_readfile(const char *path) {
 
 int fs_events(const char *path, watch_cb handler, void *filter) {
 	int i, rid = TASK_ERRED;
-	if (!is_data(sys_event.cpu_index) || $size(sys_event.cpu_index) == 0) {
-		if (events_tasks_pool(events_create(60)) < 0) {
-			perror("events_tasks_pool");
+	if (!is_data(sys_event.tasks_cpu_idx) || $size(sys_event.tasks_cpu_idx) == 0) {
+		if (events_create_pool(events_create(60)) < 0) {
+			perror("events_create_pool");
 			return rid;
 		}
 	}
@@ -605,11 +607,11 @@ static void *spawning(param_t args) {
 	pid = exec((const char *)command, args[1].const_char_ptr, info);
 	if (info->io_func) {
 #ifndef _WIN32
-		status = events_add(events_pool()->queue->loop, (fds_t)info->read_output[1], EVENTS_WRITE, 0, spawn_io, info);
+		status = events_add(futures_pool()->queue->loop, (fds_t)info->read_output[1], EVENTS_WRITE, 0, spawn_io, info);
 #else
 		status = -1;
 		if (events_assign_fd(info->read_output[0], (intptr_t)pid)) {
-			status = events_add(events_pool()->queue->loop, (fds_t)pid, EVENTS_READ, 0, spawn_io, info);
+			status = events_add(futures_pool()->queue->loop, (fds_t)pid, EVENTS_READ, 0, spawn_io, info);
 			ioThread = CreateThread(0, Kb(16), spawn_io_thread, info, 0, NULL);
 		}
 #endif
@@ -701,7 +703,7 @@ static EVENTS_INLINE void *_getentropy(param_t args) {
 }
 
 EVENTS_INLINE int async_getentropy(void *buf, size_t buflen) {
-	return await_for(queue_work(events_pool(), _getentropy, 2, buf, casting(buflen))).integer;
+	return await_for(queue_work(futures_pool(), _getentropy, 2, buf, casting(buflen))).integer;
 }
 
 static EVENTS_INLINE void *_os_fprintf(param_t args) {
@@ -722,7 +724,7 @@ static EVENTS_INLINE void *_os_fprintf(param_t args) {
 }
 
 EVENTS_INLINE int async_fprintf(const char *path, const char *mode, const char *buf) {
-	return await_for(queue_work(events_pool(), _os_fprintf, 3, path, mode, buf)).integer;
+	return await_for(queue_work(futures_pool(), _os_fprintf, 3, path, mode, buf)).integer;
 }
 
 static EVENTS_INLINE void *_os_fwriter(param_t args) {
@@ -744,7 +746,7 @@ static EVENTS_INLINE void *_os_fwriter(param_t args) {
 
 EVENTS_INLINE int async_fwrite(const char *path, const char *mode,
 	void *buf, size_t size, size_t count) {
-	return await_for(queue_work(events_pool(), _os_fwriter, 5,
+	return await_for(queue_work(futures_pool(), _os_fwriter, 5,
 		path, mode, buf, casting(size), casting(count))).max_size;
 }
 
@@ -753,7 +755,7 @@ static EVENTS_INLINE void *_os_fwrite(param_t args) {
 }
 
 EVENTS_INLINE size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream) {
-	return await_for(queue_work(events_pool(), _os_fwrite, 4, buf, casting(items_size), casting(items_count), stream)).max_size;
+	return await_for(queue_work(futures_pool(), _os_fwrite, 4, buf, casting(items_size), casting(items_count), stream)).max_size;
 }
 
 static EVENTS_INLINE void *_os_fopen(param_t args) {
@@ -761,7 +763,7 @@ static EVENTS_INLINE void *_os_fopen(param_t args) {
 }
 
 EVENTS_INLINE FILE *fs_fopen(const char *path, const char *mode) {
-	return (FILE *)await_for(queue_work(events_pool(), _os_fopen, 2)).object;
+	return (FILE *)await_for(queue_work(futures_pool(), _os_fopen, 2)).object;
 }
 
 static EVENTS_INLINE void *_os_fread(param_t args) {
@@ -769,7 +771,7 @@ static EVENTS_INLINE void *_os_fread(param_t args) {
 }
 
 EVENTS_INLINE size_t fs_fread(void *buf, size_t items_size, size_t items_count, FILE *stream) {
-	return await_for(queue_work(events_pool(), _os_fread, 4,
+	return await_for(queue_work(futures_pool(), _os_fread, 4,
 		buf, casting(items_size), casting(items_count), stream)).max_size;
 }
 
@@ -778,5 +780,5 @@ static EVENTS_INLINE void *_os_fclose(param_t args) {
 }
 
 EVENTS_INLINE int fs_fclose(FILE *stream) {
-	return await_for(queue_work(events_pool(), _os_fclose, 1, stream)).integer;
+	return await_for(queue_work(futures_pool(), _os_fclose, 1, stream)).integer;
 }

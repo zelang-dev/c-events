@@ -35,6 +35,7 @@ void deque_init(events_deque_t *q, int size_hint) {
 	q->tasks = NULL;
 	q->jobs = NULL;
 	q->loop = NULL;
+	q->pool = NULL;
 	q->type = DATA_DEQUE;
 	if (!deque_thread_set)
 		deque_thread_set = true;

@@ -163,7 +163,7 @@ typedef struct actors_s actor_t;
 typedef struct timerlist_s timerlist_t;
 typedef struct sys_events_s sys_events_t;
 typedef struct sys_signal_s sys_signal_t;
-typedef struct _request_worker os_request_t;
+typedef struct _promise promise;
 typedef struct task_group_s task_group_t;
 typedef struct generator_s *generator_t;
 typedef struct ex_memory_s ex_memory_t;
@@ -448,28 +448,28 @@ C_API void tasks_stack_check(int n);
 /* Return `current` ~thread~ `events_t` ~loop~ handle. */
 C_API events_t *tasks_loop(void);
 
-/* Register an `event loop` handle to an `new` thread pool `os_worker_t` instance,
+/* Register an `event loop` handle to an `new` thread pool `future` instance,
 for `blocking` file/cpu ~system~ handling calls. */
-C_API os_worker_t *events_add_pool(events_t *loop);
+C_API future *events_create_future(events_t *loop);
 
 /* Send `signal` for all `thread` pool ~handles~ to shutdown,
 break `async_run()` loop. */
-C_API void events_shutdown_pool(void);
+C_API void events_pool_shutdown(void);
 
-/* Return `current/default` ~thread~ pool `os_worker_t` handle. */
-C_API os_worker_t *events_pool(void);
+/* Return an ~thread~ pool `future` handle. */
+C_API future *futures_pool(void);
 
 /* Register an `event loop` handle to an `new` ~thread~ `tasks/coroutine` pool.
 - This ~pool~ is where `go()` calls are executed in.
 - This function MUST be called at least ONCE before any ~`go()`~ execution,
 otherwise system will `panic/abort` on `go()`.
 - The maximin number of `pools` possible is tried to Operating System `cpu cores` available. */
-C_API int events_tasks_pool(events_t *loop);
+C_API int events_create_pool(events_t *loop);
 
 /* Setup/initialize all available `cpu cores`, and return `events_t` ~loop~ handle.
-- This function possibly calls `events_add_pool()` once, if not previous executed.
-- All remainding `cores` assigned by calling `events_tasks_pool()`. */
-C_API events_t *events_thread_init(void);
+- This function possibly calls `events_create_future()` once, if not previous executed.
+- All remainding `cores` assigned by calling `events_create_pool()`. */
+C_API events_t *events_init_pool(void);
 
 /* This runs the function `fn` in thread `thrd` pool,
 asynchronously in a separate `task`. Returns a `result id`
@@ -481,7 +481,7 @@ https://en.cppreference.com/w/cpp/thread/packaged_task.html
 MUST call `await_for()` to get any result.
 
 NOTE: This is setup to be just an `pass thru` for any function in an separate thread. */
-C_API uint32_t queue_work(os_worker_t *thrd, param_func_t fn, size_t num_args, ...);
+C_API uint32_t queue_work(future *thrd, param_func_t fn, size_t num_args, ...);
 
 /* This waits aka `yield` until the `result id` termination, then retrieves
 the value stored. This is mainly for `queue_work()`, but also useful elsewhere.
@@ -505,7 +505,7 @@ to `x6` larger, if ~first~ aka `main task`. */
 C_API void async_ex(size_t stacksize, launch_func_t fn, uint32_t num_args, ...);
 
 /* Same as `async_task()`, except the ~`coroutine`~ `added/executed` in ~thread~ pool.
-WILL `panic/abort`, if `events_tasks_pool()` not set. */
+WILL `panic/abort`, if `events_create_pool()` not set. */
 C_API uint32_t go(param_func_t fn, size_t num_of_args, ...);
 
 /*  Low-level call sitting underneath `async_read` and `async_write`.
