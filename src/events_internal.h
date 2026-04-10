@@ -194,6 +194,12 @@ struct _promise {
 	atomic_flag done;
 };
 
+struct future_s {
+	data_types type;
+	os_thread_t thread;
+	promise promise[1];
+};
+
 struct sys_signal_s {
 	int sig;
 	bool is_running;
@@ -503,14 +509,16 @@ typedef struct tasklist_s {
 struct ex_memory_s {
 	void *arena;
 	data_types status;
+	int threading;
 	bool is_recovered;
 	bool is_protected;
-	ex_ptr_t protector[1];
-	ex_backtrace_t backtrace[1];
+	void *local;
+	char scrape[ARRAY_SIZE];
 	array_t defer_arr;
 	void *volatile err;
 	const char *volatile _panic;
-	char scrape[ARRAY_SIZE];
+	ex_ptr_t protector[1];
+	ex_backtrace_t backtrace[1];
 };
 
 struct ex_guard_s {
@@ -587,7 +595,6 @@ void task_func(void);
 tasks_t *task_derive(void *memory, size_t heapsize, bool is_thread);
 void task_switch(tasks_t *co);
 uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
-void promise_set(promise *p, void *res);
 uint32_t task_push(tasks_t *t, bool has_result);
 void *task_erred(tasks_t *t, int code);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping);

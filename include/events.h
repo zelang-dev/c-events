@@ -110,7 +110,7 @@ typedef unsigned long __sigset_t;
 #	include <rpmalloc.h>
 #endif
 
-#include <threaded.h>
+#include <future.h>
 
 #define EVENTS_READ 	1
 #define EVENTS_WRITE 	2
@@ -155,36 +155,6 @@ typedef enum {
 	FD_MONITOR_ASYNC = FD_WATCH_ASYNC,
 	FD_MONITOR_SYNC = FD_WATCH_SYNC
 } FILE_TYPE;
-
-typedef unsigned short events_id_t;
-typedef struct events_loop_s events_t;
-typedef struct events_fd_s events_fd_t;
-typedef struct actors_s actor_t;
-typedef struct timerlist_s timerlist_t;
-typedef struct sys_events_s sys_events_t;
-typedef struct sys_signal_s sys_signal_t;
-typedef struct _promise promise;
-typedef struct task_group_s task_group_t;
-typedef struct generator_s *generator_t;
-typedef struct ex_memory_s ex_memory_t;
-typedef struct ex_guard_s ex_guard_t;
-typedef struct ex_ptr_s ex_ptr_t;
-typedef struct ex_context_s ex_context_t;
-typedef struct ex_backtrace_s ex_backtrace_t;
-typedef struct server_socket_s server_socket;
-typedef void (*ex_setup_func)(ex_context_t *, const char *, const char *);
-typedef void (*ex_terminate_func)(void);
-typedef void (*ex_unwind_func)(void *);
-typedef void *(*malloc_cb)(size_t);
-typedef void *(*realloc_cb)(void *, size_t);
-typedef void *(*calloc_cb)(size_t, size_t);
-typedef void (*free_cb)(void *);
-typedef void (*events_cb)(fds_t fd, int event, void *args);
-typedef void (*actor_cb)(actor_t *, void *);
-typedef void (*os_cb)(intptr_t file, int bytes, void *data);
-typedef void *(*param_func_t)(param_t);
-typedef events_cb sig_cb;
-typedef task_group_t *waitgroup_t;
 
 /* stack of protected pointer */
 struct ex_ptr_s {
@@ -439,7 +409,6 @@ C_API void *task_data_get(tasks_t *t);
 
 /* Sets the current `task's` name.*/
 C_API void task_name(char *fmt, ...);
-C_API size_t tasks_cpu_count(void);
 
 /* Check for at least `n` bytes left on the stack.
 If not present, `abort` stack overflow has happen. */
@@ -451,13 +420,6 @@ C_API events_t *tasks_loop(void);
 /* Register an `event loop` handle to an `new` thread pool `future` instance,
 for `blocking` file/cpu ~system~ handling calls. */
 C_API future *events_create_future(events_t *loop);
-
-/* Send `signal` for all `thread` pool ~handles~ to shutdown,
-break `async_run()` loop. */
-C_API void events_pool_shutdown(void);
-
-/* Return an ~thread~ pool `future` handle. */
-C_API future *futures_pool(void);
 
 /* Register an `event loop` handle to an `new` ~thread~ `tasks/coroutine` pool.
 - This ~pool~ is where `go()` calls are executed in.

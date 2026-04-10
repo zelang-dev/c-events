@@ -24,6 +24,7 @@ set(TARGET_LIST
 	events_watch
 	onchange
 	udp-dhcp
+	future_wait
 )
 
 foreach (TARGET ${TARGET_LIST})

@@ -264,7 +264,7 @@ EVENTS_INLINE array_t data_reset(array_t vec) {
 }
 
 EVENTS_INLINE size_t data_queue_size(void) {
-	size_t count = tasks_cpu_count();
+	size_t count = thrd_cpu_count();
 	return 1 << ((count > 5) ? 6 : count * 2);
 }
 

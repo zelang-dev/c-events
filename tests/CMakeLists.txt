@@ -20,6 +20,8 @@ set(TARGET_LIST
  test-tls
  test-udp
  test-uds
+ test-future-exception
+ test-future
 )
 
 add_executable(test-getopts test-getopts.c)

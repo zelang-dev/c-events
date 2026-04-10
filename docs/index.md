@@ -398,7 +398,7 @@ C_API void *task_data_get(tasks_t *t);
 
 /* Sets the current `task's` name.*/
 C_API void task_name(char *fmt, ...);
-C_API size_t tasks_cpu_count(void);
+C_API size_t thrd_cpu_count(void);
 
 /* Check for at least `n` bytes left on the stack.
 If not present, `abort` stack overflow has happen. */
@@ -413,7 +413,7 @@ C_API future *events_create_future(events_t *loop);
 
 /* Send `signal` for all `thread` pool ~handles~ to shutdown,
 break `async_run()` loop. */
-C_API void events_pool_shutdown(void);
+C_API void thrd_pool_shutdown(void);
 
 /* Return an ~thread~ pool `future` handle. */
 C_API future *futures_pool(void);

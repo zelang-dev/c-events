@@ -215,7 +215,7 @@ int events_init(int max_fd) {
 	sys_event.tasks_cpu_idx = NULL;
 	sys_event.future_cpu_idx = NULL;
 	sys_event.gc = NULL;
-	sys_event.cpu_count = tasks_cpu_count();
+	sys_event.cpu_count = thrd_cpu_count();
 	sys_event.queue_size = data_queue_size();
 	sys_event.local = NULL;
 	sys_event.timeout_vec_size = EVENTS_RND_UP(sys_event.max_fd, EVENTS_SIMD_BITS) / EVENTS_SHORT_BITS;
@@ -1789,7 +1789,10 @@ bool defer_free(void *data) {
 		return true;
 	}
 
-	$append(get_scope()->defer_arr, data);
+	ex_memory_t *scope = get_scope();
+	atomic_lock($lock(scope->defer_arr));
+	$append(scope->defer_arr, data);
+	atomic_unlock($lock(scope->defer_arr));
 	return true;
 }
 
@@ -1797,6 +1800,7 @@ static int _defer_init(void *ptr) {
 	if (is_empty(ptr))
 		return TASK_ERRED;
 
+	ex_memory_t *scope = null;
 	if (tasks_is_active()) {
 		tasks_t *t = null;
 		if (!is_empty(__thrd()->running))
@@ -1805,8 +1809,11 @@ static int _defer_init(void *ptr) {
 			t = active_task();
 
 		if (!is_empty(t->scope) && is_ptr_usable(t->scope) && is_data(t->scope->defer_arr)) {
-			$append(t->scope->defer_arr, ptr);
-			return $size(t->scope->defer_arr);
+			scope = t->scope;
+			atomic_lock($lock(scope->defer_arr));
+			$append(scope->defer_arr, ptr);
+			atomic_unlock($lock(scope->defer_arr));
+			return $size(scope->defer_arr);
 		}
 
 		if (is_empty(t->garbage))
@@ -1816,8 +1823,11 @@ static int _defer_init(void *ptr) {
 		return $size(t->garbage);
 	}
 
-	$append(get_scope()->defer_arr, ptr);
-	return $size(get_scope()->defer_arr);
+	scope = get_scope();
+	atomic_lock($lock(scope->defer_arr));
+	$append(scope->defer_arr, ptr);
+	atomic_unlock($lock(scope->defer_arr));
+	return $size(scope->defer_arr);
 }
 
 int deferred(func_t func, void *data, bool is_ptr) {
@@ -2253,29 +2263,6 @@ EVENTS_INLINE void tasks_stack_check(int n) {
 	}
 }
 
-#ifdef _WIN32
-EVENTS_INLINE size_t tasks_cpu_count(void) {
-	SYSTEM_INFO system_info;
-	GetSystemInfo(&system_info);
-	return (size_t)system_info.dwNumberOfProcessors;
-}
-#elif (defined(__linux__) || defined(__linux))
-#include <sched.h>
-EVENTS_INLINE size_t tasks_cpu_count(void) {
-	cpu_set_t cpuset;
-	sched_getaffinity(0, sizeof(cpuset), &cpuset);
-	return CPU_COUNT(&cpuset);
-}
-#elif defined(__APPLE__) || defined(__MACH__)
-EVENTS_INLINE size_t tasks_cpu_count(void) {
-	return sysconf(_SC_NPROCESSORS_CONF);
-}
-#else
-EVENTS_INLINE size_t tasks_cpu_count(void) {
-	return sysconf(_SC_NPROCESSORS_ONLN);
-}
-#endif
-
 void task_name(char *fmt, ...) {
 	va_list args;
 	tasks_t *t = __thrd()->running;
@@ -2365,22 +2352,6 @@ static bool task_take(events_deque_t *queue) {
 	}
 
 	return work_taken;
-}
-
-void promise_set(promise *p, void *res) {
-	atomic_lock(&p->mutex);
-	if (!is_empty(res)) {
-		if (res == casting(DATA_INVALID))
-			p->erred = errno;
-
-		if (is_data(res)) {
-			p->result->value.object = data_copy((array_t)p->result->extended, res);
-		} else {
-			p->result->value.object = res;
-		}
-	}
-	atomic_unlock(&p->mutex);
-	atomic_flag_test_and_set(&p->done);
 }
 
 static void enqueue_tasks(tasks_t *t) {
@@ -2594,17 +2565,4 @@ EVENTS_INLINE future *futures_pool(void) {
 	return (is_data(sys_event.future_cpu_idx) && $size(sys_event.future_cpu_idx) > 0)
 		? sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count) % ($size(sys_event.future_cpu_idx)))].u_int]->pool
 		: __thrd()->pool;
-}
-
-void events_pool_shutdown(void) {
-	events_deque_t **queue = sys_event.local;
-	if (!is_empty(queue) && deque_thread_set) {
-		size_t i, count = atomic_load(&sys_event.num_loops);
-		for (i = 0; i <= count; i++) {
-			if (is_ptr_usable(queue[i])) {
-				atomic_flag_test_and_set(&queue[i]->started);
-				atomic_flag_test_and_set(&queue[i]->shutdown);
-			}
-		}
-	}
 }

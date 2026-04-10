@@ -706,7 +706,7 @@ const char *events_uname(void) {
 			return null;
 
 		snprintf(events_powered_by, MAXHOSTNAMELEN, "%zu Cores, %s %s %s",
-			tasks_cpu_count(), buffer->sysname, buffer->machine, buffer->release);
+			thrd_cpu_count(), buffer->sysname, buffer->machine, buffer->release);
 	}
 
 	return (const char *)events_powered_by;

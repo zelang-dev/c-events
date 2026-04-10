@@ -189,7 +189,7 @@ void http_stop(http_ini_t *ctx) {
 	if (ctx->status == HTTP_STATUS_RUNNING)
 		ctx->status = HTTP_STATUS_TERMINATED;
 
-	events_pool_shutdown();
+	thrd_pool_shutdown();
 	/* Wait until everything has stopped. */
 	os_sleep(5);
 	http_free_ini(ctx);

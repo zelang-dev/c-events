@@ -150,6 +150,7 @@ typedef struct events_task_s tasks_t;
 typedef struct execinfo_s execinfo_t;
 /* thread pool handle */
 typedef struct _future future;
+/* Events API `coroutine/task` thread pool handle */
 typedef struct _future_tasks future_tasks_t;
 typedef void (*exit_cb)(int exit_status, int term_signal);
 typedef void (*watch_cb)(int wd, events_monitors mask, const char *namepath, void *filter);

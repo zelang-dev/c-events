@@ -64,6 +64,7 @@ message(STATUS "Target architecture - ${PROJECT__ARCH}")
 
 set(ev_sources
 	${CMAKE_CURRENT_SOURCE_DIR}/src/rpmalloc.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/future.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/events.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/except.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/arrays.c

@@ -1077,30 +1077,13 @@ int scope_deferred(ex_memory_t *scope, func_t func, void *data) {
 		deferred->func = func;
 		deferred->data = data;
 		deferred->type = DATA_DEFER;
+		atomic_lock($lock(scope->defer_arr));
 		$append(scope->defer_arr, deferred);
+		atomic_unlock($lock(scope->defer_arr));
 		return $size(scope->defer_arr);
 	}
 
 	return TASK_ERRED;
-}
-
-void promise_erred(promise *p, ex_context_t err) {
-	atomic_lock(&p->mutex);
-	p->scope->err = (void *)err.ex;
-	p->scope->_panic = err._panic;
-	p->scope->backtrace[0] = err.backtrace[0];
-	atomic_unlock(&p->mutex);
-	atomic_flag_test_and_set(&p->done);
-}
-
-void promise_rethrow(promise *p) {
-	if (data_type(p) == DATA_JOBS) {
-		p->type = DATA_INVALID;
-		atomic_flag_clear(&p->mutex);
-		atomic_flag_clear(&p->done);
-		if (!is_empty(p->scope->err))
-			ex_throw(p->scope->err, "unknown", 0, "__threads_wrapper", p->scope->_panic, p->scope->backtrace);
-	}
 }
 
 void *fence(void *ptr, func_t func) {
