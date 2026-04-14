@@ -1025,36 +1025,33 @@ void scope_unwind(ex_memory_t *scope) {
 	if (is_empty(scope) || !is_ptr_usable(scope) || !is_data(scope->defer_arr))
 		return;
 
-	array_t array = scope->defer_arr;
 	bool defer_ran = false;
 	size_t i;
 
 	scope->is_recovered = is_empty(scope->err);
-	if (is_data(array)) {
-		foreach_back(arr in array) {
-			if (is_ptr_usable(arr.object)) {
-				data_types type = data_type(arr.object);
-				if (is_data(arr.object)) {
-					$delete(arr.object);
-				} else if (type == DATA_DEFER) {
-					defer_ran = true;
-					defer_t *clean = (defer_t *)arr.object;
-					clean->type = DATA_INVALID;
-					if (clean->is_ptr)
-						clean->func(clean->data);
-					else
-						clean->_func(clean->value);
-					events_free(clean);
-				} else if (type == DATA_OBJ || type == DATA_HASHTABLE || type == DATA_MAP) {
-					((data_object_t *)arr.object)->dtor(arr.object);
-				} else if (!is_empty(arr.object)) {
-					events_free(arr.object);
-				}
+	foreach_back(arr in scope->defer_arr) {
+		if (is_ptr_usable(arr.object)) {
+			data_types type = data_type(arr.object);
+			if (is_data(arr.object)) {
+				$delete(arr.object);
+			} else if (type == DATA_DEFER) {
+				defer_ran = true;
+				defer_t *clean = (defer_t *)arr.object;
+				clean->type = DATA_INVALID;
+				if (clean->is_ptr)
+					clean->func(clean->data);
+				else
+					clean->_func(clean->value);
+				events_free(clean);
+			} else if (type == DATA_OBJ || type == DATA_HASHTABLE || type == DATA_MAP) {
+				((data_object_t *)arr.object)->dtor(arr.object);
+			} else if (!is_empty(arr.object)) {
+				events_free(arr.object);
 			}
 		}
-		$delete(scope->defer_arr);
 	}
 
+	$delete(scope->defer_arr);
 	if (scope->is_protected && !is_empty(scope->protector) && !is_empty(scope->err)) {
 		scope->is_protected = false;
 		if (!defer_ran) {

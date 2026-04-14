@@ -7,7 +7,7 @@ void *worker_client(param_t args) {
 	int server;
 	process_t child;
 	ASSERT_TASK(($size(args) == 4));
-	sleep_task(args[0].u_int);
+	delay(args[0].u_int);
 
 	ASSERT_TASK(str_is("tls_client", args[1].char_ptr));
 #ifdef _WIN32
@@ -16,7 +16,7 @@ void *worker_client(param_t args) {
 #else
 	ASSERT_TASK(((child = exec("./client", null, exec_info(null, true, inherit, inherit, inherit))) > 0));
 #endif
-	sleep_task(6000);
+	delay(6000);
 
 	return args[2].char_ptr;
 }
@@ -43,7 +43,7 @@ TEST(tls_accept) {
 
 	ASSERT_FALSE(task_is_ready(res));
 	while (!task_is_ready(res))
-		yield_task();
+		yield();
 
     ASSERT_TRUE(task_is_ready(res));
     ASSERT_STR(results_for(res).char_ptr, "finish");

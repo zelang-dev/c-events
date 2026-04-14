@@ -32,8 +32,8 @@ void *main_main(param_t args) {
 
 	/* loop */
 	while (events_is_watching(fd)) {
-		tasks_info(active_task(), 1);
-		yield_task();
+		active_info();
+		yield();
 	}
 
 	(void)events_del_watch(loop);

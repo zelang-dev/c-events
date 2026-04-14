@@ -9,7 +9,7 @@ char *path = "write.temp";
 void *worker3(param_t args) {
 	ASSERT_TASK(($size(args) == 3));
 
-	sleep_task(args[0].u_int);
+	delay(args[0].u_int);
 	ASSERT_TASK((args[0].max_size == 500));
 	ASSERT_TASK(str_is("worker", args[1].char_ptr));
 	return "finish";
@@ -24,7 +24,7 @@ TEST(fs_open) {
 	fs_read(fd, text, sizeof(text));
 	ASSERT_STR("/******hello  world******/", str_trim_at(text, str_pos(text, "/*"), 26));
 	while (!task_is_ready(res)) {
-		yield_task();
+		yield();
 	}
 
 	ASSERT_TRUE(task_is_ready(res));
@@ -55,7 +55,7 @@ TEST(fs_close) {
 
 void *worker2(param_t args) {
     ASSERT_TASK(($size(args) == 0));
-    sleep_task(600);
+    delay(600);
     return "hello world";
 }
 
@@ -74,7 +74,7 @@ TEST(fs_write_read) {
     ASSERT_EQ(0, fs_close(fd));
 	ASSERT_EQ(0, fs_unlink(path));
 	while (!task_is_ready(res)) {
-		yield_task();
+		yield();
     }
 
     ASSERT_TRUE(task_is_ready(res));

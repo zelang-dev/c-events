@@ -5,7 +5,7 @@ void *worker(param_t args) {
 	int id = task_id();
 	ASSERT_EQU(id, args[0].integer + 2);
 
-	sleep_task(1000);
+	delay(1000);
     if (id == 4)
         return casting(32);
     else if (id == 3)

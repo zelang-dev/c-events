@@ -594,7 +594,6 @@ void task_awaitable(void);
 void task_func(void);
 tasks_t *task_derive(void *memory, size_t heapsize, bool is_thread);
 void task_switch(tasks_t *co);
-uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...);
 uint32_t task_push(tasks_t *t, bool has_result);
 void *task_erred(tasks_t *t, int code);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping);
@@ -640,6 +639,7 @@ int fsevents_stop(uint32_t rid);
 
 bool scope_is_guarded(void);
 int scope_deferred(ex_memory_t *scope, func_t func, void *data);
+void deferred_unwind(array_t garbage);
 
 char *str_parseip(char *name, uint32_t *ip, int *port, bool autofree);
 #ifdef __cplusplus

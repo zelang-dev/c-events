@@ -6,7 +6,7 @@ void *worker(param_t args) {
 
     for (i = 0; i < count; i++) {
         printf("%s\n", text);
-		sleep_task(10);
+		delay(10);
     }
     return 0;
 }

@@ -146,7 +146,7 @@ static FORCEINLINE size_t my_malloc_usable_size(const void *ptr) {
 	return malloc_usable_size((void_t)ptr); // Platform-specific implementation needed
 }
 
-static void qjs_exec_script(http_t *conn, const char *script_name) {
+void qjs_exec_script(http_t *conn, const char *script_name) {
 	int i;
 	JSContext *ctx = NULL;
 	JSMallocFunctions mf = {
@@ -271,11 +271,14 @@ static void qjs_exec_script(http_t *conn, const char *script_name) {
 	}
 	httpObject = JS_UNDEFINED;
 
-	result = JS_Eval(ctx, script_name, strlen(script_name),
-		"<input>", JS_EVAL_TYPE_MODULE | JS_EVAL_TYPE_GLOBAL);
-	int r = js_std_loop(ctx);
-	if (JS_IsException(result) || r) {
-		js_std_dump_error(ctx);
+	string_t file = fs_readfile(script_name);
+	if (!is_empty(file)) {
+		result = JS_Eval(ctx, file, strlen(file),
+			"<input>", JS_EVAL_TYPE_MODULE | JS_EVAL_TYPE_GLOBAL);
+		int r = js_std_loop(ctx);
+		if (JS_IsException(result) || r) {
+			js_std_dump_error(ctx);
+		}
 	}
 
 exec_quickjs_finished:

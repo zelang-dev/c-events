@@ -62,7 +62,7 @@ typedef enum {
 	DATA_POOL,
 	DATA_THREAD,
 	DATA_FUTURE,
-	DATA_JOBS,
+	DATA_PROMISE,
 	DATA_RAII,
 	DATA_GUARD,
 	DATA_FUNC,
@@ -135,6 +135,7 @@ typedef struct {
 typedef struct {
 	data_types type;
 	values_t value;
+	int is_array;
 	void *extended;
 } data_values_t;
 
@@ -201,6 +202,10 @@ C_API values_t data_shift(array_t arr);
 C_API void data_append_item(array_t arr, ...);
 C_API void data_delete(array_t);
 C_API void data_remove(array_t, size_t);
+
+/* Collect references for global cleanup. */
+C_API void data_gc(void *);
+C_API tuple_t data_tuple(array_t);
 C_API array_t data_reset(array_t);
 C_API size_t data_size(array_t);
 C_API size_t data_capacity(array_t);
@@ -230,6 +235,8 @@ C_API range_t range(int start, int stop);
 C_API range_t range_char(const char *text);
 
 #ifndef $append
+/* Collect references for global cleanup. */
+#define $gc(ptr) 						data_gc((void *)ptr)
 #define $append(arr, value) 			data_append((array_t)arr, (void *)value)
 #define $append_double(arr, value) 		data_append_item((array_t)arr, DATA_DOUBLE, (double)value)
 #define $append_unsigned(arr, value)	data_append_item((array_t)arr, DATA_MAXSIZE, (size_t)value)
@@ -243,6 +250,7 @@ C_API range_t range_char(const char *text);
 #define $remove(arr, index) 			data_remove((array_t)arr, index)
 #define $pop(arr) 						data_pop((array_t)arr)
 #define $shift(arr) 					data_shift((array_t)arr)
+#define $tuple(arr) 					data_tuple((array_t)arr)
 #define $reset(arr) 					data_reset((array_t)arr)
 #define $size(arr) 						data_size((array_t)arr)
 #define $delete(arr) 					data_delete((array_t)arr)

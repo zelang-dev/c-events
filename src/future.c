@@ -4,10 +4,12 @@ static future_t future_create(thrd_func_t func, void *args) {
 	future_t fut = events_calloc(1, sizeof(struct future_s));
 	if (defer_free(fut)) {
 		fut->promise->scope = get_scope();
+		fut->promise->result->is_array = false;
 		fut->promise->args = args;
 		fut->promise->func = func;
 		atomic_flag_clear(&fut->promise->mutex);
 		atomic_flag_clear(&fut->promise->done);
+		fut->promise->type = DATA_PROMISE;
 		fut->type = DATA_FUTURE;
 	}
 
@@ -29,6 +31,14 @@ void promise_erred(promise *p, ex_context_t err) {
 	atomic_flag_test_and_set(&p->done);
 }
 
+void promise_free(ex_memory_t *scope, void *data) {
+	if (!is_empty(scope) && is_data(scope->defer_arr)) {
+		atomic_lock($lock(scope->defer_arr));
+		$append(scope->defer_arr, data);
+		atomic_unlock($lock(scope->defer_arr));
+	}
+}
+
 void promise_set(promise *p, void *res) {
 	atomic_lock(&p->mutex);
 	if (!is_empty(res)) {
@@ -36,8 +46,8 @@ void promise_set(promise *p, void *res) {
 			p->erred = errno;
 
 		if (is_data(res)) {
-			p->result->value.object = data_copy((array_t)p->result->extended, res);
-			scope_deferred(p->scope, (func_t)data_delete, p->result->value.object);
+			p->result->is_array = true;
+			p->result->value.object = data_tuple(data_copy((array_t)p->result->extended, res));
 		} else {
 			p->result->value.object = res;
 		}
@@ -48,6 +58,19 @@ void promise_set(promise *p, void *res) {
 
 EVENTS_INLINE bool is_future(void *self) {
 	return data_type(self) == DATA_FUTURE;
+}
+
+EVENTS_INLINE bool is_promise(void *self) {
+	return data_type(self) == DATA_PROMISE;
+}
+
+EVENTS_INLINE future *futures_pool(void) {
+	return sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
+		% ($size(sys_event.future_cpu_idx)))].u_int]->pool;
+}
+
+EVENTS_INLINE char *future_buffer(void) {
+	return active_future()->buffer;
 }
 
 static int _thrd_wrapper(void *arg) {
@@ -100,6 +123,9 @@ values_t thrd_get(future_t f) {
 			f->type = DATA_RESULT;
 			atomic_flag_clear(&f->promise->mutex);
 			atomic_flag_clear(&f->promise->done);
+			if (f->promise->result->is_array)
+				defer_free(f->promise->result->value.object);
+
 			if (f->promise->erred)
 				errno = f->promise->erred;
 
@@ -109,19 +135,21 @@ values_t thrd_get(future_t f) {
 			}
 		}
 
-		return *((array_t)r->value.object);
+		if (f->promise->result->is_array)
+			return *((array_t)r->value.object);
+		else
+			return r->value;
 	}
 
-	if (data_type(f) == DATA_RESULT)
-		return *((array_t)f->promise->result->value.object);
+	if (data_type(f) == DATA_RESULT) {
+		if (f->promise->result->is_array)
+			return *((array_t)f->promise->result->value.object);
+		else
+			return f->promise->result->value;
+	}
 
 	throw(logic_error);
 	return data_values_empty->value;
-}
-
-EVENTS_INLINE void thrd_task_yield(void) {
-	tasks_info(active_task(), 1);
-	yield_task();
 }
 
 EVENTS_INLINE void thrd_wait(future_t f, wait_func yield) {
@@ -190,4 +218,134 @@ void thrd_pool_shutdown(void) {
 			}
 		}
 	}
+}
+
+EVENTS_INLINE void enqueue_promise(future *j, promise *r) {
+	atomic_lock(&j->mutex);
+	events_deque_t *queue = sys_event.local[j->id];
+	$append(queue->jobs, r);
+	atomic_unlock(&j->mutex);
+	atomic_fetch_add(&queue->available, 1);
+}
+
+static void queue_work_handler(param_t args) {
+	future *thrd = args[0].object;
+	promise *job = args[1].object;
+	defer_free(job);
+	job->id = task_id();
+	job->erred = 0;
+	job->scope = get_scope();
+
+	task_name("queue_work #%d", job->id);
+	enqueue_promise(thrd, job);
+
+	atomic_flag_test_and_set(&thrd->queue->started);
+	yield();
+	while (!atomic_flag_load(&job->done))
+		yield_active_info();
+
+	if (job->erred)
+		errno = job->erred;
+
+}
+
+promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
+	va_list ap;
+	promise *f = null;
+
+	va_start(ap, num_args);
+	array_t args = data_ex(num_args, ap);
+	va_end(ap);
+
+	if (!is_empty(args)) {
+		if (!is_empty(f = (promise *)events_calloc(1, sizeof(promise)))) {
+			f->args = args;
+			f->func = fn;
+			f->result->is_array = false;
+			atomic_flag_clear(&f->mutex);
+			atomic_flag_clear(&f->done);
+			if (thrd->id == sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
+				% ($size(sys_event.future_cpu_idx)))].u_int]->pool->id)
+				atomic_fetch_add(&sys_event.future_id_count, 1);
+
+			array_t data = arrays(2, thrd, f);
+			tasks_t *t = create_task(Kb(64), (data_func_t)queue_work_handler, data, false, true);
+			if (task_push(t, false) == TASK_ERRED) {
+				events_free(f);
+				$delete(args);
+				if (!is_empty(data))
+					$delete(data);
+				f = null;
+			} else {
+				t->tid = thrd->id;
+				f->type = DATA_PROMISE;
+				yield();
+			}
+		} else {
+			$delete(args);
+		}
+	}
+
+	return f;
+}
+
+EVENTS_INLINE bool queue_is_valid(promise *f) {
+	return is_promise(f) && !atomic_flag_load(&f->done);
+}
+
+void queue_wait(array_t work, then_cb then) {
+	yield();
+	if (is_data(work)) {
+		while ($size(work) > 0) {
+			foreach(worker in work) {
+				if (!queue_is_valid(worker.object)) {
+					if (!is_empty(then)) {
+						promise *value = (promise *)worker.object;
+						if (value->result->is_array == 1) {
+							tuple_t result = (tuple_t)value->result->value.object;
+							then(result);
+							$delete(result);
+						} else if (value->result->is_array == 0) {
+							then((tuple_t)&value->result->value);
+						}
+						value->result->is_array = DATA_INVALID;
+						yield();
+					}
+
+					$remove(work, iworker);
+				}
+			}
+			iworker = 0;
+			yield();
+		}
+		$delete(work);
+	}
+}
+
+values_t queue_get(void *self) {
+	promise *p = null;
+	if (is_future(self)) {
+		future_t f = (future_t)self;
+		if (is_promise(f->promise))
+			p = (promise *)f->promise;
+	} else if (is_promise(self)) {
+		p = (promise *)self;
+	}
+
+	if (!is_empty(p)) {
+		while (!atomic_flag_load(&p->done))
+			yield_active_info();
+
+		if (p->result->is_array == 1) {
+			defer_free(p->result->value.object);
+			p->result->is_array = DATA_INVALID;
+			return *(tuple_t)(p->result->value.object);
+		}
+
+		if (p->result->is_array == 0)
+			return p->result->value;
+	}
+
+	throw(logic_error);
+	return data_values_empty->value;
 }

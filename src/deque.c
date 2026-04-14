@@ -148,7 +148,7 @@ void deque_free(events_deque_t *q) {
 void deque_destroy(void) {
 	events_deque_t **queue = sys_event.local;
 	if (queue != NULL) {
-		size_t i, count = atomic_load(&sys_event.num_loops);
+		size_t i, count = sys_event.cpu_count;
 		sys_event.local = NULL;
 		if (deque_thread_set) {
 			for (i = 0; i <= count; i++) {
@@ -160,7 +160,7 @@ void deque_destroy(void) {
 
 			os_sleep(count);
 			for (i = 1; i <= count; i++) {
-				if (data_type(queue[i]) == DATA_DEQUE) {
+				if (is_ptr_usable(queue[i]) && data_type(queue[i]) == DATA_DEQUE) {
 					queue[i]->type = DATA_INVALID;
 					os_join(queue[i]->thread, -1, NULL);
 					deque_free(queue[i]);

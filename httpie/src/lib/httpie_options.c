@@ -72,6 +72,10 @@ static const struct ini_option config_options[] = {
 	{"ssl_protocol_version", INI_TYPE_NUMBER, "4"},
 	{"ssl_short_trust", INI_TYPE_BOOLEAN, "no"},
 
+    /* The support for QuickJS.
+     * The name of this config option might change. */
+	{"quickjs_script_pattern", INI_TYPE_EXT_PATTERN, "**.ssjs$"},
+
 	{"websocket_root", INI_TYPE_DIRECTORY, NULL},
 	{"fallback_websocket_root", INI_TYPE_DIRECTORY, NULL},
 	{"replace_asterisk_with_origin", INI_TYPE_BOOLEAN, "no"},

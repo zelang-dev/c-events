@@ -25,6 +25,7 @@ set(TARGET_LIST
 	onchange
 	udp-dhcp
 	future_wait
+	queue-work
 )
 
 foreach (TARGET ${TARGET_LIST})

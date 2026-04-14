@@ -41,7 +41,7 @@ void *worker(param_t args) {
 	int id = args[0].integer;
 	printf("Worker %d starting, task id: #%d\n", id, task_id());
 
-	sleep_task(seconds(1));
+	delay(seconds(1));
 
 	printf(LN_CLR"Worker %d done, task id: #%d\n", id, task_id());
 	return 0;

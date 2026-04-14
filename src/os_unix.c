@@ -298,7 +298,7 @@ void *inotify_task(param_t args) {
 	watch_dir_t *watched = (watch_dir_t *)args[6].object;
 	char subpath[PATH_MAX]; /* buffer for building complete subdir and file names */
 
-	await_for(queue_work(futures_pool(), _inotify_update, 5, name, watched, event, subpath, sizeof(subpath)));
+	queue_get(queue_work(futures_pool(), _inotify_update, 5, name, watched, event, subpath, sizeof(subpath)));
 	inotify_handler(fd, event, (watch_cb)args[2].func, args[3].object);
 	if (fdTable[fd].path != null) {
 		events_free(fdTable[fd].path);
@@ -964,7 +964,7 @@ EVENTS_INLINE void kqueue_watch_init(events_t *loop, watch_cb handler, void *fil
 EVENTS_INLINE int inotify_init(void) {
 	events_init(256);
 	/* Create a new kernel event queue */
-	int kq = !atomic_load(&sys_event.num_loops) ? kqueue() : events_backend_fd(tasks_loop());
+	int kq = !atomic_load(&sys_event.num_loops) ? kqueue() : events_backend_fd(event_loop());
 	if (kq == -1)
 		return TASK_ERRED;
 
@@ -1155,7 +1155,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 
 			inotify_recursive(fd, fdTable[newfd].dir->path, mask, fdTable[newfd].dir, subpath, sizeof(subpath), null);
 		} else if (atomic_load(&sys_event.num_loops) > 0) {
-			events_t *loop = tasks_loop();
+			events_t *loop = event_loop();
 			if (kqueue_add_watch(loop, wd) == -1) {
 				os_close(newfd);
 				return TASK_ERRED;
@@ -1165,7 +1165,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				fdTable[fd].inotify_wd = array();
 
 			$append_signed(fdTable[fd].inotify_wd, newfd);
-			await_for(queue_work(futures_pool(), _inotify_recursive, 7, casting(fd), fdTable[newfd].dir->path,
+			queue_get(queue_work(futures_pool(), _inotify_recursive, 7, casting(fd), fdTable[newfd].dir->path,
 				casting(mask), fdTable[newfd].dir, subpath, sizeof(subpath), loop));
 		}
 
@@ -1394,7 +1394,7 @@ int __inotify_add_watch(int fd, const char *name, uint32_t mask) {
 		fdTable[pseudo]._fd = fd;
 		fdTable[pseudo].changes = 1;
 		fdTable[pseudo].path = str_dup_ex(name);
-		await_for(queue_work(futures_pool(), _inotify_recursive, 5, casting(fd), fdTable[pseudo].path, casting(mask), subpath, sizeof(subpath)));
+		queue_get(queue_work(futures_pool(), _inotify_recursive, 5, casting(fd), fdTable[pseudo].path, casting(mask), subpath, sizeof(subpath)));
 	}
 
 	return pseudo;

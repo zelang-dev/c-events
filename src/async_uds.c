@@ -77,11 +77,7 @@ EVENTS_INLINE void uds_handler(uds_unix_cb connected, int client) {
 		&& events_create_pool(events_create(sys_event.cpu_count)) < 0) {
 		launch((launch_func_t)uds_client, 2, client, connected);
 	} else {
-		int rid = go(uds_client, 2, casting(client), connected);
-		if (rid > 0) {
-			events_deque_t *q = sys_event.local[results_tid(rid)];
-			atomic_flag_test_and_set(&q->started);
-			yield_task();
-		}
+		if (go(uds_client, 2, casting(client), connected) > 0)
+			yield();
 	}
 }

@@ -32,7 +32,7 @@ void *greetings(param_t args) {
     int i;
     for (i = 0; i < 3; i++) {
 		printf("%d ==> %s\n", i, name);
-		sleep_task(1);
+		delay(1);
     }
     return 0;
 }
@@ -41,7 +41,7 @@ void *main_main(param_t args) {
 	puts("Start of main_main task");
 	async_task(greetings, 1, "John");
 	async_task(greetings, 1, "Mary");
-	sleep_task(seconds(10));
+	delay(seconds(10));
 	puts("\nEnd of main_main task");
     return 0;
 }

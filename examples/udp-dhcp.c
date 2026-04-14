@@ -80,7 +80,7 @@ void *on_send(param_t args) {
 		abort();
 	}
 
-	sleep_task(10);
+	delay(10);
 	return 0;
 }
 
@@ -96,7 +96,7 @@ void *main_main(param_t args) {
 
 	udp_handler(on_read, cl_socket);
 	while (!task_is_ready(res))
-		yield_task();
+		yield();
 
 	return 0;
 }

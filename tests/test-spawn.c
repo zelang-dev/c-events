@@ -5,7 +5,7 @@ static int output_count = 0;
 
 void *worker_misc(param_t args) {
 	ASSERT_TASK(($size(args) == 3));
-	sleep_task(args[0].u_int);
+	delay(args[0].u_int);
 	ASSERT_TASK((str_is("spawn", args[1].char_ptr)));
     return args[2].char_ptr;
 }
@@ -35,11 +35,11 @@ TEST(spawn) {
 	ASSERT_TASK((spawn_pid(child) > 0));
 	ASSERT_TASK((spawn_is_finish(child) == false));
 	while (!spawn_is_finish(child))
-        yield_task();
+        yield();
 
 	ASSERT_TASK((spawn_is_finish(child) == true));
 	while (!task_is_ready(res))
-		yield_task();
+		yield();
 
 	ASSERT_TASK((task_is_ready(res) == true));
 	ASSERT_TASK(str_is(results_for(res).char_ptr, "finish"));

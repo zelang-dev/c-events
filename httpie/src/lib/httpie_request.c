@@ -36,13 +36,12 @@ static int is_webdav_method(const http_t *conn) {
 /* in: filename  (must be valid) */
 static int extention_matches_script(http_t *conn, string_t filename) {
 	int cgi_config_idx, inc, max;
-#if defined(USE_DUKTAPE)
-	if (http_match_prefix_strlen(conn->domain->config[DUKTAPE_SCRIPT_EXTENSIONS],
+	if (http_match_prefix_strlen(conn->domain->config[QUICKJS_SCRIPT_EXTENSIONS],
 		filename)
 		> 0) {
 		return 1;
 	}
-#endif
+
 	inc = CGI2_EXTENSIONS - CGI_EXTENSIONS;
 	max = PUT_DELETE_PASSWORDS_FILE - CGI_EXTENSIONS;
 	for (cgi_config_idx = 0; cgi_config_idx < max; cgi_config_idx += inc) {
@@ -1782,6 +1781,147 @@ static int is_in_script_path(http_t *conn, const char *path)
 	return 1;
 }
 
+static int mg_fgetc(struct file *filep) {
+	if (filep == NULL) {
+		return EOF;
+	}
+
+	if (filep->fp != NULL) {
+		return fgetc(filep->fp);
+	} else {
+		return EOF;
+	}
+}
+
+static void send_ssi_file(http_t *conn,
+	const char *path,
+	struct mg_file *filep,
+	int include_level) {
+	char buf[BUF_LEN];
+	int ch, len, in_tag, in_ssi_tag;
+
+	if (include_level > 10) {
+		http_log(DEBUG_ERROR, conn, "SSI #include level is too deep (%s)", path);
+		return;
+	}
+
+	in_tag = in_ssi_tag = len = 0;
+
+	/* Read file, byte by byte, and look for SSI include tags */
+	while ((ch = mg_fgetc(filep)) != EOF) {
+		if (in_tag) {
+			/* We are in a tag, either SSI tag or html tag */
+			if (ch == '>') {
+				/* Tag is closing */
+				buf[len++] = '>';
+				if (in_ssi_tag) {
+					/* Handle SSI tag */
+					buf[len] = 0;
+					if ((len > 12) && !memcmp(buf + 5, "include", 7)) {
+						do_ssi_include(conn, path, buf + 12, include_level + 1);
+					} else if ((len > 9) && !memcmp(buf + 5, "exec", 4)) {
+						do_ssi_exec(conn, buf + 9);
+					} else {
+						http_log(DEBUG_ERROR, conn,
+							"%s: unknown SSI "
+							"command: \"%s\"",
+							path,
+							buf);
+					}
+					len = 0;
+					in_ssi_tag = in_tag = 0;
+				} else {
+					/* Not an SSI tag */
+					/* Flush buffer */
+					(void)http_write(conn, buf, (size_t)len);
+					len = 0;
+					in_tag = 0;
+				}
+			} else {
+				/* Tag is still open */
+				buf[len++] = (char)(ch & 0xff);
+				if ((len == 5) && !memcmp(buf, "<!--#", 5)) {
+					/* All SSI tags start with <!--# */
+					in_ssi_tag = 1;
+				}
+
+				if ((len + 2) > (int)sizeof(buf)) {
+					/* Tag to long for buffer */
+					http_log(DEBUG_ERROR, conn, "%s: tag is too large", path);
+					return;
+				}
+			}
+		} else {
+			/* We are not in a tag yet. */
+			if (ch == '<') {
+				/* Tag is opening */
+				in_tag = 1;
+				if (len > 0) {
+					/* Flush current buffer.
+					 * Buffer is filled with "len" bytes. */
+					(void)http_write(conn, buf, (size_t)len);
+				}
+				/* Store the < */
+				len = 1;
+				buf[0] = '<';
+			} else {
+				/* No Tag */
+				/* Add data to buffer */
+				buf[len++] = (char)(ch & 0xff);
+				/* Flush if buffer is full */
+				if (len == (int)sizeof(buf)) {
+					http_write(conn, buf, (size_t)len);
+					len = 0;
+				}
+			}
+		}
+	}
+
+	/* Send the rest of buffered data */
+	if (len > 0) {
+		http_write(conn, buf, (size_t)len);
+	}
+}
+
+static void handle_ssi_file_request(http_t *conn,
+	const char *path,
+	struct file *filep) {
+	char date[64];
+	time_t curtime = time(NULL);
+
+	if ((conn == NULL) || (path == NULL) || (filep == NULL)) {
+		return;
+	}
+
+	if (!http_fopen(conn->ctx, conn, path, "rb", filep)) {
+		/* File exists (precondition for calling this function),
+		 * but can not be opened by the server. */
+		http_error(conn,
+			500,
+			"Error: Cannot read file\nfopen(%s): %s",
+			path,
+			strerror(os_geterror()));
+	} else {
+		/* Set "must_close" for HTTP/1.x, since we do not know the
+		 * content length */
+		conn->req.must_close = 1;
+		http_gmt_time_str(date, sizeof(date), &curtime);
+		http_set_close_on_exec(filep);
+
+		/* 200 OK response */
+		http_response_start(conn, 200);
+		http_no_cache_header(conn);
+		http_domain_header(conn);
+		http_cors_header(conn);
+		http_response_add(conn, "Content-Type", "text/html", -1);
+		http_response_send(conn);
+
+		/* Header sent, now send body */
+		send_ssi_file(conn, path, filep, 0);
+		(void)http_fclose(filep); /* Ignore errors for readonly files */
+	}
+}
+
 void handle_file_based_request(http_t *conn,
 	string_t path,
 	struct file *file) {
@@ -1791,20 +1931,18 @@ void handle_file_based_request(http_t *conn,
 		return;
 	}
 
-#if defined(USE_DUKTAPE)
-	if (http_match_prefix_strlen(conn->domain->config[DUKTAPE_SCRIPT_EXTENSIONS],
+	if (http_match_prefix_strlen(conn->domain->config[QUICKJS_SCRIPT_EXTENSIONS],
 		path)
 	> 0) {
 		if (is_in_script_path(conn, path)) {
-			/* Call duktape to generate the page */
-			mg_exec_duktape_script(conn, path);
+			/* Call QuickJS to generate the page */
+			qjs_exec_script(conn, path);
 		} else {
 			/* Script was in an illegal path */
 			http_error(conn, 403, "%s", "Forbidden");
 		}
 		return;
 	}
-#endif
 
 	inc = CGI2_EXTENSIONS - CGI_EXTENSIONS;
 	max = PUT_DELETE_PASSWORDS_FILE - CGI_EXTENSIONS;
@@ -1826,7 +1964,7 @@ void handle_file_based_request(http_t *conn,
 
 	if (http_match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], path) > 0) {
 		if (is_in_script_path(conn, path)) {
-			//handle_ssi_file_request(conn, path, file);
+			handle_ssi_file_request(conn, path, file);
 		} else {
 			/* Script was in an illegal path */
 			http_error(conn, 403, "%s", "Forbidden");

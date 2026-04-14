@@ -445,9 +445,9 @@ EVP_PKEY *rsa_pkey(int keylength) {
         return NULL;
     }
 
-	uint32_t fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_generate_pkey), pkey, casting(keylength), casting(EVP_PKEY_RSA));
+	promise *fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_generate_pkey), pkey, casting(keylength), casting(EVP_PKEY_RSA));
 
-	if (!await_for(fut).boolean) {
+	if (!queue_get(fut).boolean) {
 		EVP_PKEY_free(pkey);
 		return NULL;
 	}
@@ -495,15 +495,15 @@ X509 *x509_self(EVP_PKEY *pkey, const char *country, const char *org, const char
 }
 
 EVENTS_INLINE bool x509_self_export(EVP_PKEY *pkey, X509 *x509, const char *path_noext) {
-	uint32_t fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_create_self), pkey, x509, path_noext);
+	promise *fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_create_self), pkey, x509, path_noext);
 
-	return await_for(fut).boolean;
+	return queue_get(fut).boolean;
 }
 
 EVENTS_INLINE bool x509_pkey_write(EVP_PKEY *pkey, X509 *x509) {
-	uint32_t fut = queue_work(futures_pool(), thrd_worker_thread, 3, casting(ssl_x509_pkey_write), pkey, x509);
+	promise *fut = queue_work(futures_pool(), thrd_worker_thread, 3, casting(ssl_x509_pkey_write), pkey, x509);
 
-	return await_for(fut).boolean;
+	return queue_get(fut).boolean;
 }
 
 EVP_PKEY *pkey_get(const char *file_path) {
@@ -938,12 +938,8 @@ EVENTS_INLINE void tls_handler(tls_client_cb connected, int client) {
 		&& events_create_pool(events_create(sys_event.cpu_count)) < 0) {
 		launch((launch_func_t)tls_client_handler, 2, client, connected);
 	} else {
-		int rid = go(tls_client_handler, 2, client, connected);
-		if (rid > 0) {
-			events_deque_t *q = sys_event.local[results_tid(rid)];
-			atomic_flag_test_and_set(&q->started);
-			yield_task();
-		}
+		if (go(tls_client_handler, 2, client, connected) > 0)
+			yield();
 	}
 }
 

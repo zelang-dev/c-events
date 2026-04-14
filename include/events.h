@@ -327,17 +327,21 @@ C_API uint32_t gen_id(void);
 /* Return ~handle~ to current `task`. */
 C_API tasks_t *active_task(void);
 
-/* Yield execution to another `task` and ~reschedule~ current.
+C_API void active_info(void);
+
+C_API void yield_active_info(void);
+
+/* Yield execution to another `task/coroutine` and ~reschedule~ current.
 
 NOTE: This switches to thread ~schedular~ `run queue` to `execute` next `task`. */
-C_API void yield_task(void);
+C_API void yield(void);
 
 /* Creates an `task` of given function with arguments,
 and immediately execute. */
 C_API void launch(launch_func_t fn, uint32_t num_of_args, ...);
 
 /* Suspends the execution of current `task`, and switch to the ~scheduler~. */
-C_API void suspend_task(void);
+C_API void suspend(void);
 
 /* Explicitly give up the CPU for at least ms milliseconds.
 Other tasks continue to run during this time.
@@ -346,7 +350,7 @@ Other tasks continue to run during this time.
 
 NOTE: Current `task` added to ~thread~ `sleep` queue,
 will be added back to `thread` ~schedular~ `run queue` once `ms` expire. */
-C_API uint32_t sleep_task(uint32_t ms);
+C_API uint32_t delay(uint32_t ms);
 
 /* Returns result of an completed `task`, by `result id`.
 Must call `task_is_ready()` or `task_is_terminated()` for ~completion~ status. */
@@ -415,7 +419,7 @@ If not present, `abort` stack overflow has happen. */
 C_API void tasks_stack_check(int n);
 
 /* Return `current` ~thread~ `events_t` ~loop~ handle. */
-C_API events_t *tasks_loop(void);
+C_API events_t *event_loop(void);
 
 /* Register an `event loop` handle to an `new` thread pool `future` instance,
 for `blocking` file/cpu ~system~ handling calls. */
@@ -429,27 +433,12 @@ otherwise system will `panic/abort` on `go()`.
 C_API int events_create_pool(events_t *loop);
 
 /* Setup/initialize all available `cpu cores`, and return `events_t` ~loop~ handle.
-- This function possibly calls `events_create_future()` once, if not previous executed.
+- `count` represent calls to `events_create_future()`.
+- `events_create_future()` WILL be called at least once, if `count` is `0` or not previous executed.
 - All remainding `cores` assigned by calling `events_create_pool()`. */
-C_API events_t *events_init_pool(void);
+C_API events_t *events_init_pool(uint32_t count);
 
-/* This runs the function `fn` in thread `thrd` pool,
-asynchronously in a separate `task`. Returns a `result id`
-that will eventually hold the result of ~thread pool work~.
-
-Similar to: https://en.cppreference.com/w/cpp/thread/async.html
-https://en.cppreference.com/w/cpp/thread/packaged_task.html
-
-MUST call `await_for()` to get any result.
-
-NOTE: This is setup to be just an `pass thru` for any function in an separate thread. */
-C_API uint32_t queue_work(future *thrd, param_func_t fn, size_t num_args, ...);
-
-/* This waits aka `yield` until the `result id` termination, then retrieves
-the value stored. This is mainly for `queue_work()`, but also useful elsewhere.
-
-Similar to: https://en.cppreference.com/w/cpp/thread/future/get.html
-and https://en.cppreference.com/w/cpp/thread/future/valid.html */
+/* This waits aka `yield` until the `result id` termination, then retrieves the value stored. */
 C_API values_t await_for(uint32_t id);
 
 /* Creates and returns an `result id`, for an ~coroutine~ aka `task`

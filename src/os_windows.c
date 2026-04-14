@@ -1712,7 +1712,7 @@ int inotify_add_watch(int fd, const char *name, uint32_t mask) {
 				$append(fdTable[fd].inotify_wd, folder);
 
 				fdTable[fd].process->workdir = (const char *)folder->filename;
-				await_for(queue_work(futures_pool(), _inotify_directories, 2, casting(fd), folder->filename));
+				queue_get(queue_work(futures_pool(), _inotify_directories, 2, casting(fd), folder->filename));
 				return newfd;
 			}
 		} else if (hDir != INVALID && !atomic_load(&sys_event.num_loops)) {

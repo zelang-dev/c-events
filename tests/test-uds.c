@@ -5,14 +5,14 @@ void *worker_client(param_t args) {
 	char buf[10] = {0};
 	ASSERT_TASK(($size(args) == 3));
 
-    sleep_task(args[0].u_int);
+    delay(args[0].u_int);
 	ASSERT_TASK(str_is("worker_client", args[1].char_ptr));
 
 	ASSERT_TASK(socket_is_uds(server = uds_connect("unix://test.sock")));
 	ASSERT_TASK((async_read(server, buf, sizeof(buf)) == 5));
 	ASSERT_TASK(str_is("world", buf));
 	ASSERT_TASK((async_write(server, "hello", 5) == 5));
-	sleep_task(100);
+	delay(100);
 
     return args[2].char_ptr;
 }
@@ -39,7 +39,7 @@ TEST(uds_accept) {
 	ASSERT_FALSE(task_is_ready(res));
 
 	while (!task_is_ready(res))
-        yield_task();
+        yield();
 
     ASSERT_TRUE(task_is_ready(res));
     ASSERT_STR(results_for(res).char_ptr, "finish");

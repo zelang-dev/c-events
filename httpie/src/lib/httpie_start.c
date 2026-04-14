@@ -336,7 +336,7 @@ static void http_server_task(param_t args) {
 
 int http_server(http_ini_t *ctx) {
 	int i;
-	events_t *loop = events_init_pool();
+	events_t *loop = events_init_pool(2);
 	if (!is_empty(ctx) && !is_empty(loop)) {
 		ctx->status = HTTP_STATUS_RUNNING;
 		for (i = 0; i < ctx->num_listening_sockets; i++)

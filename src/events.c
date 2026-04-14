@@ -189,7 +189,7 @@ int events_init(int max_fd) {
 
 	events_ssl_init();
 #ifdef USE_DEBUG
-	fprintf(stderr, "%s, %s"CLR_LN, events_uname(), events_hostname());
+	cerr("%s, %s"CLR_LN, events_uname(), events_hostname());
 #endif
 	if (os_init() == -1) {
 		return -1;
@@ -241,6 +241,7 @@ int events_init(int max_fd) {
 	if (sys_event.local[0] == NULL)
 		abort();
 
+	sys_event.gc = array();
 	deque_init(sys_event.local[0], sys_event.queue_size);
 #if !defined(_WIN32)
 	signal(SIGPIPE, SIG_IGN);
@@ -256,12 +257,18 @@ EVENTS_INLINE void events_deinit(void) {
 	events_shutdown_set = true;
 	deque_destroy();
 	if (is_data(sys_event.gc)) {
-		foreach_back(t in sys_event.gc) {
-			if (((tasks_t *)t.object)->magic_number == TASK_MAGIC_NUMBER) {
+		if ($size(sys_event.gc) > 0) {
+			foreach_back(t in sys_event.gc) {
+				if (is_data(t.object))
+					$delete(t.object);
+				else if (is_ptr_usable(t.object)
+					&& ((tasks_t *)t.object)->magic_number == TASK_MAGIC_NUMBER) {
 #if defined(_WIN32) && defined(USE_FIBER)
-				DeleteFiber(((tasks_t *)t.object)->type->fiber);
+					DeleteFiber(((tasks_t *)t.object)->type->fiber);
 #endif
-				events_free((tasks_t *)t.object);
+					((tasks_t *)t.object)->magic_number = DATA_INVALID;
+					events_free((tasks_t *)t.object);
+				}
 			}
 		}
 
@@ -410,11 +417,11 @@ EVENTS_INLINE bool events_is_watching(int inotify) {
 }
 
 static void *fsevents_task(param_t args) {
-	events_t *loop = tasks_loop();
+	events_t *loop = event_loop();
 	int fd = events_watch(loop, args[0].const_char_ptr, (watch_cb)args[1].func, args[2].object);
 	while (events_is_watching(fd) && !task_is_canceled()) {
-		tasks_info(active_task(), 1);
-		yield_task();
+		active_info();
+		yield();
 	}
 
 	(void)events_del_watch(loop);
@@ -422,7 +429,8 @@ static void *fsevents_task(param_t args) {
 }
 
 int fsevents_init(const char *name, watch_cb handler, void *filter) {
-	int rid = go(fsevents_task, 3, name, handler, filter);
+	int rid = task_push(create_task(Kb(26),
+		(data_func_t)fsevents_task, arrays(3, name, handler, filter), true, true), true);
 	if (rid > 0) {
 		if (events_fsevents_tasks == null)
 			events_fsevents_tasks = array();
@@ -993,13 +1001,13 @@ static void __thrd_init(bool is_main, uint32_t thread_id) {
 	__thrd()->active_timer = 0;
 	__thrd()->sleep_count = 0;
 	__thrd()->task_count = 0;
-	__thrd()->sleep_handle = NULL;
 	__thrd()->active_handle = NULL;
 	__thrd()->current_handle = NULL;
 	__thrd()->main_handle = NULL;
 	__thrd()->loop = NULL;
 	__thrd()->pool = NULL;
-	__thrd()->sleep_activated = (int)task_push(create_task(Kb(18), task_wait_system, NULL, false, false), false) >= 0;
+	__thrd()->sleep_handle = create_task(Kb(18), (data_func_t)task_wait_system, null, false, false);
+	__thrd()->sleep_activated = (int)task_push(__thrd()->sleep_handle, true) > 0;
 }
 
 static EVENTS_INLINE void task_scheduler_switch(void) {
@@ -1037,7 +1045,7 @@ static void task_delete(tasks_t *co) {
 	}
 }
 
-static void deferred_unwind(array_t garbage) {
+void deferred_unwind(array_t garbage) {
 	if (is_data(garbage)) {
 		foreach_back(arr in garbage) {
 			if (is_ptr_usable(arr.object)) {
@@ -1202,6 +1210,15 @@ EVENTS_INLINE void tasks_info(tasks_t *t, int pos) {
 #endif
 }
 
+EVENTS_INLINE void active_info(void) {
+	tasks_info(active_task(), 1);
+}
+
+EVENTS_INLINE void yield_active_info(void) {
+	active_info();
+	yield();
+}
+
 /* Mark the current task as a ``system`` coroutine. These are ignored for the
 purposes of deciding the program is done running */
 static EVENTS_INLINE void task_system(void) {
@@ -1218,7 +1235,7 @@ other currently-ready tasks have a chance to run. Returns
 the number of other tasks that ran while the current task was waiting. */
 static EVENTS_INLINE int task_yielding_active(void) {
 	int n = __thrd()->num_others_ran;
-	yield_task();
+	yield();
 	return __thrd()->num_others_ran - n - 1;
 }
 
@@ -1246,7 +1263,7 @@ static void *task_wait_system(void *v) {
 #endif
 
 		now = events_nsec();
-		tasks_info(active_task(), 1);
+		active_info();
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
 			l = __thrd()->sleep_queue;
 			dequeue(l, t);
@@ -1303,7 +1320,7 @@ static EVENTS_INLINE void add_timeout(tasks_t *running, tasks_t *context, uint32
 		__thrd()->task_count++;
 }
 
-EVENTS_INLINE uint32_t sleep_task(uint32_t ms) {
+EVENTS_INLINE uint32_t delay(uint32_t ms) {
 	size_t now = events_nsec();
 
 	add_timeout(__thrd()->running, __thrd()->running, ms, now);
@@ -1529,12 +1546,12 @@ void yielding(void *data) {
 		panicking("Current `task` not a generator!\n");
 
 	while (co->generator->is_ready) {
-		yield_task();
+		yield();
 	}
 
 	co->generator->values->object = data;
 	co->generator->is_ready = true;
-	yield_task();
+	yield();
 }
 
 values_t yielded(generator_t gen) {
@@ -1547,8 +1564,8 @@ values_t yielded(generator_t gen) {
 			enqueue(l, gen->context);
 		}
 
-		tasks_info(active_task(), 1);
-		yield_task();
+		active_info();
+		yield();
 	}
 
 	if (data_type(gen) != DATA_GENERATOR || (gen->context->halt && !gen->is_ready))
@@ -1725,7 +1742,9 @@ EVENTS_INLINE void accept_handler(client_cb connected, int client) {
 			task_push(t, false);
 			events_deque_t *q = sys_event.local[t->tid];
 			atomic_flag_test_and_set(&q->started);
-			yield_task();
+			yield();
+		} else {
+			$delete(params);
 		}
 	}
 }
@@ -1744,7 +1763,7 @@ EVENTS_INLINE bool task_is_canceled(void) {
 
 EVENTS_INLINE values_t await_for(uint32_t id) {
 	while (!task_result_get(id)->is_terminated)
-		yield_task();
+		yield();
 
 	return results_for(id);
 }
@@ -1868,16 +1887,6 @@ EVENTS_INLINE tasks_t *active_task(void) {
 	return __thrd()->active_handle;
 }
 
-uint32_t async_task_ex(size_t heapsize, param_func_t fn, uint32_t num_of_args, ...) {
-	va_list ap;
-
-	va_start(ap, num_of_args);
-	param_t params = data_ex(num_of_args, ap);
-	va_end(ap);
-
-	return task_push(create_task(heapsize, (data_func_t)fn, params, false, false), true);
-}
-
 void async_ex(size_t stacksize, launch_func_t fn, uint32_t num_args, ...) {
 	va_list ap;
 
@@ -1906,7 +1915,7 @@ void launch(launch_func_t fn, uint32_t num_of_args, ...) {
 	va_end(ap);
 
 	task_push(create_task(Kb(18), (data_func_t)fn, params, false, false), false);
-	yield_task();
+	yield();
 }
 
 static EVENTS_INLINE task_group_t *create_task_group(void) {
@@ -1964,14 +1973,13 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 		param_t params = data_ex(num_of_args, ap);
 		va_end(ap);
 
-#if defined(_WIN32) && defined(USE_FIBER)
-		return task_push(create_task(Kb(24), (data_func_t)fn, params, true, false), true);
-#else
-		return task_push(create_task(Kb(18), (data_func_t)fn, params, true, false), true);
-#endif
+		uint32_t rid = task_push(create_task(Kb(26), (data_func_t)fn, params, true, true), true);
+		events_deque_t *q = sys_event.local[results_tid(rid)];
+		atomic_flag_test_and_set(&q->started);
+		return rid;
 	}
 
-	panicking("MUST call `events_create_pool()` first!");
+	panic("MUST call `events_create_pool()` at startup!");
 	return TASK_ERRED;
 }
 
@@ -1983,7 +1991,7 @@ EVENTS_INLINE bool is_waitgroup(void *params) {
 	return data_type(params) == DATA_TASKGROUP && ((waitgroup_t)params)->threaded;
 }
 
-EVENTS_INLINE events_t *tasks_loop(void) {
+EVENTS_INLINE events_t *event_loop(void) {
 	return __thrd()->loop;
 }
 
@@ -2052,7 +2060,7 @@ static void __thrd_waitfor(events_deque_t *q) {
 		enqueue(l, co);
 	}
 
-	yield_task();
+	yield();
 	while ($size(q->jobs) > 0) {
 		foreach(group in q->jobs) {
 			co = (tasks_t *)task.object;
@@ -2069,11 +2077,11 @@ static void __thrd_waitfor(events_deque_t *q) {
 				} else if (co->status == TASK_SLEEPING) {
 					is_sleeping = true;
 					co->sleeping = __thrd()->running;
-					suspend_task();
+					suspend();
 				}
 
 				tasks_info(t, 1);
-				yield_task();
+				yield();
 			}
 		}
 		igroup = 0;
@@ -2115,7 +2123,7 @@ array_t waitfor(waitgroup_t wg) {
 			enqueue(l, worker);
 		}
 
-		yield_task();
+		yield();
 		while ($size(wg->group) > 0) {
 			foreach(task in wg->group) {
 				worker = (tasks_t *)task.object;
@@ -2132,18 +2140,18 @@ array_t waitfor(waitgroup_t wg) {
 					} else if (worker->status == TASK_SLEEPING) {
 						is_sleeping = true;
 						worker->sleeping = __thrd()->running;
-						suspend_task();
+						suspend();
 					}
 
 					tasks_info(t, 1);
-					yield_task();
+					yield();
 				}
 			}
 			itask = 0;
 		}
 
 		while ((int)wg->count > 0)
-			yield_task();
+			yield();
 
 		if ($size(wgr) == 0) {
 			$delete(wgr);
@@ -2178,7 +2186,7 @@ array_t tasks_wait(task_group_t *wg) {
 		t->group_active = false;
 		t->group_finish = true;
 		wgr = array();
-		yield_task();
+		yield();
 		while ($size(wg->group) > 0) {
 			foreach(task in wg->group) {
 				worker = (tasks_t *)task.object;
@@ -2195,11 +2203,11 @@ array_t tasks_wait(task_group_t *wg) {
 					} else if (worker->status == TASK_SLEEPING) {
 						is_sleeping = true;
 						worker->sleeping = __thrd()->running;
-						suspend_task();
+						suspend();
 					}
 
 					tasks_info(t, 1);
-					yield_task();
+					yield();
 				}
 			}
 			itask = 0;
@@ -2232,16 +2240,16 @@ EVENTS_INLINE void async_run(events_t *loop) {
 	} while (is_ptr_usable(loop) || (!events_shutdown_set && !events_got_signal));
 }
 
-EVENTS_INLINE void suspend_task(void) {
+EVENTS_INLINE void suspend(void) {
 	task_yielding(__thrd()->current_handle);
 }
 
-EVENTS_INLINE void yield_task(void) {
+EVENTS_INLINE void yield(void) {
 	tasks_t *t = __thrd()->running;
 	tasklist_t *l = __thrd()->run_queue;
 	t->ready = true;
 	enqueue(l, t);
-	suspend_task();
+	suspend();
 	if (task_id() == 1 && __thrd()->sleep_count == 1) {
 #ifndef _WIN32
 		__thrd()->active_timer++;
@@ -2269,18 +2277,6 @@ void task_name(char *fmt, ...) {
 	va_start(args, fmt);
 	vsnprintf(t->name, sizeof(t->name), fmt, args);
 	va_end(args);
-}
-
-/* Collect `tasks` with references preventing immediate cleanup. */
-static EVENTS_INLINE void task_gc(tasks_t *co) {
-	atomic_lock(&sys_event.lock);
-	if (sys_event.gc == NULL)
-		sys_event.gc = array();
-
-	if (co->magic_number == TASK_MAGIC_NUMBER)
-		$append(sys_event.gc, co);
-
-	atomic_unlock(&sys_event.lock);
 }
 
 static int tasks_schedulering(bool do_io) {
@@ -2312,7 +2308,7 @@ static int tasks_schedulering(bool do_io) {
 		if (!t->waiting && !t->referenced) {
 			task_delete(t);
 		} else if (t->referenced) {
-			task_gc(t);
+			data_gc(t);
 		}
 	}
 
@@ -2363,53 +2359,52 @@ static void enqueue_tasks(tasks_t *t) {
 	atomic_fetch_add(&queue->available, 1);
 }
 
-static void *__tasks_pool_main(param_t args) {
+static void __tasks_pool_main(param_t args) {
 	events_deque_t *queue = args[0].object;
 	events_t *loop = args[1].object;
 	__thrd()->started = true;
 	task_name("tasks_pool_main #%d", (int)__thrd()->thrd_id);
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
-		tasks_info(active_task(), 1);
+		active_info();
 		task_take(queue);
 		if (queue->tasks != NULL)
 			__thrd_waitfor(queue);
 		else if (__thrd()->task_count > 1)
-			yield_task();
+			yield();
 		else
 			break;
 	}
 
 	__thrd()->loop = NULL;
-	return 0;
 }
 
 static int __tasks_pool_wrapper(void *arg) {
 	future_tasks_t *work = (future_tasks_t *)arg;
 	events_deque_t *queue = work->queue;
 	events_t *loop = queue->loop;
-	uint32_t status, res = TASK_ERRED, tid = work->id;
+	uint32_t status = 0, tid = work->id;
 
 	__thrd_init(false, tid);
 	while (!atomic_flag_load_explicit(&queue->started, memory_order_relaxed))
 		;
 
 	__thrd()->loop = loop;
-	if ((int)async_task_ex(Kb(32), __tasks_pool_main, 2, queue, loop) > 0) {
-		__thrd()->pool = work->queue->pool;
-		res = 0;
-		do {
-			if (!__thrd()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
-				|| tasks_schedulering(true) == TASK_ERRED)
-				break;
-		} while (__thrd()->loop != NULL);
-		scope_unwind(scope_local());
-		events_destroy(loop);
-		__thrd()->pool = NULL;
-	}
+	param_t params = arrays(2, queue, loop);
+	tasks_t *t = create_task(Kb(32), (data_func_t)__tasks_pool_main, params, false, true);
+	(void)task_push(t, false);
+	__thrd()->pool = work->queue->pool;
+	do {
+		if (!__thrd()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
+			|| tasks_schedulering(true) == TASK_ERRED)
+			break;
+	} while (__thrd()->loop != NULL);
 
+	scope_unwind(scope_local());
 	$delete(queue->jobs);
-	queue->jobs = NULL;
+	events_destroy(loop);
+	__thrd()->pool = NULL;
+
 	if (__thrd()->sleep_handle != NULL
 		&& __thrd()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
 #if defined(_WIN32) && defined(USE_FIBER)
@@ -2419,22 +2414,44 @@ static int __tasks_pool_wrapper(void *arg) {
 		__thrd()->sleep_handle = NULL;
 	}
 
+	if (!__thrd()->started) {
+		$delete(params);
+		if (t->magic_number == TASK_MAGIC_NUMBER) {
+			t->magic_number = TASK_ERRED;
+			t->garbage = NULL;
+#if defined(_WIN32) && defined(USE_FIBER)
+			DeleteFiber(t->type->fiber);
+#endif
+			events_free(t);
+		}
+	}
+
 	events_free(work);
 #if !defined(NO_RPMALLOC)
 	rpmalloc_thread_finalize(1);
 #endif
-	os_exit(res);
-	return res;
+	os_exit(status);
+	return status;
 }
 
-events_t *events_init_pool(void) {
+events_t *events_init_pool(uint32_t count) {
 	atomic_compiler_fence();
+	int i, x, timeout = sys_event.cpu_count * count + sys_event.cpu_count;
 	if (__thrd()->loop == NULL)
-		events_create_future(events_create(sys_event.cpu_count));
+		events_create_future(events_create(timeout));
 
-	int i = __thrd()->loop->loop_id;
-	for (i; i < sys_event.cpu_count; i++)
-		events_create_pool(events_create(sys_event.cpu_count));
+	i = $size(sys_event.future_cpu_idx);
+	x = count >= sys_event.cpu_count
+		? sys_event.cpu_count - i
+		: count - i;
+	if (count > 0) {
+		for (i = 1; i <= x; i++)
+			events_create_future(events_create(timeout));
+	}
+
+	x = $size(sys_event.future_cpu_idx);
+	for (i = x; i < sys_event.cpu_count; i++)
+		events_create_pool(events_create(timeout));
 
 	return __thrd()->loop;
 }
@@ -2478,6 +2495,7 @@ int events_create_pool(events_t *loop) {
 static int __future_wrapper(void *arg) {
 	future *work = (future *)arg;
 	events_deque_t *queue = work->queue;
+	events_t *loop = work->queue->loop;
 	values_t res[1] = {0};
 	int status = 0, tid = work->id;
 
@@ -2492,26 +2510,24 @@ static int __future_wrapper(void *arg) {
 			errno = 0;
 			promise *worker = (promise *)$shift(queue->jobs).object;
 			atomic_unlock(&work->mutex);
+
 			res->object = worker->func(worker->args);
 			promise_set(worker, res->object);
+
 			$delete(worker->args);
+			if (is_data(res->object) && is_empty(scope_local()->local))
+				$delete(res->object);
+
+			scope_unwind(scope_local());
 		} else {
 			os_sleep(1);
 		}
 	} while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed));
 
-	if (__thrd()->sleep_handle != NULL
-		&& __thrd()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
-#if defined(_WIN32) && defined(USE_FIBER)
-		DeleteFiber(__thrd()->sleep_handle->type->fiber);
-#endif
-		events_free(__thrd()->sleep_handle);
-		__thrd()->sleep_handle = NULL;
-	}
-
 	__thrd()->pool = NULL;
 	$delete(queue->jobs);
 	events_free(work);
+	events_destroy(loop);
 
 #if !defined(NO_RPMALLOC)
 	rpmalloc_thread_finalize(1);
@@ -2561,8 +2577,6 @@ future *events_create_future(events_t *loop) {
 	return f_work;
 }
 
-EVENTS_INLINE future *futures_pool(void) {
-	return (is_data(sys_event.future_cpu_idx) && $size(sys_event.future_cpu_idx) > 0)
-		? sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count) % ($size(sys_event.future_cpu_idx)))].u_int]->pool
-		: __thrd()->pool;
+EVENTS_INLINE future *active_future(void) {
+	return __thrd()->pool;
 }

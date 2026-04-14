@@ -4,10 +4,10 @@ void *worker(param_t args) {
     int wid = args[0].integer + 1;
 
     printf("Worker %d starting\n", wid);
-    tasks_info(active_task(), 1);
-    sleep_task(10);
+    active_info();
+    delay(10);
 	printf("Worker %d done\n", wid);
-	tasks_info(active_task(), 1);
+	active_info();
 
     if (wid == 4)
         return casting(32);
@@ -35,7 +35,7 @@ void *main_main(param_t args) {
 int main(int argc, char **argv) {
 	events_init(1024);
 	async_task(main_main, 0);
-	events_t *loop = events_init_pool();
+	events_t *loop = events_init_pool(0);
 	async_run(loop);
 	events_destroy(loop);
 

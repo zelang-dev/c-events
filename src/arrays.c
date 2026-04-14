@@ -135,6 +135,9 @@ EVENTS_INLINE void data_reserve(array_t v, size_t capacity) {
 
 EVENTS_INLINE void data_remove(array_t arr, size_t i) {
 	if (arr) {
+		if (array_type(arr) == DATA_TUPLE)
+			throw(logic_error);
+
 		const size_t cv_sz__ = array_length(arr);
 		if ((i) < cv_sz__) {
 			free_cb destructor__ = array_destructor(arr);
@@ -165,6 +168,9 @@ EVENTS_INLINE void data_delete(array_t arr) {
 }
 
 EVENTS_INLINE void data_append(array_t arr, void *value) {
+	if (array_type(arr) == DATA_TUPLE)
+		throw(logic_error);
+
 	size_t size, cv_cap__ = array_cap(arr);
 	if (cv_cap__ <= array_length(arr)) {
 		size = cv_cap__ << 1;
@@ -176,6 +182,9 @@ EVENTS_INLINE void data_append(array_t arr, void *value) {
 }
 
 EVENTS_INLINE values_t data_pop(array_t arr) {
+	if (array_type(arr) == DATA_TUPLE)
+		throw(logic_error);
+
 	size_t sz = array_length(arr);
 	if (sz > 0) {
 		values_t val = arr[sz - 1];
@@ -188,6 +197,9 @@ EVENTS_INLINE values_t data_pop(array_t arr) {
 }
 
 EVENTS_INLINE values_t data_shift(array_t arr) {
+	if (array_type(arr) == DATA_TUPLE)
+		throw(logic_error);
+
 	size_t sz = array_length(arr);
 	if (sz > 0) {
 		values_t val = arr[0];
@@ -200,6 +212,9 @@ EVENTS_INLINE values_t data_shift(array_t arr) {
 }
 
 void data_append_item(array_t arr, ...) {
+	if (array_type(arr) == DATA_TUPLE)
+		throw(logic_error);
+
 	va_list ap;
 	data_types n = DATA_INVALID;
 	size_t size, cv_cap__ = array_cap(arr), index = array_length(arr);
@@ -247,8 +262,17 @@ EVENTS_INLINE array_t data_copy(array_t des, array_t src) {
 	return des;
 }
 
+EVENTS_INLINE tuple_t data_tuple(array_t vec) {
+	array_set_type(vec, DATA_TUPLE);
+	array_set_size(vec, array_length(vec));
+	return (tuple_t)vec;
+}
+
 EVENTS_INLINE array_t data_reset(array_t vec) {
 	if (vec) {
+		if (array_type(vec) == DATA_TUPLE)
+			throw(logic_error);
+
 		free_cb destructor__ = array_destructor(vec);
 		if (destructor__) {
 			size_t i__;
@@ -302,6 +326,12 @@ array_t arrays(size_t count, ...) {
 	return params;
 }
 
+EVENTS_INLINE void data_gc(void *ptr) {
+	atomic_lock($lock(sys_event.gc));
+	$append(sys_event.gc, ptr);
+	atomic_unlock($lock(sys_event.gc));
+}
+
 EVENTS_INLINE array_t array(void) {
 	return arrays(0);
 }
@@ -320,7 +350,10 @@ EVENTS_INLINE data_types data_type(void *self) {
 EVENTS_INLINE bool is_data(void *params) {
 	return (is_empty(params) || !is_ptr_usable(params))
 		? false
-		: array_type((array_t)params) == DATA_ARRAY;
+		: array_type((array_t)params) == DATA_ARRAY
+		|| array_type((array_t)params) == DATA_RANGE
+		|| array_type((array_t)params) == DATA_RANGE_CHAR
+		|| array_type((array_t)params) == DATA_TUPLE;
 }
 
 EVENTS_INLINE bool is_ptr_usable(void *self) {

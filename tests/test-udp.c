@@ -6,11 +6,11 @@ void *worker_client(param_t args) {
     int nread, client = 0;
 	char buf[Kb(8)] = {0};
 	ASSERT_TASK(($size(args) == 3));
-	sleep_task(args[0].u_int);
+	delay(args[0].u_int);
 
 	ASSERT_TASK(str_is("worker_client", args[1].char_ptr));
 	ASSERT_TASK(socket_is_udp(client = udp_bind("127.0.0.1:7777", 0)));
-	sleep_task(200);
+	delay(200);
 
 	udp_to(client, "udp://127.0.0.1:9999", 0);
 	ASSERT_TASK((async_sendto(client, "hello", 5) == 5));
@@ -41,7 +41,7 @@ TEST(udp_recv) {
 	udp_handler((udp_packet_cb)worker_connected, client);
 
 	while (!task_is_ready(res))
-        yield_task();
+        yield();
 
 	ASSERT_TRUE(task_is_ready(res));
     ASSERT_STR(results_for(res).char_ptr, "finish");

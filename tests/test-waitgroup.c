@@ -3,7 +3,7 @@
 void *worker(param_t args) {
 	int id = args[0].integer + 1;
 
-	sleep_task(1000);
+	delay(1000);
     if (id == 4)
         return casting(32);
     else if (id == 3)
@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
 		waitgroup_t wg = waitgroup(10);
 		ASSERT_FALSE(is_waitgroup(wg));
 
-		events_t *loop = events_init_pool();
+		events_t *loop = events_init_pool(0);
 		async_run(loop);
 		events_destroy(loop);
 	} else {

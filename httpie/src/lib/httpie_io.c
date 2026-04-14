@@ -308,7 +308,7 @@ static FORCEINLINE void *_scan_directory(param_t args) {
 }
 
 int fs_scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *)) {
-	return await_for(queue_work(futures_pool(), _scan_directory, 4, conn, dir, data, cb)).integer;
+	return queue_get(queue_work(futures_pool(), _scan_directory, 4, conn, dir, data, cb)).integer;
 }
 
 void handle_directory_request(http_t *conn, string_t dir) {

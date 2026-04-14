@@ -214,6 +214,7 @@ typedef enum {
 	SSL_CIPHER_LIST,
 	SSL_PROTOCOL_VERSION,
 	SSL_SHORT_TRUST,
+	QUICKJS_SCRIPT_EXTENSIONS,
 	WEBSOCKET_ROOT,
 	FALLBACK_WEBSOCKET_ROOT,
 	REPLACE_ASTERISK_WITH_ORIGIN,
@@ -816,6 +817,7 @@ int authorize(http_t *conn, struct file *filep, string_t realm);
 int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
 int remove_directory(http_t *conn, string_t dir);
 int fs_scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *));
+void qjs_exec_script(http_t *conn, const char *script_name);
 
 int is_authorized_for_put(http_t *conn);
 void http_compressed_data(http_t *conn, struct file *filep);

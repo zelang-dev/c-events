@@ -9,6 +9,7 @@ typedef struct future_s *future_t;
 typedef struct _promise promise;
 typedef void *(*thrd_func_t)(param_t);
 typedef void (*wait_func)(void);
+typedef void (*then_cb)(tuple_t result);
 
 typedef unsigned short events_id_t;
 typedef struct events_loop_s events_t;
@@ -265,13 +266,51 @@ C_API void os_exit(uint32_t exit_code);
 
 /* Return an ~thread~ pool `future` handle. */
 C_API future *futures_pool(void);
+C_API future *active_future(void);
+C_API char *future_buffer(void);
 C_API bool is_future(void *self);
+C_API bool is_promise(void *self);
 
 /* Same as: https://en.cppreference.com/w/cpp/thread/promise/set_value.html */
 C_API void promise_set(promise *p, void *res);
 
 /* Same as: https://en.cppreference.com/w/cpp/thread/promise/set_exception.html */
 C_API void promise_erred(promise *p, ex_context_t err);
+C_API void promise_free(ex_memory_t *scope, void *data);
+
+/*
+Checks if the a ~future~ refers to a shared state aka `promise`, and `running`.
+
+Similar to: https://en.cppreference.com/w/cpp/thread/future/valid.html */
+C_API bool queue_is_valid(promise *f);
+
+/* This runs the function `fn` in thread `thrd` pool,
+asynchronously in a separate `task`. Returns a `promise`
+that will eventually hold the result of ~thread pool work~.
+
+Similar to: https://en.cppreference.com/w/cpp/thread/async.html
+https://en.cppreference.com/w/cpp/thread/packaged_task.html
+
+MUST call `queue_get()` to get any result, aka `join` for resource cleanup.
+
+NOTE: This is setup to be just an `pass thru` for any function in an separate thread. */
+C_API promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...);
+
+/*
+This waits aka `yield` until the `future` or `promise` is ready, then retrieves
+the value stored. Right after calling this function `queue_is_valid()` is `false`.
+
+Similar to: https://en.cppreference.com/w/cpp/thread/future/get.html */
+C_API values_t queue_get(void *self);
+
+/*
+Will `pause` and `yield` to another `coroutine` until `ALL` ~future~ `promise`
+results in `array` become available/done. Calls `queue_is_valid()` on each,
+will execute `then` with ~result~.
+
+Similar to: https://en.cppreference.com/w/cpp/thread/future/wait.html,
+https://en.cppreference.com/w/cpp/thread/promise.html */
+void queue_wait(array_t work, then_cb then);
 
 /* Calls ~fn~ (with ~number of args~ then ~actual arguments~) in separate thread, returning without waiting
 for the execution of ~fn~ to complete. The value returned by ~fn~ can be accessed
@@ -285,8 +324,6 @@ function blocks the calling thread and waits until it is ready.
 
 Same as: https://en.cppreference.com/w/cpp/thread/future/get.html */
 C_API values_t thrd_get(future_t);
-
-C_API void thrd_task_yield(void);
 
 /* This function blocks the calling thread and waits until `future_t` is ready,
 will execute provided `yield` callback function continuously.
@@ -306,13 +343,13 @@ C_API bool thrd_is_done(future_t);
 
 C_API size_t thrd_cpu_count(void);
 
-/* Return/create an arbitrary `vector/array` set of `values`, only available within ~thread~ `future_t` */
+/* Return/create an arbitrary `vector/array` set of `values`, only available within ~thread~  `future/future_t` */
 C_API param_t thrd_data(size_t, ...);
 
-/* Return/create an single `vector/array` ~value~, only available within within ~thread~ `future_t` */
+/* Return/create an single `vector/array` ~value~, only available within within ~thread~  `future/future_t` */
 #define $(val) thrd_data(1, (val))
 
-/* Return/create an pair `vector/array` ~values~, only available within ~thread~ `future_t` */
+/* Return/create an pair `vector/array` ~values~, only available within ~thread~ `future/future_t` */
 #define $$(val1, val2) thrd_data(2, (val1), (val2))
 
 #if defined (__cplusplus) || defined (c_plusplus)

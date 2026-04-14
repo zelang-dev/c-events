@@ -10,7 +10,7 @@ void *main_main(param_t args) {
 	if (child != NULL) {
 		fprintf(stderr, "\nLaunched process with ID %zu\n", spawn_pid(child));
 		while (!spawn_is_finish(child))
-			yield_task();
+			yield();
 	}
 
 	return 0;

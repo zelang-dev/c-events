@@ -22,6 +22,7 @@ set(TARGET_LIST
  test-uds
  test-future-exception
  test-future
+ test-queue_work
 )
 
 add_executable(test-getopts test-getopts.c)

@@ -38,7 +38,7 @@ func main() {
 #include <events.h>
 
 void *func(param_t args) {
-    sleep_task(10 * seconds(10));
+    delay(10 * seconds(10));
     return 0;
 }
 

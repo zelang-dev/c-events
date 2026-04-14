@@ -6,9 +6,9 @@ static int watch_count = 0;
 
 void *worker_misc(param_t args) {
     ASSERT_TASK(($size(args) > 1));
-    sleep_task(args[0].u_int);
+    delay(args[0].u_int);
 	ASSERT_TASK(str_is("event", args[1].char_ptr));
-    yield_task();
+    yield();
     return "fs_events";
 }
 
@@ -39,18 +39,18 @@ TEST(fs_events) {
 	int rid = fs_events(watch_path, (watch_cb)watch_handler, null);
 	ASSERT_FALSE(task_is_ready(res));
 
-	sleep_task(1);
+	delay(1);
 	snprintf(filepath, ARRAY_SIZE, "%s/file%d.txt", watch_path, 1);
 	ASSERT_EQ(5, fs_writefile(filepath, "hello"));
 
-	sleep_task(200);
+	delay(200);
 	ASSERT_EQ(0, fs_unlink(filepath));
 
-	sleep_task(500);
+	delay(500);
 	ASSERT_EQ(0, fs_rmdir(watch_path));
 
 	while (!task_is_ready(res))
-        yield_task();
+        yield();
 
 	ASSERT_EQ(0, fs_events_cancel(rid));
     ASSERT_TRUE(task_is_ready(res));

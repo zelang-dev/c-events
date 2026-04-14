@@ -44,7 +44,7 @@ int prime(uint32_t argc, void *argv) {
         future_t fut = thrd_async(is_prime, 1, argv);
 
         cout("checking...\n");
-		thrd_wait(fut, thrd_task_yield);
+		thrd_wait(fut, yield_active_info);
 
 		cout("\n194232491 ");
 		if (thrd_get(fut).boolean) // guaranteed to be ready (and not block) after `thrd_wait` returns
