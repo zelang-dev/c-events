@@ -7,7 +7,7 @@ void *main_main(param_t args) {
 		ssize_t len;
 
 		use_ca_certificate("cert.pem");
-		if ((client = tls_get(getopts())) > 0 && tls_writer(client, "GET /"CRLF, 0)) {
+		if ((client = tls_dial(getopts())) > 0 && tls_writer(client, "GET /"CRLF, 0)) {
 			cout(CLR_LN);
 			while (!socket_is_eof(client)) {
 				if ((len = tls_reader(client, data, sizeof(data))) > 0)

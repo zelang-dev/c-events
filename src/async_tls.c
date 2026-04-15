@@ -906,7 +906,7 @@ static int async_tls_connect(const char *host, int socket) {
 	return rc;
 }
 
-int tls_get(const char *uri) {
+int tls_dial(const char *uri) {
 	fds_t client;
 	int err = 0, port = 0;
 	char *host = str_parseip((char *)uri, (uint32_t *)&err, &port, true);
@@ -932,7 +932,7 @@ int tls_get(const char *uri) {
 				cerr("\nfailed to tls_config_set_ca_file: %s\n", tls_config_error(ctarget->tls_config));
 			}
 		} else {
-			cerr("\nfailed to connect: `tls_get/tls_config_new`\n");
+			cerr("\nfailed to connect: `tls_dial/tls_config_new`\n");
 		}
 	}
 

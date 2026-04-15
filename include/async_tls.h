@@ -80,7 +80,7 @@ C_API int tls_out(char *msg, size_t nread);
 C_API void tls_closer(int);
 C_API ssize_t tls_reader(int, char *buf, size_t max);
 C_API ssize_t tls_writer(int, char *buf, size_t len);
-C_API int tls_get(const char *);
+C_API int tls_dial(const char *);
 C_API int tls_bind(const char *, int backlog);
 C_API int tls_accept(int, char *server, int *port);
 C_API void tls_handler(tls_client_cb, int);
