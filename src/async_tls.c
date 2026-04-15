@@ -27,6 +27,7 @@ static char events_cert[MAXHOSTNAMELEN + 4] = {0};
 static char events_csr[MAXHOSTNAMELEN + 4] = {0};
 static char events_pkey[MAXHOSTNAMELEN + 4] = {0};
 static char events_self_touch[MAXHOSTNAMELEN + 6] = {0};
+static bool events_useing_secure_client = false;
 
 struct x509_request {
     CONF *global_config;	/* Global SSL config */
@@ -656,6 +657,17 @@ EVENTS_INLINE const char *pkey_file(void) {
 	return (const char *)events_pkey;
 }
 
+void use_secure_client(void) {
+	events_useing_secure_client = true;
+	snprintf(events_self_touch, sizeof(events_self_touch), "%s%s.local", "." SYS_DIRSEP, events_hostname());
+	if (!fs_exists(events_self_touch)) {
+		default_cert_file("."SYS_DIRSEP);
+		if (x509_self_export(NULL, NULL, events_directory)) {
+			fs_touch(events_self_touch);
+		}
+	}
+}
+
 void use_certificate(char *path, uint32_t ctx_pairs, ...) {
 	if (is_empty(path)) {
 		if (!fs_exists(default_cert_file(path))) {
@@ -906,15 +918,18 @@ int tls_get(const char *uri) {
 		events_fd_t *ctarget = events_target(fd);
 		ctarget->tls_config = tls_config_new();
 		if (defer(tls_config_free, ctarget->tls_config) > 0) {
-			if (!tls_config_set_ca_file(ctarget->tls_config, ca_cert_file())
-				&& !tls_config_set_keypair_file(ctarget->tls_config, cert_file(), pkey_file())) {
+			if (!tls_config_set_ca_file(ctarget->tls_config, ca_cert_file())) {
+				if (events_useing_secure_client
+					&& tls_config_set_keypair_file(ctarget->tls_config, cert_file(), pkey_file()))
+					cerr("\nfailed to secure keypair_file: %s\n", tls_config_error(ctarget->tls_config));
+
 				if (!(err = async_tls_connect(host, fd)))
 					return fd;
 
 				cerr("\nfailed to async_tls_connect: %s\n",
 					(err == -ECONNREFUSED ? strerror(errno) : tls_error(ctarget->tls)));
 			} else {
-				cerr("\nfailed to tls_config_set_ca_file/keypair_file: %s\n", tls_config_error(ctarget->tls_config));
+				cerr("\nfailed to tls_config_set_ca_file: %s\n", tls_config_error(ctarget->tls_config));
 			}
 		} else {
 			cerr("\nfailed to connect: `tls_get/tls_config_new`\n");

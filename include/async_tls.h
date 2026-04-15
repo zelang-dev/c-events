@@ -109,6 +109,7 @@ C_API bool x509_self_export(EVP_PKEY *pkey, X509 *x509, const char *path_noext);
 
 C_API void use_ca_certificate(const char *path);
 C_API void use_certificate(char *path, uint32_t ctx_pairs, ...);
+C_API void use_secure_client(void);
 
 C_API const char *events_uname(void);
 C_API const char *events_hostname(void);
