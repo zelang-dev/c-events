@@ -795,7 +795,7 @@ a word is represented by separator character provided. */
 string word_toupper(string str, char sep);
 
 /* Return True if we should reply 304 Not Modified. */
-int is_not_modified(const http_t *conn, const struct file *filestat);
+int is_not_modified(http_t *conn, const struct file *filestat);
 void handle_not_modified_static_file_request(http_t *conn, struct file *filep);
 void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 	string_t mime_type, string_t additional_headers);

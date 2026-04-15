@@ -93,7 +93,7 @@ int http_response_add(http_t *conn, string_t header, string_t value, int value_l
 	return 0;
 }
 
-int http_response_multi(http_t *conn, string additional_headers) {
+int http_response_multi(http_t *conn, string_t additional_headers) {
 	if (is_empty(additional_headers))
 		return -1;
 

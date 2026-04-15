@@ -231,7 +231,6 @@ EVENTS_INLINE void enqueue_promise(future *j, promise *r) {
 static void queue_work_handler(param_t args) {
 	future *thrd = args[0].object;
 	promise *job = args[1].object;
-	defer_free(job);
 	job->id = task_id();
 	job->erred = 0;
 	job->scope = get_scope();
@@ -246,7 +245,6 @@ static void queue_work_handler(param_t args) {
 
 	if (job->erred)
 		errno = job->erred;
-
 }
 
 promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
@@ -269,7 +267,7 @@ promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 				atomic_fetch_add(&sys_event.future_id_count, 1);
 
 			array_t data = arrays(2, thrd, f);
-			tasks_t *t = create_task(Kb(64), (data_func_t)queue_work_handler, data, false, true);
+			tasks_t *t = create_task(Kb(32), (data_func_t)queue_work_handler, data, false, true);
 			if (task_push(t, false) == TASK_ERRED) {
 				events_free(f);
 				$delete(args);
@@ -279,6 +277,7 @@ promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 			} else {
 				t->tid = thrd->id;
 				f->type = DATA_PROMISE;
+				defer_free(f);
 				yield();
 			}
 		} else {
@@ -294,7 +293,6 @@ EVENTS_INLINE bool queue_is_valid(promise *f) {
 }
 
 void queue_wait(array_t work, then_cb then) {
-	yield();
 	if (is_data(work)) {
 		while ($size(work) > 0) {
 			foreach(worker in work) {

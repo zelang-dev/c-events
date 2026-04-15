@@ -249,7 +249,7 @@ C_API int http_response_send(http_t *conn);
  *  -2:    invalid connection type
  *  -3:    invalid connection status
  *  -4:    out of memory */
-C_API int http_response_multi(http_t *conn, string additional_headers);
+C_API int http_response_multi(http_t *conn, string_t additional_headers);
 
 /*
  * Returns a string to be used in the header which suggests the connection to

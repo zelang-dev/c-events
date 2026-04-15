@@ -11,11 +11,12 @@ set(httpie_files ${httpie_files}
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_authorize.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_io.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_options.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_request.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_start.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_ws.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_quickjs.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_response.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_zlib.c
-	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_quickjs.c
 )
 
 if(BUILD_SHARED_LIBS)

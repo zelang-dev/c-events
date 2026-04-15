@@ -1543,7 +1543,7 @@ generator_t generator(param_func_t fn, size_t num_of, ...) {
 void yielding(void *data) {
 	tasks_t *co = active_task();
 	if (!co->is_generator)
-		panicking("Current `task` not a generator!\n");
+		panic("Current `task` not a generator!\n");
 
 	while (co->generator->is_ready) {
 		yield();

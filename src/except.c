@@ -403,7 +403,7 @@ EVENTS_INLINE ex_context_t *ex_local(void) {
 void ex_update(ex_context_t *context) {
 #ifdef emulate_tls
 	if (os_tls_set(events_except_tss, context) != thrd_success)
-		panicking("Except `os_tls_set` failed!");
+		panic("Except `os_tls_set` failed!");
 #else
         events_except_tls = context;
 #endif

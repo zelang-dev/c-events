@@ -1,5 +1,5 @@
 #include "httpie_internal.h"
-
+static void remove_dot_segments(char *inout);
 static int is_put_or_delete_method(const http_t *conn) {
 	if (conn) {
 		string_t s = conn->method;
@@ -620,7 +620,7 @@ int http_url_encode(string_t src, char *dst, size_t dst_len) {
 	return (*src == '\0') ? (int)(pos - dst) : -1;
 }
 
-static string_t get_proto_name(const http_t *conn) {
+static string_t get_proto_name(http_t *conn) {
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunreachable-code"
@@ -644,7 +644,7 @@ static string_t get_proto_name(const http_t *conn) {
 #endif
 }
 
-static int construct_local_link(const http_t *conn,
+static int construct_local_link(http_t *conn,
 	char *buf,
 	size_t buflen,
 	string_t define_proto,
@@ -773,7 +773,7 @@ static int construct_local_link(const http_t *conn,
 }
 
 C_API int http_get_request_link(http_t *conn, char *buf, size_t buflen) {
-	return construct_local_link((const http_t *)conn, buf, buflen, NULL, -1, NULL);
+	return construct_local_link(conn, buf, buflen, NULL, -1, NULL);
 }
 
 /* Writes PROPFIND properties for a collection element */
@@ -1283,9 +1283,7 @@ static void redirect_to_https_port(http_t *conn, int port) {
 	conn->req.must_close = 1;
 
 	/* Send host, port, uri and (if it exists) ?query_string */
-	if (construct_local_link(
-		(const http_t *)conn, target_url, sizeof(target_url), expect_proto, port, NULL)
-		< 0) {
+	if (construct_local_link(conn, target_url, sizeof(target_url), expect_proto, port, NULL) < 0) {
 		truncated = 1;
 	} else if (conn->req.query_string != NULL) {
 		size_t slen1 = strlen(target_url);
@@ -1483,7 +1481,7 @@ static void remove_dot_segments(char *inout) {
  * Store mime type in the vector. */
 static void get_mime_type(http_t *conn, string_t path, struct vec *vec) {
 	struct vec ext_vec, mime_vec;
-	string_t list, *ext;
+	string_t list, ext;
 	size_t path_len;
 
 	path_len = strlen(path);
@@ -1679,7 +1677,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 				416, /* 416 = Range Not Satisfiable */
 				"%s",
 				"Error: Range requests in gzipped files are not supported");
-			(void)http_fclose(&filep); /* ignore error on read only file */
+			(void)http_fclose(filep); /* ignore error on read only file */
 			return;
 		}
 		conn->status = 206;
@@ -1766,7 +1764,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 			http_send_file_data(conn, filep, r1, cl, 0); /* send static file */
 		}
 	}
-	(void)http_fclose(&filep); /* ignore error on read only file */
+	(void)http_fclose(filep); /* ignore error on read only file */
 }
 
 /* Check if the script file is in a path, allowed for script files.
@@ -1781,21 +1779,112 @@ static int is_in_script_path(http_t *conn, const char *path)
 	return 1;
 }
 
-static int mg_fgetc(struct file *filep) {
+static int http_fgetc(struct file *filep) {
 	if (filep == NULL) {
 		return EOF;
 	}
 
 	if (filep->fp != NULL) {
-		return fgetc(filep->fp);
+		return fs_fgetc(filep->fp);
 	} else {
 		return EOF;
 	}
 }
 
+static void send_ssi_file(http_t *conn, const char *path, struct file *filep, int include_level);
+
+static void do_ssi_include(http_t *conn, const char *ssi, char *tag, int include_level) {
+	char file_name[BUF_LEN], path[512], *p;
+	struct file file = STRUCT_FILE_INITIALIZER;
+	size_t len;
+	int truncated = 0;
+
+	if (conn == NULL) {
+		return;
+	}
+
+	/* sscanf() is safe here, since send_ssi_file() also uses buffer
+	 * of size MG_BUF_LEN to get the tag. So strlen(tag) is
+	 * always < MG_BUF_LEN. */
+	if (sscanf(tag, " virtual=\"%511[^\"]\"", file_name) == 1) {
+		/* File name is relative to the webserver root */
+		file_name[511] = 0;
+		(void)http_snprintf(conn,
+			&truncated,
+			path,
+			sizeof(path),
+			"%s/%s",
+			conn->domain->config[DOCUMENT_ROOT],
+			file_name);
+	} else if (sscanf(tag, " abspath=\"%511[^\"]\"", file_name) == 1) {
+		/* File name is relative to the webserver working directory
+		 * or it is absolute system path */
+		file_name[511] = 0;
+		(void)http_snprintf(conn, &truncated, path, sizeof(path), "%s", file_name);
+	} else if ((sscanf(tag, " file=\"%511[^\"]\"", file_name) == 1)
+		|| (sscanf(tag, " \"%511[^\"]\"", file_name) == 1)) {
+ 		/* File name is relative to the current document */
+		file_name[511] = 0;
+		(void)http_snprintf(conn, &truncated, path, sizeof(path), "%s", ssi);
+		if (!truncated) {
+			if ((p = strrchr(path, '/')) != NULL) {
+				p[1] = '\0';
+			}
+			len = strlen(path);
+			(void)http_snprintf(conn, &truncated,
+				path + len, sizeof(path) - len, "%s", file_name);
+		}
+	} else {
+		http_log(DEBUG_ERROR, conn, "Bad SSI #include: [%s]", tag);
+		return;
+	}
+
+	if (truncated) {
+		http_log(DEBUG_ERROR, conn, "SSI #include path length overflow: [%s]", tag);
+		return;
+	}
+
+	if (!http_fopen(conn->ctx, conn, path, "rb", &file)) {
+		http_log(DEBUG_ERROR, conn,
+			"Cannot open SSI #include: [%s]: fopen(%s): %s",
+			tag,
+			path,
+			strerror(os_geterror()));
+	} else {
+		http_set_close_on_exec(fd2socket(fileno(file.fp)));
+		if (http_match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], path)
+	> 0) {
+			send_ssi_file(conn, path, &file, include_level + 1);
+		} else {
+			http_send_file_data(conn, &file, 0, INT64_MAX, 0); /* send static file */
+		}
+		(void)http_fclose(&file); /* Ignore errors for readonly files */
+	}
+}
+
+static void do_ssi_exec(http_t *conn, char *tag) {
+	char cmd[1024] = "";
+	struct file file = STRUCT_FILE_INITIALIZER;
+
+	if (sscanf(tag, " \"%1023[^\"]\"", cmd) != 1) {
+		http_log(DEBUG_ERROR, conn, "Bad SSI #exec: [%s]", tag);
+	} else {
+		cmd[1023] = 0;
+		if ((file.fp = popen(cmd, "r")) == NULL) {
+			http_log(DEBUG_ERROR, conn,
+				"Cannot SSI #exec: [%s]: %s",
+				cmd,
+				strerror(os_geterror()));
+		} else {
+			http_send_file_data(conn, &file, 0, INT64_MAX, 0); /* send static file */
+			pclose(file.fp);
+		}
+	}
+}
+
 static void send_ssi_file(http_t *conn,
 	const char *path,
-	struct mg_file *filep,
+	struct file *filep,
 	int include_level) {
 	char buf[BUF_LEN];
 	int ch, len, in_tag, in_ssi_tag;
@@ -1808,7 +1897,7 @@ static void send_ssi_file(http_t *conn,
 	in_tag = in_ssi_tag = len = 0;
 
 	/* Read file, byte by byte, and look for SSI include tags */
-	while ((ch = mg_fgetc(filep)) != EOF) {
+	while ((ch = http_fgetc(filep)) != EOF) {
 		if (in_tag) {
 			/* We are in a tag, either SSI tag or html tag */
 			if (ch == '>') {
@@ -1906,7 +1995,7 @@ static void handle_ssi_file_request(http_t *conn,
 		 * content length */
 		conn->req.must_close = 1;
 		http_gmt_time_str(date, sizeof(date), &curtime);
-		http_set_close_on_exec(filep);
+		http_set_close_on_exec(fd2socket(fileno(filep->fp)));
 
 		/* 200 OK response */
 		http_response_start(conn, 200);
@@ -1972,7 +2061,7 @@ void handle_file_based_request(http_t *conn,
 		return;
 	}
 
-	if ((!conn->req.in_error_handler) && is_not_modified(conn, &file)) {
+	if ((!conn->req.in_error_handler) && is_not_modified(conn, file)) {
 		/* Send 304 "Not Modified" - this must not send any body data */
 		handle_not_modified_static_file_request(conn, file);
 		return;
@@ -1982,7 +2071,7 @@ void handle_file_based_request(http_t *conn,
 }
 
 /* Return True if we should reply 304 Not Modified. */
-int is_not_modified(const http_t *conn, const struct file *filestat) {
+int is_not_modified(http_t *conn, const struct file *filestat) {
 	char etag[64];
 	string_t ims = http_get_header(conn, "If-Modified-Since");
 	string_t inm = http_get_header(conn, "If-None-Match");
@@ -2068,7 +2157,7 @@ static int push_all(http_ini_t *ctx, FILE *fp,	string_t buf, int len) {
 	}
 
 	while ((len > 0) && ctx->status == HTTP_STATUS_RUNNING) {
-		n = fs_fwrite(buf + nwritten, 1, len, fp);
+		n = fs_fwrite((string)buf + nwritten, 1, len, fp);
 		if (ferror(fp) || n < 0) {
 			if (nwritten == 0) {
 				nwritten = -1; /* Propagate the error */
@@ -2706,8 +2795,8 @@ no_callback_resource:
 				goto no_callback_resource;
 			}
 		} else {
-			http_websocket_request(conn,
-				path,
+			http_websocket_request(conn->ctx,
+				conn,
 				is_callback_resource,
 				subprotocols,
 				ws_connect_handler,
@@ -2736,8 +2825,8 @@ no_callback_resource:
 			* Default: All allowed. */
 			if (true) {
 				/* Websocket Lua script */
-				http_websocket_request(conn,
-					path,
+				http_websocket_request(conn->ctx,
+					conn,
 					0 /* Lua Script */,
 					NULL,
 					NULL,

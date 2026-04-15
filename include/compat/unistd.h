@@ -39,6 +39,8 @@
 #define chdir 	_chdir
 #define isatty 	_isatty
 #define lseek 	_lseek
+#define popen 	_popen
+#define pclose 	_pclose
 #ifndef rmdir
 #	define rmdir 	_rmdir
 #endif

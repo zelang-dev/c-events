@@ -560,7 +560,7 @@ char *str_repeat(char *str, int mult) {
 	size_t result_len, len = strlen(str);
 
 	if (mult < 0)
-		panicking("must be greater than or equal to 0");
+		panic("must be greater than or equal to 0");
 
 	/* Don't waste our time if it's empty */
 	/* ... or if the multiplier is zero */
@@ -615,11 +615,11 @@ char *str_pad(char *str, int length, char *pad, str_pad_type pad_type) {
 	}
 
 	if (pad_str_len == 0) {
-		panicking("must be a non-empty string");
+		panic("must be a non-empty string");
 	}
 
 	if (pad_type < STR_PAD_LEFT || pad_type > STR_PAD_BOTH) {
-		panicking("must be STR_PAD_LEFT, STR_PAD_RIGHT, or STR_PAD_BOTH");
+		panic("must be STR_PAD_LEFT, STR_PAD_RIGHT, or STR_PAD_BOTH");
 	}
 
 	num_pad_chars = length - input_len;

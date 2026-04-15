@@ -719,3 +719,11 @@ static EVENTS_INLINE void *_os_fclose(param_t args) {
 EVENTS_INLINE int fs_fclose(FILE *stream) {
 	return queue_get(queue_work(futures_pool(), _os_fclose, 1, stream)).integer;
 }
+
+static EVENTS_INLINE void *_os_fgetc(param_t args) {
+	return casting(fgetc((FILE *)args[0].object));
+}
+
+EVENTS_INLINE int fs_fgetc(FILE *stream) {
+	return queue_get(queue_work(futures_pool(), _os_fgetc, 1, stream)).integer;
+}
