@@ -2,22 +2,14 @@
 #define _HTTPIE_INTERNAL_H
 
 #include <httpie.h>
-#undef in
-#ifdef _WIN32
-#	include "zlib.h"
-#ifndef timegm
-#	define timegm(x) (_mkgmtime(x))
-#endif
-#else
-#	include <zlib.h>
-#endif
-#define in ,
 
 #ifdef USE_DEBUG
 #	define debug_info(...) cerr(__VA_ARGS__)
 #else
 #	define debug_info(...)
 #endif
+
+#define get_array_size(array) (sizeof(array) / sizeof(array[0]))
 
 /* For a detailed description of these *_PATH_MAX defines, see
  * https://github.com/civetweb/civetweb/issues/937. */
@@ -121,12 +113,15 @@ enum http_dbg {
 enum http_status_t {
 	HTTP_STATUS_RUNNING,
 	HTTP_STATUS_STOPPING,
-	HTTP_STATUS_TERMINATED
+	HTTP_STATUS_TERMINATED,
+	HTTP_STATUS_STARTING
 };
 
 enum http_type_t {
-	HTTP_TYPE_SERVER,
-	HTTP_TYPE_CLIENT
+	HTTP_INI_INVALID,
+	HTTP_INI_SERVER,
+	HTTP_INI_CLIENT,
+	HTTP_INI_WEBSOCKET
 };
 
 enum uri_type_t {
@@ -149,6 +144,7 @@ enum route_type_t {
  * "Private Config Options"
  */
 typedef enum {
+	MAX_FD,
 	/* Once for each server */
 	LISTENING_PORTS,
 	NUM_THREADS,
@@ -301,21 +297,28 @@ struct http_cb_info {
 	struct http_cb_info *next;
 };
 
+/* Record of a port a server/client is listening on
+ * Describes listening socket, or socket which was accept()-ed by the `main`
+ * thread and queued for future handling by the worker `task` thread `pool`. */
 struct server_socket_s {
-	/* Listening socket */
+	/* Listening/accepted socket */
 	fds_t sock;
-	/* Local socket address */
-	union usa lsa;
-	/* Remote socket address */
-	union usa rsa;
-	/* Is port SSL-ed */
-	bool has_ssl;
-	/* Is port supposed to redirect everything to SSL port	*/
-	bool has_redir;
+	/* The protocol supported by the port: 1 = IPv4, 2 = IPv6, 3 = both */
+	int protocol;
+	/* The port number the server is listening on */
+	int port;
 	/* 0: invalid, 1: valid, 2: free */
 	unsigned char in_use;
 	/* Shouldn't cause us to exit if we can't bind to it */
 	unsigned char is_optional;
+	/* Is port SSL-ed */
+	bool has_ssl;
+	/* Is port supposed to redirect everything to SSL port	*/
+	bool has_redir;
+	/* Local socket address */
+	union usa lsa;
+	/* Remote socket address */
+	union usa rsa;
 };
 
 struct file {
@@ -329,7 +332,7 @@ struct file {
 
 #define STRUCT_FILE_INITIALIZER {0, 0, (uint64_t)0, (time_t)0, NULL, NULL}
 
-/* `httpie` server `ini` context options, an array of records passed in when a context is created */
+/* `HttPie` server `ini` context options, an array of records passed in when a context is created */
 struct ini_option {
 	/* name of the option used when creating a context */
 	string_t name;
@@ -338,21 +341,105 @@ struct ini_option {
 	string_t default_value;
 };
 
+/*
+ * This structure contains callback functions for handling form fields.
+ * It is used as an argument to `http_handle_form_request`. */
+struct form_data_handler_s {
+	/* This callback function is called, if a new field has been found.
+	 * The return value of this callback is used to define how the field
+	 * should be processed.
+	 *
+	 * Parameters:
+	 *   key: Name of the field ("name" property of the HTML input field).
+	 *   filename: Name of a file to upload, at the client computer.
+	 *             Only set for input fields of type "file", otherwise NULL.
+	 *   path: Output parameter: File name (incl. path) to store the file
+	 *         at the server computer. Only used if MG_FORM_FIELD_STORAGE_STORE
+	 *         is returned by this callback. Existing files will be
+	 *         overwritten.
+	 *   pathlen: Length of the buffer for path.
+	 *   user_data: Value of the member user_data of `form_data_handler_t`
+	 *
+	 * Return value:
+	 *   The callback must return the intended storage for this field
+	 *   (See FORM_FIELD_STORAGE_*).
+	 */
+	int (*field_found)(string_t key, string_t filename, char *path, size_t pathlen, void_t user_data);
+
+	/* If the "field_found" callback returned FORM_FIELD_STORAGE_GET,
+	 * this callback will receive the field data.
+	 *
+	 * Parameters:
+	 *   key: Name of the field ("name" property of the HTML input field).
+	 *   value: Value of the input field.
+	 *   user_data: Value of the member user_data of `form_data_handler_t`
+	 *
+	 * Return value:
+	 *   The return code determines how the server should continue processing
+	 *   the current request (See FORM_FIELD_HANDLE_*).
+	 */
+	int (*field_get)(string_t key, string_t value, size_t valuelen, void_t user_data);
+
+	/* If the "field_found" callback returned FORM_FIELD_STORAGE_STORE,
+	 * the data will be stored into a file. If the file has been written
+	 * successfully, this callback will be called. This callback will
+	 * not be called for only partially uploaded files. The
+	 * http_handle_form_request function will either store the file completely
+	 * and call this callback, or it will remove any partial content and
+	 * not call this callback function.
+	 *
+	 * Parameters:
+	 *   path: Path of the file stored at the server.
+	 *   file_size: Size of the stored file in bytes.
+	 *   user_data: Value of the member user_data of `form_data_handler_t`
+	 *
+	 * Return value:
+	 *   The return code determines how the server should continue processing
+	 *   the current request (See FORM_FIELD_HANDLE_*).
+	 */
+	int (*field_store)(string_t path, int64_t file_size, void_t user_data);
+	void *user_data;
+};
+
+/* Return values definition for the "field_found" callback in `http_form_data_handler`. */
+enum {
+	/* Skip this field (neither get nor store it). Continue with the next field. */
+	FORM_FIELD_STORAGE_SKIP = 0x00,
+	/* Get the field value. */
+	FORM_FIELD_STORAGE_GET = 0x01,
+	/* Store the field value into a file. */
+	FORM_FIELD_STORAGE_STORE = 0x02,
+	/* Stop parsing this request. Skip the remaining fields */
+	FORM_FIELD_STORAGE_ABORT = 0x10
+};
+
+/* Return values for "field_get" and "field_store" */
+enum {
+	/* Only "field_get": If there is more data in this field, get the next
+	 * chunk. Otherwise: handle the next field. */
+	FORM_FIELD_HANDLE_GET = 0x1,
+	/* Handle the next field */
+	FORM_FIELD_HANDLE_NEXT = 0x8,
+	/* Stop parsing this request */
+	FORM_FIELD_HANDLE_ABORT = 0x10
+};
+
 /* This structure needs to be passed to http_start(),
- * to let `httpie` know which callbacks to invoke. */
+ * to let `HttPie` know which callbacks to invoke. */
 struct http_clb_s {
 	request_cb start;
-	log_message_cb log_message;
+	log_msg_cb log_message;
 	log_access_cb log_access;
-	open_file_cb open_file;
+	file_open_cb open_file;
 	http_error_cb http_error;
 	init_context_cb init_context;
+	upload_form_cb upload;
 };
 
 struct ini_domain_s {
 	 /* tls context */
 	tls_s *tls_ctx;
-	/* `httpie` configuration parameters */
+	/* `HttPie` configuration parameters */
 	char *config[NUM_OPTIONS];
 	int64_t ssl_cert_last_mtime;
 
@@ -379,27 +466,22 @@ struct twebdav_lock {
 struct http_ini_s {
 	/* Should we stop event loop */
 	volatile enum http_status_t status;
-	/* HTTP_TYPE_SERVER or HTTP_TYPE_CLIENT */
+	/* HTTP_INI_SERVER, HTTP_INI_CLIENT, or HTTP_INI_WEBSOCKET */
 	enum http_type_t http_type;
 	enum http_dbg debug_level;
-	int enable_keep_alive;
 	unsigned int num_listening_sockets;
 	/* Memory related */
 	/* The max request size */
 	unsigned int max_request_size;
-	/* WebDAV lock structures */
-	struct twebdav_lock webdav_lock[NUM_WEBDAV_LOCKS];
-	/* Server start time, used for authentication */
-	time_t start_time;
-	/* Server nonce */
-	/* Protects ssl_ctx, handlers,
-	 * ssl_cert_last_mtime, nonce_count, and
-	 * next (linked list) */
-	atomic_spinlock nonce_mutex;
+	int enable_keep_alive;
+	/* The thread worker task IDs */
+	uint32_t worker_taskid;
 	string error_log_file;
 	string document_root;
 	/* What operating system is running */
 	string systemName;
+	/* Server start time, used for authentication */
+	time_t start_time;
 	/* User-defined data */
 	void *user_data;
 	/* User-defined callback function */
@@ -414,6 +496,15 @@ struct http_ini_s {
 	 * There may be multiple domains hosted at one physical server.
 	 * The default domain "host" is the first element of a list of domains. */
 	struct ini_domain_s host;
+
+	/* WebDAV lock structures */
+	struct twebdav_lock webdav_lock[NUM_WEBDAV_LOCKS];
+
+	/* Server nonce */
+	/* Protects ssl_ctx, handlers,
+	 * ssl_cert_last_mtime, nonce_count, and
+	 * next (linked list) */
+	atomic_spinlock nonce_mutex;
 };
 
 typedef struct httpie_s {
@@ -499,7 +590,7 @@ struct http_s {
 	http_parser_type action;
 	/* The current response status */
 	http_status status;
-	/* The requested status code */
+	/* The status code */
 	http_status code;
 	/* Connected file descriptor/socket */
 	fds_t fd;
@@ -508,6 +599,8 @@ struct http_s {
 	/* Is Multipart `form_data` in header response? */
 	int is_multipart;
 	int is_valid;
+	/* Number of HTTP headers */
+	int num_headers;
 	/* The protocol version */
 	double version;
 	/* Length (in bytes) of the request body,
@@ -549,7 +642,7 @@ struct http_s {
 	char protocol[16];
 	/* The requested method */
 	char method[32];
-	/* The requested status message */
+	/* The response status message */
 	char message[64];
 	char variable[256];
 	httpie_t req;
@@ -607,6 +700,34 @@ struct dir_scan_data {
 	size_t arr_size;
 };
 
+/* New APIs for enhanced option and error handling.
+   These mg_*2 API functions have the same purpose as their original versions,
+   but provide additional options and/or provide improved error diagnostics.
+
+   Note: Experimental interfaces may change */
+struct error_data {
+	unsigned code;           /* error code (number) */
+	unsigned code_sub;       /* error sub code (number) */
+	string text;              /* buffer for error text */
+	size_t text_buffer_size; /* size of buffer of "text" */
+};
+
+struct init_data {
+	/* callback function pointer */
+	const struct http_clb_s *callbacks;
+	/* data */
+	void_t user_data;
+	string_t *configuration_options;
+};
+
+struct client_options {
+	string_t host;
+	int port;
+	string_t client_cert;
+	string_t server_cert;
+	string_t host_name;
+};
+
 bool http_fopen(http_ini_t *ctx, const http_t *conn,
 	string_t path, string_t mode, struct file *filep);
 
@@ -645,9 +766,9 @@ bool http_is_not_modified(http_ini_t *ctx, http_t *conn, const struct file *file
 int http_stat(http_t *conn, string_t path, struct file *filep);
 
 /*
- * This is the heart of the `httpie's` logic.
+ * This is the heart of the `HttPie's` logic.
  * This function is called when the request is read, parsed and validated,
- * and `httpie` must decide what action to take:
+ * and `HttPie` must decide what action to take:
  *
  * Serve a file, or a directory, or call embedded function, etcetera. */
 void http_handle_request(http_t *conn);
@@ -684,8 +805,16 @@ int http_get_option_index(string_t name);
 string_t http_next_option(string_t list, struct vec *val, struct vec *eq_val);
 int http_parse_match_net(const struct vec *vec, const union usa *sa, int no_strict);
 
-/* Processes a request from a remote client. */
-int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
+/* Processes a request/response from a remote client. */
+int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
+
+/* Keep reading the input `conn` until \r\n\r\n appears in the
+ * buffer (which marks the end of HTTP request). Buffer buf may already
+ * have some data. The length of the data is stored in nread.
+ * Upon every read operation, increase nread by the number of bytes read. */
+int read_message(http_t *conn, char *buf, int bufsiz, int *nread);
+
+int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
 
 /*
  * Set the port options for a context.
@@ -694,8 +823,16 @@ int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
 int http_set_ports_option(http_ini_t *ctx);
 string_t http_get_default_option(ini_options_type name);
 void http_set_close_on_exec(fds_t sock);
+bool http_is_file_opened(struct file *filep);
 
 string http_error_string(int error_code, string buf, size_t buf_len);
+
+/*
+ * Print message to buffer. If buffer is large enough to hold the message,
+ * return buffer. If buffer is to small, allocate large enough buffer on heap,
+ * and return allocated buffer.
+ */
+int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap);
 
 /* Perform case-insensitive match of string against pattern
  *
@@ -722,12 +859,19 @@ string http_error_string(int error_code, string buf, size_t buf_len);
  * - `|` 	Matches if pattern on the left side or the right side matches.*/
 int http_match_prefix(string_t pattern, size_t pattern_len, string_t str);
 ptrdiff_t http_match_prefix_strlen(string_t pattern, string_t str);
+/* HTTP 1.1 assumes keep alive if "Connection:" header is not set
+ * This function must tolerate situations when connection info is not
+ * set up, for example if request parsing failed. */
+int should_keep_alive(http_t *conn);
 
 /* Send all current and obsolete cache opt-out directives. */
 void http_no_cache_header(http_t *conn);
 void http_domain_header(http_t *conn);
 void http_static_cache_header(http_t *conn);
 void http_cors_header(http_t *conn);
+
+int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src);
+int http_server(http_ini_t *ctx);
 
 /*
  * Returns true, if a file must be hidden from browsing by the remote client.
@@ -759,7 +903,6 @@ string_t http_get_rel_url_at_current_server(string_t uri, http_t *conn);
 /* Convert time_t to a string. According to RFC2616, Sec 14.18, this must be
  * included in all responses other than 100, 101, 5xx. */
 void http_gmt_time_str(char *buf, size_t buf_len, time_t *t);
-int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src);
 
 /* Sets callback handlers to uri's. */
 void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_type, bool is_delete_request,
@@ -770,6 +913,9 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 	ws_close_cb close_handler,
 	auth_cb auth_handler,
 	void_t cbdata);
+
+http_t *http_connect_client_impl(const struct client_options *client_options,
+	int use_ssl, struct error_data *error);
 
 /**
  * Checks the request headers to see if the connection is a valid websocket protocol.
@@ -804,6 +950,25 @@ void handle_file_based_request(http_t *conn, string_t path, struct file *file);
 bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep);
 void handle_directory_request(http_t *conn, string_t dir);
 
+/* Valid listening port specification is: [ip_address:]port[s]
+ * Examples for IPv4: 80, 443s, 127.0.0.1:3128, 192.0.2.3:8080s
+ * Examples for IPv6: [::]:80, [::1]:80,
+ *   [2001:0db8:7654:3210:FEDC:BA98:7654:3210]:443s
+ *   see https://tools.ietf.org/html/rfc3513#section-2.2
+ * In order to bind to both, IPv4 and IPv6, you can either add
+ * both ports using 8080,[::]:8080, or the short form +8080.
+ * Both forms differ in detail: 8080,[::]:8080 create two sockets,
+ * one only accepting IPv4 the other only IPv6. +8080 creates
+ * one socket accepting IPv4 and IPv6. Depending on the IPv6
+ * environment, they might work differently, or might not work
+ * at all - it must be tested what options work best in the
+ * relevant network environment. */
+int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version);
+
+/* Construct fake connection structure. Used for logging, if connection
+ * is not applicable at the moment of logging. */
+http_t *fake_conn(http_t *fc, http_ini_t *ctx);
+
 /*
  * Parse UTC date-time string, and return the corresponding time_t value.
  * This function is used in the if-modified-since calculations */
@@ -814,15 +979,31 @@ void send_authorization_request(http_t *conn, string_t realm);
 int check_authorization(http_t *conn, string_t path);
 /* Authorize against the opened passwords file. Return 1 if authorized. */
 int authorize(http_t *conn, struct file *filep, string_t realm);
-int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
 int remove_directory(http_t *conn, string_t dir);
 int fs_scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *));
-void qjs_exec_script(http_t *conn, const char *script_name);
+void qjs_exec_script(http_t *conn, string_t script_name);
 
 int is_authorized_for_put(http_t *conn);
 void http_compressed_data(http_t *conn, struct file *filep);
 void sockaddr_to_str(char *buf, size_t len, const union usa *usa);
 unsigned short sockaddr_in_port(union usa *s);
 int http_switch_domain(http_t *conn);
+string_t http_fgets(char *buf, size_t size, struct file *filep, char **p);
+void discard_unread_request_data(http_t *conn);
+/* Pre-process URIs according to RFC + protect against directory disclosure
+ * attacks by removing '..', excessive '/' and '\' characters */
+void remove_double_dots_slashes(char *s);
+int set_throttle(const char *spec, uint32_t remote_ip, const char *uri);
 
+/* Used to free the resources associated with a context. */
+void http_free_ini(http_ini_t *ctx);
+void_t free_ex(void_t memory);
+
+/* Get system information. It can be printed or stored by the caller.
+ * Return the size of available information. */
+int http_get_system_info(char *buffer, int buflen);
+
+/* Get context information. It can be printed or stored by the caller.
+ * Return the size of available information. */
+int http_get_context_info(const http_ini_t *ctx, char *buffer, int buflen);
 #endif /* _HTTPIE_INTERNAL_H */

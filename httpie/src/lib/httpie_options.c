@@ -2,7 +2,8 @@
 
 /* Config option name, config types, default value.
  * Must be in the same order as the enum const above. */
-static const struct ini_option config_options[] = {
+static const options_ini_t config_options[] = {
+	{"max_fd", INI_TYPE_NUMBER, "4096"},
 	/* Once for each server */
 	{"listening_ports", INI_TYPE_STRING_LIST, "8080"},
 	{"num_threads", INI_TYPE_NUMBER, "50"},
@@ -51,7 +52,7 @@ static const struct ini_option config_options[] = {
 	{"enable_directory_listing", INI_TYPE_BOOLEAN, "yes"},
 	{"enable_webdav", INI_TYPE_BOOLEAN, "no"},
 	{"global_auth_file", INI_TYPE_FILE, NULL},
-	{"index_files", INI_TYPE_STRING_LIST, "index.xhtml,index.html,index.htm,index.cgi,index.shtml,index.php"},
+	{"index_files", INI_TYPE_STRING_LIST, "index.xhtml,index.html,index.htm,index.shtml,index.php"},
 	{"access_control_list", INI_TYPE_STRING_LIST, NULL},
 	{"extra_mime_types", INI_TYPE_STRING_LIST, NULL},
 	{"ssl_certificate", INI_TYPE_FILE, NULL},
@@ -300,13 +301,53 @@ int http_get_option_index(string_t name) {
 	return -1;
 }
 
-FORCEINLINE string_t http_get_default_option(ini_options_type name) {
+string_t http_get_default_option(ini_options_type name) {
 	return config_options[name].default_value;
+}
+
+FORCEINLINE const options_ini_t *http_get_valid_options(void) {
+	return config_options;
+}
+
+int http_server_ports(http_ini_t *ctx, int size, struct http_server_port *ports) {
+	int i, cnt = 0;
+
+	if (size <= 0) {
+		return -1;
+	}
+
+	memset(ports, 0, sizeof(*ports) * (size_t)size);
+	if (!ctx) {
+		return -1;
+	}
+
+	if (!ctx->listening_sockets) {
+		return -1;
+	}
+
+	for (i = 0; (i < size) && (i < (int)ctx->num_listening_sockets); i++) {
+		ports[cnt].port =ntohs(USA_IN_PORT_UNSAFE(&(ctx->listening_sockets[i].lsa)));
+		ports[cnt].is_ssl = ctx->listening_sockets[i].has_ssl;
+		ports[cnt].is_redirect = ctx->listening_sockets[i].has_redir;
+		ports[cnt].is_optional = ctx->listening_sockets[i].is_optional;
+		ports[cnt].is_bound = ctx->listening_sockets[i].sock != INVALID_SOCKET;
+		if (ctx->listening_sockets[i].lsa.sa.sa_family == AF_INET) {
+			/* IPv4 */
+			ports[cnt].protocol = 1;
+			cnt++;
+		} else if (ctx->listening_sockets[i].lsa.sa.sa_family == AF_INET6) {
+			/* IPv6 */
+			ports[cnt].protocol = 3;
+			cnt++;
+		}
+	}
+
+	return cnt;
 }
 
 string_t http_get_option(http_ini_t *ctx, string_t name) {
 	int i;
-	if ((i = get_option_index(name)) == -1) {
+	if ((i = http_get_option_index(name)) == -1) {
 		return NULL;
 	} else if (!ctx || ctx->host.config[i] == NULL) {
 		return "";
@@ -335,9 +376,7 @@ string http_error_string(int error_code, string buf, size_t buf_len) {
 #endif
 }
 
-/* Construct fake connection structure. Used for logging, if connection
- * is not applicable at the moment of logging. */
-static http_t *fake_conn(http_t *fc, http_ini_t *ctx) {
+http_t *fake_conn(http_t *fc, http_ini_t *ctx) {
 	static const http_t conn_zero = {0};
 	*fc = conn_zero;
 	fc->ctx = ctx;
@@ -619,58 +658,97 @@ bool http_init_options(http_ini_t *ctx, string_t *options) {
 }
 
 int http_match_prefix(string_t pattern, size_t pattern_len, string_t str) {
-	string_t or_str;
+	const char *or_str;
 	size_t i;
-	int j;
-	int len;
-	int res;
+	int j, len, res;
 
-	or_str = (string_t)memchr(pattern, '|', pattern_len);
-	if (or_str != NULL) {
+	if ((or_str = (const char *)memchr(pattern, '|', pattern_len)) != NULL) {
 		res = http_match_prefix(pattern, (size_t)(or_str - pattern), str);
-		return (res > 0) ? res : http_match_prefix(or_str + 1, (size_t)((pattern + pattern_len) - (or_str + 1)), str);
+		return res > 0
+			? res
+			: http_match_prefix(or_str + 1, (size_t)((pattern + pattern_len) - (or_str + 1)), str);
 	}
 
-	i = 0;
-	j = 0;
-	while (i < pattern_len) {
-		if (pattern[i] == '?' && str[j] != '\0')
+	for (i = 0, j = 0; i < pattern_len; i++, j++) {
+		if (pattern[i] == '?' && str[j] != '\0') {
 			continue;
-
-		if (pattern[i] == '$')
-			return (str[j] == '\0') ? j : -1;
-
-		if (pattern[i] == '*') {
+		} else if (pattern[i] == '$') {
+			return str[j] == '\0' ? j : -1;
+		} else if (pattern[i] == '*') {
 			i++;
 			if (pattern[i] == '*') {
 				i++;
 				len = (int)strlen(str + j);
-			} else
+			} else {
 				len = (int)strcspn(str + j, "/");
-
-			if (i == pattern_len)
+			}
+			if (i == pattern_len) {
 				return j + len;
-
+			}
 			do {
 				res = http_match_prefix(pattern + i, pattern_len - i, str + j + len);
 			} while (res == -1 && len-- > 0);
-
-			return (res == -1) ? -1 : j + res + len;
-		} else if (tolower(*(const unsigned char *)&pattern[i]) != tolower(*(const unsigned char *)&str[j]))
+			return res == -1 ? -1 : j + res + len;
+		} else if (tolower(*(const unsigned char *)&pattern[i]) != tolower(*(const unsigned char *)&str[j])) {
 			return -1;
-		i++;
-		j++;
+		}
 	}
-
 	return j;
 }
 
-FORCEINLINE ptrdiff_t http_match_prefix_strlen(string_t pattern, string_t str) {
+ptrdiff_t http_match_prefix_strlen(string_t pattern, string_t str) {
 	if (pattern == NULL) {
 		return -1;
 	}
 
 	return http_match_prefix(pattern, strlen(pattern), str);
+}
+
+static int isbyte(int n) { return n >= 0 && n <= 255; }
+static int parse_net(const char *spec, uint32_t *net, uint32_t *mask) {
+	int n, a, b, c, d, slash = 32, len = 0;
+
+	if ((sscanf(spec, "%d.%d.%d.%d/%d%n", &a, &b, &c, &d, &slash, &n) == 5 ||
+		sscanf(spec, "%d.%d.%d.%d%n", &a, &b, &c, &d, &n) == 4) &&
+		isbyte(a) && isbyte(b) && isbyte(c) && isbyte(d) && slash >= 0 &&
+		slash < 33) {
+		len = n;
+		*net = ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) |
+			(uint32_t)d;
+		*mask = slash ? 0xffffffffU << (32 - slash) : 0;
+	}
+
+	return len;
+}
+
+int set_throttle(const char *spec, uint32_t remote_ip, const char *uri) {
+	int throttle = 0;
+	struct vec vec, val;
+	uint32_t net, mask;
+	char mult;
+	double v;
+
+	while ((spec = http_next_option(spec, &vec, &val)) != NULL) {
+		mult = ',';
+		if (sscanf(val.ptr, "%lf%c", &v, &mult) < 1 || v < 0 ||
+			(tolower(*(const unsigned char *)&mult) != 'k' && tolower(*(const unsigned char *)&mult) != 'm' &&
+				mult != ',')) {
+			continue;
+		}
+		v *= tolower(*(const unsigned char *)&mult) == 'k' ? 1024 : tolower(*(const unsigned char *)&mult) == 'm' ? 1048576
+			: 1;
+		if (vec.len == 1 && vec.ptr[0] == '*') {
+			throttle = (int)v;
+		} else if (parse_net(vec.ptr, &net, &mask) > 0) {
+			if ((remote_ip & mask) == net) {
+				throttle = (int)v;
+			}
+		} else if (http_match_prefix(vec.ptr, vec.len, uri) > 0) {
+			throttle = (int)v;
+		}
+	}
+
+	return throttle;
 }
 
 bool http_must_hide_file(http_ini_t *ctx, string_t path) {
@@ -771,20 +849,7 @@ static FORCEINLINE int is_valid_port(unsigned long port) {
 	return (port <= 0xffff);
 }
 
-/* Valid listening port specification is: [ip_address:]port[s]
- * Examples for IPv4: 80, 443s, 127.0.0.1:3128, 192.0.2.3:8080s
- * Examples for IPv6: [::]:80, [::1]:80,
- *   [2001:0db8:7654:3210:FEDC:BA98:7654:3210]:443s
- *   see https://tools.ietf.org/html/rfc3513#section-2.2
- * In order to bind to both, IPv4 and IPv6, you can either add
- * both ports using 8080,[::]:8080, or the short form +8080.
- * Both forms differ in detail: 8080,[::]:8080 create two sockets,
- * one only accepting IPv4 the other only IPv6. +8080 creates
- * one socket accepting IPv4 and IPv6. Depending on the IPv6
- * environment, they might work differently, or might not work
- * at all - it must be tested what options work best in the
- * relevant network environment. */
-static int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
+int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 	unsigned int a, b, c, d;
 	unsigned port;
 	unsigned long portUL;
@@ -825,7 +890,7 @@ static int parse_port_string(const struct vec *vec, http_socket *so, int *ip_ver
 		&& ((size_t)len <= vec->len)
 		&& http_inet_pton(AF_INET6, buf, &so->lsa.sin6, sizeof(so->lsa.sin6), 0)) {
 		/* IPv6 address, examples: see above */
-		/* so->lsa.sin6.sin6_family = AF_INET6; already set by mg_inet_pton */
+		/* so->lsa.sin6.sin6_family = AF_INET6; already set by http_inet_pton */
 		so->lsa.sin6.sin6_port = htons((uint16_t)port);
 		*ip_version = 6;
 	} else if ((vec->ptr[0] == '+')
@@ -969,122 +1034,6 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	string_t opt_txt;
 	long opt_listen_backlog;
 
-	/* Create socket. */
-	/* For a list of protocol numbers (e.g., TCP==6) see:
-	 * https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml */
-	if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM,
-		(ip_version == 99) ? (/* LOCAL */ 0) : (/* TCP */ 6))) == INVALID_SOCKET) {
-		http_log(DEBUG_CRASH, NULL, "cannot create socket (entry %i)", portsTotal);
-		if (so.is_optional) {
-			portsOk++; /* it's okay if we couldn't create a socket,
-					this port is optional anyway */
-		}
-		return portsOk;
-	}
-
-	if (ip_version == 99) {
-		/* Unix domain socket */
-	} else if (ip_version > 4) {
-			/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
-		if (ip_version > 6) {
-			if (so.lsa.sa.sa_family == AF_INET6
-				&& setsockopt(so.sock,
-					IPPROTO_IPV6,
-					IPV6_V6ONLY,
-					(void *)&off,
-					sizeof(off))
-				!= 0) {
-				/* Set IPv6 only option, but don't abort on errors. */
-				http_log(DEBUG_CRASH, NULL,
-					"cannot set socket option "
-					"IPV6_V6ONLY=off (entry %i)",
-					portsTotal);
-			}
-		} else {
-			if (so.lsa.sa.sa_family == AF_INET6
-				&& setsockopt(so.sock,
-					IPPROTO_IPV6,
-					IPV6_V6ONLY,
-					(void *)&on,
-					sizeof(on))
-				!= 0) {
-				/* Set IPv6 only option, but don't abort on errors. */
-				http_log(DEBUG_CRASH, NULL,
-					"cannot set socket option "
-					"IPV6_V6ONLY=on (entry %i)",
-					portsTotal);
-			}
-		}
-	}
-
-	if (so.lsa.sa.sa_family == AF_INET) {
-		len = sizeof(so.lsa.sin);
-		if (bind(so.sock, &so.lsa.sa, len) != 0) {
-			http_log(DEBUG_CRASH, NULL,
-				"cannot bind to %.*s: %d (%s)",
-				(int)vec.len,
-				vec.ptr,
-				os_geterror(),
-				strerror(errno));
-			close(so.sock);
-			so.sock = INVALID_SOCKET;
-			if (so.is_optional) {
-				portsOk++; /* it's okay if we couldn't bind, this port is
-							  optional anyway */
-			}
-			return portsOk;
-		}
-	} else if (so.lsa.sa.sa_family == AF_INET6) {
-		len = sizeof(so.lsa.sin6);
-		if (bind(so.sock, &so.lsa.sa, len) != 0) {
-			http_log(DEBUG_CRASH, NULL,
-				"cannot bind to IPv6 %.*s: %d (%s)",
-				(int)vec.len,
-				vec.ptr,
-				os_geterror(),
-				strerror(errno));
-			close(so.sock);
-			so.sock = INVALID_SOCKET;
-			if (so.is_optional) {
-				portsOk++; /* it's okay if we couldn't bind, this port is
-							  optional anyway */
-			}
-			return portsOk;
-		}
-	} else if (so.lsa.sa.sa_family == AF_UNIX) {
-		len = sizeof(so.lsa.sun);
-		if (bind(so.sock, &so.lsa.sa, len) != 0) {
-			http_log(DEBUG_CRASH, NULL,
-				"cannot bind to unix socket %s: %d (%s)",
-				so.lsa.sun.sun_path,
-				os_geterror(),
-				strerror(errno));
-			close(so.sock);
-			so.sock = INVALID_SOCKET;
-			if (so.is_optional) {
-				portsOk++; /* it's okay if we couldn't bind, this port is
-							  optional anyway */
-			}
-			return portsOk;
-		}
-	} else {
-		http_log(DEBUG_CRASH, NULL, "cannot bind: address family not supported (entry %i)", portsTotal);
-		close(so.sock);
-		so.sock = INVALID_SOCKET;
-		return portsOk;
-	}
-
-	if ((so.lsa.sa.sa_family == AF_INET) || (so.lsa.sa.sa_family == AF_INET6)) {
-		if (getsockopt(so.sock, SOL_SOCKET, SO_TYPE, (void *)&on, &on) >= 0) {
-			on = 1;
-			if (setsockopt(so.sock,	SOL_SOCKET,	SO_REUSEADDR, (string_t)&on, sizeof(on)) != 0) {
-				/* Set reuse option, but don't abort on errors. */
-				http_log(DEBUG_CRASH, NULL,
-					"cannot set socket option SO_REUSEADDR (entry %i)", portsTotal);
-			}
-		}
-	}
-
 	opt_txt = phys_ctx->host.config[LISTEN_BACKLOG_SIZE];
 	opt_listen_backlog = strtol(opt_txt, NULL, 10);
 	if ((opt_listen_backlog > INT_MAX) || (opt_listen_backlog < 1)) {
@@ -1092,21 +1041,146 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			"%s value \"%s\" is invalid",
 			config_options[LISTEN_BACKLOG_SIZE].name,
 			opt_txt);
-		close(so.sock);
-		so.sock = INVALID_SOCKET;
 		return portsOk;
 	}
 
-	if (listen(so.sock, (int)opt_listen_backlog) != 0) {
-		http_log(DEBUG_CRASH, NULL,
-			"cannot listen to %.*s: %d (%s)",
-			(int)vec.len,
-			vec.ptr,
-			os_geterror(),
-			strerror(errno));
-		close(so.sock);
-		so.sock = INVALID_SOCKET;
-		return portsOk;
+	if (so.has_ssl) {
+		if ((so.sock = tls_bind(vec.ptr, opt_listen_backlog)) < 0) {
+			http_log(DEBUG_CRASH, NULL, "cannot create secure socket (entry %i)", portsTotal);
+			return portsOk;
+		}
+
+		so.lsa = *events_get_sockaddr(so.sock);
+	} else {
+		/* Create socket. */
+		/* For a list of protocol numbers (e.g., TCP==6) see:
+		* https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml */
+		if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM,
+			(ip_version == 99) ? (/* LOCAL */ 0) : (/* TCP */ 6))) == INVALID_SOCKET) {
+			http_log(DEBUG_CRASH, NULL, "cannot create socket (entry %i)", portsTotal);
+			if (so.is_optional) {
+				portsOk++; /* it's okay if we couldn't create a socket,
+						this port is optional anyway */
+			}
+			return portsOk;
+		}
+
+		if (ip_version == 99) {
+			/* Unix domain socket */
+		} else if (ip_version > 4) {
+				/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
+			if (ip_version > 6) {
+				if (so.lsa.sa.sa_family == AF_INET6
+					&& setsockopt(so.sock,
+						IPPROTO_IPV6,
+						IPV6_V6ONLY,
+						(void *)&off,
+						sizeof(off))
+					!= 0) {
+					/* Set IPv6 only option, but don't abort on errors. */
+					http_log(DEBUG_CRASH, NULL,
+						"cannot set socket option "
+						"IPV6_V6ONLY=off (entry %i)",
+						portsTotal);
+				}
+			} else {
+				if (so.lsa.sa.sa_family == AF_INET6
+					&& setsockopt(so.sock,
+						IPPROTO_IPV6,
+						IPV6_V6ONLY,
+						(void *)&on,
+						sizeof(on))
+					!= 0) {
+					/* Set IPv6 only option, but don't abort on errors. */
+					http_log(DEBUG_CRASH, NULL,
+						"cannot set socket option "
+						"IPV6_V6ONLY=on (entry %i)",
+						portsTotal);
+				}
+			}
+		}
+
+		if (so.lsa.sa.sa_family == AF_INET) {
+			len = sizeof(so.lsa.sin);
+			if (bind(so.sock, &so.lsa.sa, len) != 0) {
+				http_log(DEBUG_CRASH, NULL,
+					"cannot bind to %.*s: %d (%s)",
+					(int)vec.len,
+					vec.ptr,
+					os_geterror(),
+					strerror(errno));
+				close(so.sock);
+				so.sock = INVALID_SOCKET;
+				if (so.is_optional) {
+					portsOk++; /* it's okay if we couldn't bind, this port is
+								  optional anyway */
+				}
+				return portsOk;
+			}
+		} else if (so.lsa.sa.sa_family == AF_INET6) {
+			len = sizeof(so.lsa.sin6);
+			if (bind(so.sock, &so.lsa.sa, len) != 0) {
+				http_log(DEBUG_CRASH, NULL,
+					"cannot bind to IPv6 %.*s: %d (%s)",
+					(int)vec.len,
+					vec.ptr,
+					os_geterror(),
+					strerror(errno));
+				close(so.sock);
+				so.sock = INVALID_SOCKET;
+				if (so.is_optional) {
+					portsOk++; /* it's okay if we couldn't bind, this port is
+								  optional anyway */
+				}
+				return portsOk;
+			}
+		} else if (so.lsa.sa.sa_family == AF_UNIX) {
+			len = sizeof(so.lsa.sun);
+			if (bind(so.sock, &so.lsa.sa, len) != 0) {
+				http_log(DEBUG_CRASH, NULL,
+					"cannot bind to unix socket %s: %d (%s)",
+					so.lsa.sun.sun_path,
+					os_geterror(),
+					strerror(errno));
+				close(so.sock);
+				so.sock = INVALID_SOCKET;
+				if (so.is_optional) {
+					portsOk++; /* it's okay if we couldn't bind, this port is
+								  optional anyway */
+				}
+				return portsOk;
+			}
+		} else {
+			http_log(DEBUG_CRASH, NULL, "cannot bind: address family not supported (entry %i)", portsTotal);
+			close(so.sock);
+			so.sock = INVALID_SOCKET;
+			return portsOk;
+		}
+
+		if ((so.lsa.sa.sa_family == AF_INET) || (so.lsa.sa.sa_family == AF_INET6)) {
+			if (getsockopt(so.sock, SOL_SOCKET, SO_TYPE, (void *)&on, &on) >= 0) {
+				on = 1;
+				if (setsockopt(so.sock, SOL_SOCKET, SO_REUSEADDR, (string_t)&on, sizeof(on)) != 0) {
+					/* Set reuse option, but don't abort on errors. */
+					http_log(DEBUG_CRASH, NULL,
+						"cannot set socket option SO_REUSEADDR (entry %i)", portsTotal);
+				}
+			}
+		}
+
+		if (listen(so.sock, (int)opt_listen_backlog) != 0) {
+			http_log(DEBUG_CRASH, NULL,
+				"cannot listen to %.*s: %d (%s)",
+				(int)vec.len,
+				vec.ptr,
+				os_geterror(),
+				strerror(errno));
+			close(so.sock);
+			so.sock = INVALID_SOCKET;
+			return portsOk;
+		}
+
+		events_set_nonblocking(so.sock);
 	}
 
 	if ((getsockname(so.sock, &(usa.sa), &len) != 0)
@@ -1118,7 +1192,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			vec.ptr,
 			err,
 			strerror(errno));
-		close(so.sock);
+		tls_closer(so.sock);
 		so.sock = INVALID_SOCKET;
 		return portsOk;
 	}
@@ -1135,12 +1209,11 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			(phys_ctx->num_listening_sockets + 1) * sizeof(phys_ctx->listening_sockets[0])))
 		== NULL) {
 		http_log(DEBUG_CRASH, NULL, "%s", "Out of memory");
-		close(so.sock);
+		tls_closer(so.sock);
 		so.sock = INVALID_SOCKET;
 		return portsOk;
 	}
 
-	events_set_nonblocking(so.sock);
 	phys_ctx->listening_sockets = ptr;
 	phys_ctx->listening_sockets[phys_ctx->num_listening_sockets] = so;
 	phys_ctx->num_listening_sockets++;
@@ -1156,7 +1229,7 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 	if (!is_empty(ctx->listening_sockets)) {
 		unsigned int i;
 		for (i = 0; i < ctx->num_listening_sockets; i++) {
-			close(ctx->listening_sockets[i].sock);
+			tls_closer(ctx->listening_sockets[i].sock);
 			/* For unix domain sockets, the socket name represents a file that has
 			 * to be deleted. */
 			/* See
@@ -1219,43 +1292,6 @@ int http_set_ports_option(http_ini_t *ctx) {
 
 	return ports_ok;
 
-}
-
-int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src) {
-	struct addrinfo hints, *res, *ressave;
-	int func_ret = 0;
-	int gai_ret;
-
-	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = af;
-	if (!resolve_src) {
-		hints.ai_flags = AI_NUMERICHOST;
-	}
-
-	gai_ret = async_getaddrinfo(src, NULL, &hints, &res);
-	if (gai_ret != 0) {
-		/* gai_strerror could be used to convert gai_ret to a string */
-		/* POSIX return values: see
-		 * http://pubs.opengroup.org/onlinepubs/9699919799/functions/freeaddrinfo.html
-		 */
-		/* Windows return values: see
-		 * https://msdn.microsoft.com/en-us/library/windows/desktop/ms738520%28v=vs.85%29.aspx
-		 */
-		return 0;
-	}
-
-	ressave = res;
-	while (res) {
-		if ((dstlen >= (size_t)res->ai_addrlen)
-			&& (res->ai_addr->sa_family == af)) {
-			memcpy(dst, res->ai_addr, res->ai_addrlen);
-			func_ret = 1;
-		}
-		res = res->ai_next;
-	}
-
-	freeaddrinfo(ressave);
-	return func_ret;
 }
 
 static const struct {
@@ -1440,4 +1476,352 @@ string_t http_get_rel_url_at_current_server(string_t uri, http_t *conn) {
 	}
 
 	return hostend;
+}
+
+static size_t http_str_append(char **dst, char *end, string_t src) {
+	size_t len = strlen(src);
+	if (*dst != end) {
+		/* Append src if enough space, or close dst. */
+		if ((size_t)(end - *dst) > len) {
+			strcpy(*dst, src);
+			*dst += len;
+		} else {
+			*dst = end;
+		}
+	}
+	return len;
+}
+
+int http_get_system_info(char *buffer, int buflen) {
+	char *end, *append_eoobj = NULL, block[256];
+	size_t system_info_length = 0;
+
+#if defined(_WIN32)
+	static const char eol[] = "\r\n", eoobj[] = "\r\n}\r\n";
+#else
+	static const char eol[] = "\n", eoobj[] = "\n}\n";
+#endif
+
+	if ((buffer == NULL) || (buflen < 1)) {
+		buflen = 0;
+		end = buffer;
+	} else {
+		*buffer = 0;
+		end = buffer + buflen;
+	}
+	if (buflen > (int)(sizeof(eoobj) - 1)) {
+		/* has enough space to append eoobj */
+		append_eoobj = buffer;
+		if (end) {
+			end -= sizeof(eoobj) - 1;
+		}
+	}
+
+	system_info_length += http_str_append(&buffer, end, "{");
+
+	/* Server version */
+	{
+		string_t version = httpie_version();
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			"%s\"version\" : \"%s\"",
+			eol,
+			version);
+		system_info_length += http_str_append(&buffer, end, block);
+	}
+
+	/* System info */
+	{
+#if defined(_WIN32)
+		DWORD dwVersion = 0;
+		DWORD dwMajorVersion = 0;
+		DWORD dwMinorVersion = 0;
+		SYSTEM_INFO si;
+
+		GetSystemInfo(&si);
+
+#if defined(_MSC_VER)
+#pragma warning(push)
+		/* GetVersion was declared deprecated */
+#pragma warning(disable : 4996)
+#endif
+		dwVersion = GetVersion();
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+
+		dwMajorVersion = (DWORD)(LOBYTE(LOWORD(dwVersion)));
+		dwMinorVersion = (DWORD)(HIBYTE(LOWORD(dwVersion)));
+
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"os\" : \"Windows %u.%u\"",
+			eol,
+			(unsigned)dwMajorVersion,
+			(unsigned)dwMinorVersion);
+		system_info_length += http_str_append(&buffer, end, block);
+
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"cpu\" : \"type %u, cores %u, mask %x\"",
+			eol,
+			(unsigned)si.wProcessorArchitecture,
+			(unsigned)si.dwNumberOfProcessors,
+			(unsigned)si.dwActiveProcessorMask);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__rtems__)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"os\" : \"%s %s\"",
+			eol,
+			"RTEMS",
+			rtems_version());
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__ZEPHYR__)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"os\" : \"%s\"",
+			eol,
+			"Zephyr OS",
+			ZEPHYR_VERSION);
+		system_info_length += http_str_append(&buffer, end, block);
+#else
+		struct utsname name;
+		memset(&name, 0, sizeof(name));
+		uname(&name);
+
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"os\" : \"%s %s (%s) - %s\"",
+			eol,
+			name.sysname,
+			name.version,
+			name.release,
+			name.machine);
+		system_info_length += http_str_append(&buffer, end, block);
+#endif
+	}
+
+	/* Features */
+	{
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"features\" : %lu"
+			",%s\"feature_list\" : \"Server:%s%s%s%s%s%s%s%s%s\"",
+			eol,
+			(unsigned long)6,
+			eol,
+			" Files",
+			" HTTPS",
+			"",
+			" IPv6",
+			" WebSockets",
+			"",
+			" JavaScript",
+			" Cache",
+			"");
+		system_info_length += http_str_append(&buffer, end, block);
+
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"javascript\" : \"QuickJS-NG %u.%u.%u\"",
+			eol,
+			(unsigned)QJS_VERSION_MAJOR,
+			(unsigned)QJS_VERSION_MINOR,
+			(unsigned)QJS_VERSION_PATCH);
+		system_info_length += http_str_append(&buffer, end, block);
+	}
+
+	/* Build identifier. If BUILD_DATE is not set, __DATE__ will be used. */
+	{
+#if defined(BUILD_DATE)
+		string_t bd = BUILD_DATE;
+#else
+#if defined(GCC_DIAGNOSTIC)
+#if GCC_VERSION >= 40900
+#pragma GCC diagnostic push
+		/* Disable idiotic compiler warning -Wdate-time, appeared in gcc5. This
+		 * does not work in some versions. If "BUILD_DATE" is defined to some
+		 * string, it is used instead of __DATE__. */
+#pragma GCC diagnostic ignored "-Wdate-time"
+#endif
+#endif
+		string_t bd = __DATE__;
+#if defined(GCC_DIAGNOSTIC)
+#if GCC_VERSION >= 40900
+#pragma GCC diagnostic pop
+#endif
+#endif
+#endif
+
+		http_snprintf(
+			NULL, NULL, block, sizeof(block), ",%s\"build\" : \"%s\"", eol, bd);
+
+		system_info_length += http_str_append(&buffer, end, block);
+	}
+
+	/* Compiler information */
+	/* http://sourceforge.net/p/predef/wiki/Compilers/ */
+	{
+#if defined(_MSC_VER)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"MSC: %u (%u)\"",
+			eol,
+			(unsigned)_MSC_VER,
+			(unsigned)_MSC_FULL_VER);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__MINGW64__)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"MinGW64: %u.%u\"",
+			eol,
+			(unsigned)__MINGW64_VERSION_MAJOR,
+			(unsigned)__MINGW64_VERSION_MINOR);
+		system_info_length += http_str_append(&buffer, end, block);
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"MinGW32: %u.%u\"",
+			eol,
+			(unsigned)__MINGW32_MAJOR_VERSION,
+			(unsigned)__MINGW32_MINOR_VERSION);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__MINGW32__)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"MinGW32: %u.%u\"",
+			eol,
+			(unsigned)__MINGW32_MAJOR_VERSION,
+			(unsigned)__MINGW32_MINOR_VERSION);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__clang__)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"clang: %u.%u.%u (%s)\"",
+			eol,
+			__clang_major__,
+			__clang_minor__,
+			__clang_patchlevel__,
+			__clang_version__);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__GNUC__)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"gcc: %u.%u.%u\"",
+			eol,
+			(unsigned)__GNUC__,
+			(unsigned)__GNUC_MINOR__,
+			(unsigned)__GNUC_PATCHLEVEL__);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__INTEL_COMPILER)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"Intel C/C++: %u\"",
+			eol,
+			(unsigned)__INTEL_COMPILER);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__BORLANDC__)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"Borland C: 0x%x\"",
+			eol,
+			(unsigned)__BORLANDC__);
+		system_info_length += http_str_append(&buffer, end, block);
+#elif defined(__SUNPRO_C)
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"Solaris: 0x%x\"",
+			eol,
+			(unsigned)__SUNPRO_C);
+		system_info_length += http_str_append(&buffer, end, block);
+#else
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"compiler\" : \"other\"",
+			eol);
+		system_info_length += http_str_append(&buffer, end, block);
+#endif
+	}
+
+	/* Determine 32/64 bit data mode.
+	 * see https://en.wikipedia.org/wiki/64-bit_computing */
+	{
+		http_snprintf(NULL,
+			NULL,
+			block,
+			sizeof(block),
+			",%s\"data_model\" : \"int:%u/%u/%u/%u, float:%u/%u/%u, "
+			"char:%u/%u, "
+			"ptr:%u, size:%u, time:%u\"",
+			eol,
+			(unsigned)sizeof(short),
+			(unsigned)sizeof(int),
+			(unsigned)sizeof(long),
+			(unsigned)sizeof(long long),
+			(unsigned)sizeof(float),
+			(unsigned)sizeof(double),
+			(unsigned)sizeof(long double),
+			(unsigned)sizeof(char),
+			(unsigned)sizeof(wchar_t),
+			(unsigned)sizeof(void *),
+			(unsigned)sizeof(size_t),
+			(unsigned)sizeof(time_t));
+		system_info_length += http_str_append(&buffer, end, block);
+	}
+
+	/* Terminate string */
+	if (append_eoobj) {
+		strcat(append_eoobj, eoobj);
+	}
+	system_info_length += sizeof(eoobj) - 1;
+
+	return (int)system_info_length;
+}
+
+int http_get_context_info(const http_ini_t *ctx, char *buffer, int buflen) {
+	(void)ctx;
+	if ((buffer != NULL) && (buflen > 0)) {
+		*buffer = 0;
+	}
+	return 0;
+}
+
+FORCEINLINE string_t httpie_version(void) {
+	return HTTPIE_VERSION;
 }

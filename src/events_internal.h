@@ -236,6 +236,7 @@ struct events_fd_s {
 	bool backend_used;
 	intptr_t _backend; /* can be used by backends (never modified by core) */
 	events_cb callback;
+	union usa addr;
 	void *cb_arg;
 	void *user_data;
 	events_t *loop;
@@ -526,14 +527,6 @@ struct ex_guard_s {
 	ex_memory_t scope[1];
 };
 
-union sockaddr_u {
-	struct sockaddr_storage storage;
-	struct sockaddr_un un;
-	struct sockaddr_in in4;
-	struct sockaddr_in6 in6;
-	struct sockaddr sockaddr;
-};
-
 struct udp_packet_s {
 	data_types type;
 	int socket;
@@ -541,19 +534,19 @@ struct udp_packet_s {
 	bool message_set;
 	ssize_t nread;
 	char *message, ip4addr[16];
-	struct sockaddr_storage addr[1];
+	struct sockaddr_storage *addr;
 };
 
 struct af_unix_s {
 	data_types type;
 	int socket;
-	struct sockaddr_un addr[1];
+	struct sockaddr_un *addr;
 };
 
-static EVENTS_INLINE socklen_t socklen_get(const union sockaddr_u *s) {
+static EVENTS_INLINE socklen_t socklen_get(const union usa *s) {
 	switch (s->storage.ss_family) {
 		case AF_UNIX:
-			return sizeof(&s->un.sun_path);
+			return sizeof(&s->sun.sun_path);
 			break;
 		case AF_INET:
 			return sizeof(struct sockaddr_in);
@@ -562,7 +555,7 @@ static EVENTS_INLINE socklen_t socklen_get(const union sockaddr_u *s) {
 			return sizeof(struct sockaddr_in6);
 			break;
 		default:
-			return sizeof(union sockaddr_u);
+			return sizeof(union usa);
 			break;
 	}
 	return 0;

@@ -1,0 +1,2879 @@
+#include  "../lib/httpie_internal.h"
+
+#if defined(_WIN32)
+#include <shlobj.h>
+#include <winsvc.h>
+#else
+#define PID_FILE "/var/run/url.pid"
+#if defined(__clang__) /* GCC does not (yet) support this pragma */
+/* We must set some flags for the headers we include. These flags
+ * are reserved ids according to C99, so we need to disable a
+ * warning for that. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreserved-id-macro"
+#endif
+#if !defined(_XOPEN_SOURCE) && !defined(USE_COCOA)
+#define _XOPEN_SOURCE 600 /* For PATH_MAX on linux */
+/* This should also be sufficient for "realpath", according to
+ * http://man7.org/linux/man-pages/man3/realpath.3.html, but in
+ * reality it does not seem to work. */
+/* In case this causes a problem, disable the warning:
+ * #pragma GCC diagnostic ignored "-Wimplicit-function-declaration"
+ * #pragma clang diagnostic ignored "-Wimplicit-function-declaration"
+ */
+#endif
+#endif
+
+/* Use same defines as in library before including system headers. */
+#if !defined(_LARGEFILE_SOURCE)
+#define _LARGEFILE_SOURCE /* For fseeko(), ftello() */
+#endif
+#if !defined(_FILE_OFFSET_BITS)
+#define _FILE_OFFSET_BITS 64 /* Use 64-bit file offsets by default */
+#endif
+#if !defined(__STDC_FORMAT_MACROS)
+#define __STDC_FORMAT_MACROS /* <inttypes.h> wants this for C++ */
+#endif
+#if !defined(__STDC_LIMIT_MACROS)
+#define __STDC_LIMIT_MACROS /* C++ wants that for INT64_MAX */
+#endif
+
+#if defined(__clang__)
+/* Enable reserved-id-macro warning again. */
+#pragma GCC diagnostic pop
+#endif
+
+#if defined(_WIN32)
+#undef UNICODE
+#endif
+
+#if !defined(DEBUG_ASSERT)
+#if defined(DEBUG)
+
+#if defined(_MSC_VER)
+/* DEBUG_ASSERT has some const conditions */
+#pragma warning(disable : 4127)
+#endif
+
+#define DEBUG_ASSERT(cond)                                                     \
+	do {                                                                       \
+		if (!(cond)) {                                                         \
+			cerr("ASSERTION FAILED: %s", #cond);							   \
+			exit(2); /* Exit with error */                                     \
+		}                                                                      \
+	} while (0)
+
+#else
+#define DEBUG_ASSERT(cond)
+#endif /* DEBUG */
+#endif
+
+#define MAX_OPTIONS (100) /* TODO: Read from library? */
+#define MAX_CONF_FILE_LINE_SIZE (8 * 1024)
+
+struct tuser_data {
+	int _unused;
+};
+
+/* Exit flag for the main loop (read and written by different threads,
+ * thus volatile). */
+/* 0 = continue running main loop */
+volatile int g_exit_flag = 0;
+/* Set by init_server_name() */
+static char g_server_base_name[40];
+/* Default from init_server_name,
+ * updated later from the server config */
+static string_t g_server_name;
+/* Default from init_server_name,
+ * updated later from the server config */
+static string_t g_icon_name;
+/* Default from init_server_name,
+ * updated later from the server config */
+static string_t g_website;
+/* Default from init_server_name,
+ * updated later from the server config */
+static int g_num_add_domains;
+/* Default from init_server_name,
+ * updated later from the server config */
+static string_t *g_add_domain;
+/* Default = do not hide (0),
+ * updated later from the server config */
+static int g_hide_tray = 0;
+ /* Set by init_system_info() */
+static char *g_system_info;
+/* Set by process_command_line_arguments() */
+static char g_config_file_name[PATH_MAX] = "";
+/* Set by start_httpie() */
+static http_ini_t *g_ctx;
+/* Passed to http_start() by start_httpie() */
+static struct tuser_data g_user_data;
+
+#if !defined(CONFIG_FILE)
+#define CONFIG_FILE "httpie.conf"
+#endif /* !CONFIG_FILE */
+
+#if !defined(PASSWORDS_FILE_NAME)
+#define PASSWORDS_FILE_NAME ".htpasswd"
+#endif
+
+/* backup config file */
+#if !defined(CONFIG_FILE2) && defined(__linux__)
+#define CONFIG_FILE2 "/usr/local/etc/httpie.conf"
+#endif
+
+enum {
+	OPTION_TITLE,
+	OPTION_ICON,
+	OPTION_WEBPAGE,
+	OPTION_ADD_DOMAIN,
+	OPTION_HIDE_TRAY,
+	ENABLE_DAEMONIZE,
+	NUM_MAIN_OPTIONS
+};
+
+static struct ini_option main_config_options[] = {
+	{"title", INI_TYPE_STRING, NULL},
+	{"icon", INI_TYPE_STRING, NULL},
+	{"website", INI_TYPE_STRING, NULL},
+	{"add_domain", INI_TYPE_STRING_LIST, NULL},
+	{"hide_tray", INI_TYPE_BOOLEAN, NULL},
+	{"daemonize", INI_TYPE_BOOLEAN, "no"},
+
+	{NULL, INI_TYPE_UNKNOWN, NULL}
+};
+
+static void die(string_t fmt, ...) {
+	va_list ap;
+	char msg[1024] = "";
+
+	va_start(ap, fmt);
+	(void)vsnprintf(msg, sizeof(msg) - 1, fmt, ap);
+	msg[sizeof(msg) - 1] = 0;
+	va_end(ap);
+
+#if defined(_WIN32)
+	MessageBox(NULL, msg, "Error", MB_ICONERROR | MB_OK);
+#else
+	cerr("%s\n", msg);
+#endif
+
+	exit(EXIT_FAILURE);
+}
+
+static void warn(string_t fmt, ...) {
+	va_list ap;
+	char msg[512] = "";
+
+	va_start(ap, fmt);
+	(void)vsnprintf(msg, sizeof(msg) - 1, fmt, ap);
+	msg[sizeof(msg) - 1] = 0;
+	va_end(ap);
+
+#if defined(_WIN32)
+	MessageBox(NULL, msg, "Warning", MB_OK);
+#else
+	cerr("%s\n", msg);
+#endif
+}
+
+#if defined(WIN32)
+static int MakeConsole(void);
+#endif
+
+static void show_server_name(void) {
+#if defined(BUILD_DATE)
+	string_t bd = BUILD_DATE;
+#else
+	string_t bd = __DATE__;
+#endif
+#if defined(WIN32)
+	(void)MakeConsole();
+#endif
+	cerr("HttPie v%s, built on %s\n", httpie_version(), bd);
+}
+
+static void show_usage_and_exit(string_t exeName) {
+	const struct ini_option *options;
+	int i;
+
+	if (exeName == 0 || *exeName == 0) {
+		exeName = "url";
+	}
+
+	show_server_name();
+	cerr("\nUsage:\n");
+	cerr("  Start server with a set of options:\n");
+	cerr("    %s [config_file]\n", exeName);
+	cerr("    %s [-option value ...]\n", exeName);
+	cerr("  Run as client:\n");
+	cerr("    %s -C website\n", exeName);
+	cerr("  Run javascript:\n");
+	cerr("    %s -E example.js\n", exeName);
+	cerr("  Show system information:\n");
+	cerr("    %s -I\n", exeName);
+	cerr("  Add user/change password:\n");
+	cerr("    %s -A <htpasswd_file> <realm> <user> <passwd>\n", exeName);
+	cerr("  Remove user:\n");
+	cerr("    %s -R <htpasswd_file> <realm> <user>\n", exeName);
+	cerr("\nOPTIONS:\n");
+
+	options = http_get_valid_options();
+	for (i = 0; options[i].name != NULL; i++) {
+		cerr(
+			"  -%s %s\n",
+			options[i].name,
+			((options[i].default_value == NULL)
+				? "<empty>"
+				: options[i].default_value));
+	}
+
+	options = main_config_options;
+	for (i = 0; options[i].name != NULL; i++) {
+		cerr("  -%s %s\n", options[i].name,
+			((options[i].default_value == NULL)	? "<empty>"	: options[i].default_value));
+	}
+
+	exit(EXIT_FAILURE);
+}
+
+#if defined(_WIN32) || defined(USE_COCOA) || defined(MAIN_C_UNIT_TEST)
+static string_t config_file_top_comment =
+"# HttPie web server configuration file.\n"
+"# For detailed description of every option, visit\n"
+"# https://github.com/zelang-dev/c-events/blob/main/docs/UserManual.md\n"
+"# Lines starting with '#' and empty lines are ignored.\n"
+"# To make changes, remove leading '#', modify option values,\n"
+"# save this file and then restart HttPie.\n\n";
+
+static string_t get_url_to_first_open_port(http_ini_t *ctx) {
+	static char url[128];
+
+#define MAX_PORT_COUNT (32)
+	struct http_server_port ports[MAX_PORT_COUNT];
+	int portNum = http_server_ports(ctx, MAX_PORT_COUNT, ports);
+	int i;
+
+	memset(url, 0, sizeof(url));
+
+	/* Prefer IPv4 http, ignore redirects */
+	for (i = 0; i < portNum; i++) {
+		if ((ports[i].protocol == 1) && (ports[i].is_redirect == 0)
+			&& (ports[i].is_ssl == 0)) {
+			snprintf(url, sizeof(url), "http://localhost:%d/", ports[i].port);
+			return url;
+		}
+	}
+	/* Use IPv4 https */
+	for (i = 0; i < portNum; i++) {
+		if ((ports[i].protocol == 1) && (ports[i].is_redirect == 0)
+			&& (ports[i].is_ssl == 1)) {
+			snprintf(url, sizeof(url), "https://localhost:%d/", ports[i].port);
+			return url;
+		}
+	}
+	/* Try IPv6 http, ignore redirects */
+	if (portNum > 0) {
+		snprintf(url,
+			sizeof(url),
+			"%s://localhost:%d/",
+			(ports[0].is_ssl ? "https" : "http"),
+			ports[0].port);
+	}
+
+#undef MAX_PORT_COUNT
+
+	return url;
+}
+
+#if defined(ENABLE_CREATE_CONFIG_FILE) || defined(MAIN_C_UNIT_TEST)
+static void create_config_file(const http_ini_t *ctx, string_t path) {
+	const struct ini_option *options;
+	string_t value;
+	FILE *fp;
+	int i;
+
+	/* Create config file if it is not present yet */
+	if ((fp = fopen(path, "r")) != NULL) {
+		fclose(fp);
+	} else if ((fp = fopen(path, "a+")) != NULL) {
+		fprintf(fp, "%s", config_file_top_comment);
+		options = http_get_valid_options();
+		for (i = 0; options[i].name != NULL; i++) {
+			value = http_get_option(ctx, options[i].name);
+			fprintf(fp,
+				"# %s %s\n",
+				options[i].name,
+				value ? value : "<value>");
+		}
+		fclose(fp);
+	}
+}
+#endif
+#endif
+
+static char *sdup(string_t str) {
+	char *p = null;
+	if (is_empty(p = str_dup_ex(str))) {
+		die("Cannot allocate %zu bytes", strlen(str));
+	}
+
+	return p;
+}
+
+static string_t get_option(string_t *options, string_t option_name) {
+	int i = 0;
+	string_t opt_value = NULL;
+
+	/* TODO (low, api makeover): options should be an array of key-value-pairs,
+	 * like
+	 *     struct {string_t key, string_t value} options[]
+	 * but it currently is an array with
+	 *     options[2*i] = key, options[2*i + 1] = value
+	 */
+	while (options[2 * i] != NULL) {
+		if (strcmp(options[2 * i], option_name) == 0) {
+			opt_value = options[2 * i + 1];
+			break;
+		}
+		i++;
+	}
+	return opt_value;
+}
+
+static int set_option(string_t *options, string_t name, string_t value) {
+	int i, type;
+	const struct ini_option *default_options = http_get_valid_options();
+	string_t multi_sep = NULL;
+
+	for (i = 0; main_config_options[i].name != NULL; i++) {
+		/* These options are evaluated by url.c, not part of library.
+		 * Do not add it to options, and return OK */
+		if (!strcmp(name, main_config_options[OPTION_TITLE].name)) {
+			g_server_name = sdup(value);
+			return 1;
+		}
+		if (!strcmp(name, main_config_options[OPTION_ICON].name)) {
+
+			g_icon_name = sdup(value);
+			return 1;
+		}
+		if (!strcmp(name, main_config_options[OPTION_WEBPAGE].name)) {
+			g_website = sdup(value);
+			return 1;
+		}
+		if (!strcmp(name, main_config_options[OPTION_HIDE_TRAY].name)) {
+			if (!strcmp(value, "yes")) {
+				g_hide_tray = 1;
+			} else if (!strcmp(value, "no")) {
+				g_hide_tray = 0;
+			}
+			return 1;
+		}
+		if (!strcmp(name, main_config_options[OPTION_ADD_DOMAIN].name)) {
+			if (g_num_add_domains > 0) {
+				g_add_domain = (string_t *)realloc(
+					(void *)g_add_domain,
+					sizeof(char *) * ((unsigned)g_num_add_domains + 1u));
+				if (!g_add_domain) {
+					die("Out of memory");
+				}
+				g_add_domain[g_num_add_domains] = sdup(value);
+				g_num_add_domains++;
+			} else {
+				g_add_domain = (string_t *)malloc(sizeof(char *));
+				if (!g_add_domain) {
+					die("Out of memory");
+				}
+				g_add_domain[0] = sdup(value);
+				g_num_add_domains = 1;
+			}
+			return 1;
+		}
+	}
+
+	/* Not an option of url.c, so check if it is a library server option */
+	type = INI_TYPE_UNKNOWN; /* type "unknown" means "option not found" */
+	for (i = 0; default_options[i].name != NULL; i++) {
+		if (!strcmp(default_options[i].name, name)) {
+			type = default_options[i].type;
+			break; /* no need to search for another option */
+		}
+	}
+
+	switch (type) {
+		case INI_TYPE_UNKNOWN:
+			/* unknown option */
+			return 0; /* return error */
+
+		case INI_TYPE_NUMBER:
+			/* integer number >= 0, e.g. number of threads */
+			{
+				char *chk = 0;
+				unsigned long num = strtoul(value, &chk, 10);
+				(void)num; /* do not check value, only syntax */
+				if ((chk == NULL) || (*chk != 0) || (chk == value)) {
+					/* invalid number */
+					return 0;
+				}
+			}
+			break;
+
+		case INI_TYPE_STRING:
+			/* any text */
+			break;
+
+		case INI_TYPE_STRING_LIST:
+			/* list of text items, separated by , */
+			multi_sep = ",";
+			break;
+
+		case INI_TYPE_STRING_MULTILINE:
+			/* lines of text, separated by carriage return line feed */
+			multi_sep = "\r\n";
+			break;
+
+		case INI_TYPE_BOOLEAN:
+			/* boolean value, yes or no */
+			if ((0 != strcmp(value, "yes")) && (0 != strcmp(value, "no"))) {
+				/* invalid boolean */
+				return 0;
+			}
+			break;
+
+		case INI_TYPE_YES_NO_OPTIONAL:
+			/* boolean value, yes or no */
+			if ((0 != strcmp(value, "yes")) && (0 != strcmp(value, "no"))
+				&& (0 != strcmp(value, "optional"))) {
+				/* invalid boolean */
+				return 0;
+			}
+			break;
+
+		case INI_TYPE_FILE:
+		case INI_TYPE_DIRECTORY:
+			/* TODO (low): check this option when it is set, instead of calling
+			 * verify_existence later */
+			break;
+
+		case INI_TYPE_EXT_PATTERN:
+			/* list of patterns, separated by | */
+			multi_sep = "|";
+			break;
+
+		default:
+			die("Unknown option type - option %s", name);
+	}
+
+	for (i = 0; i < MAX_OPTIONS; i++) {
+		if (options[2 * i] == NULL) {
+			/* Option not set yet. Add new option */
+			options[2 * i] = sdup(name);
+			options[2 * i + 1] = sdup(value);
+			options[2 * i + 2] = NULL;
+			break;
+		} else if (!strcmp(options[2 * i], name)) {
+			if (multi_sep) {
+				/* Option already set. Append new value. */
+				char *s =
+					(char *)malloc(strlen(options[2 * i + 1])
+						+ strlen(multi_sep) + strlen(value) + 1);
+				if (!s) {
+					die("Out of memory");
+				}
+				sprintf(s, "%s%s%s", options[2 * i + 1], multi_sep, value);
+				free((char *)options[2 * i + 1]);
+				options[2 * i + 1] = s;
+			} else {
+				/* Option already set. Overwrite */
+				free((char *)options[2 * i + 1]);
+				options[2 * i + 1] = sdup(value);
+			}
+			break;
+		}
+	}
+
+	if (i == MAX_OPTIONS) {
+		die("Too many options specified");
+	}
+
+	if (options[2 * i] == NULL) {
+		die("Out of memory");
+	}
+	if (options[2 * i + 1] == NULL) {
+		die("Illegal escape sequence, or out of memory");
+	}
+
+	/* option set correctly */
+	return 1;
+}
+
+static int read_config_file(string_t config_file, string_t *options) {
+	char line[MAX_CONF_FILE_LINE_SIZE], *p;
+	FILE *fp = NULL;
+	size_t i, j, line_no = 0;
+
+	/* Open the config file */
+	fp = fopen(config_file, "r");
+	if (fp == NULL) {
+		/* Failed to open the file. Keep errno for the caller. */
+		return 0;
+	}
+
+	/* Load config file settings first */
+	cout("Loading config file %s\n", config_file);
+
+	/* Loop over the lines in config file */
+	while (fgets(line, sizeof(line), fp) != NULL) {
+
+		if (!line_no && !memcmp(line, "\xEF\xBB\xBF", 3)) {
+			/* strip UTF-8 BOM */
+			p = line + 3;
+		} else {
+			p = line;
+		}
+		line_no++;
+
+		/* Ignore empty lines and comments */
+		for (i = 0; isspace((unsigned char)p[i]);)
+			i++;
+		if (p[i] == '#' || p[i] == '\0') {
+			continue;
+		}
+
+		/* Skip spaces, \r and \n at the end of the line */
+		for (j = strlen(p); (j > 0)
+			&& (isspace((unsigned char)p[j - 1])
+				|| iscntrl((unsigned char)p[j - 1]));)
+			p[--j] = 0;
+
+		/* Find the space character between option name and value */
+		for (j = i; !isspace((unsigned char)p[j]) && (p[j] != 0);)
+			j++;
+
+		/* Terminate the string - then the string at (p+i) contains the
+		 * option name */
+		p[j] = 0;
+		j++;
+
+		/* Trim additional spaces between option name and value - then
+		 * (p+j) contains the option value */
+		while (isspace((unsigned char)p[j])) {
+			j++;
+		}
+
+		/* Set option */
+		if (!set_option(options, p + i, p + j)) {
+			cerr(
+				"%s: line %d is invalid, ignoring it:\n %s",
+				config_file,
+				(int)line_no,
+				p);
+		}
+	}
+
+	(void)fclose(fp);
+
+	return 1;
+}
+
+static void process_command_line_arguments(int argc, char *argv[], string_t *options) {
+	char *p;
+	size_t i, cmd_line_opts_start = 1;
+#if defined(CONFIG_FILE2)
+	FILE *fp = NULL;
+#endif
+
+	/* Should we use a config file ? */
+	if ((argc > 1) && (argv[1] != NULL) && (argv[1][0] != '-')
+		&& (argv[1][0] != 0)) {
+		/* The first command line parameter is a config file name. */
+		snprintf(g_config_file_name,
+			sizeof(g_config_file_name) - 1,
+			"%s",
+			argv[1]);
+		cmd_line_opts_start = 2;
+	} else if ((p = strrchr(argv[0], SYS_DIRSEP_C)) == NULL) {
+		/* No config file set. No path in arg[0] found.
+		 * Use default file name in the current path. */
+		snprintf(g_config_file_name,
+			sizeof(g_config_file_name) - 1,
+			"%s",
+			CONFIG_FILE);
+	} else {
+		/* No config file set. Path to exe found in arg[0].
+		 * Use default file name next to the executable. */
+		snprintf(g_config_file_name,
+			sizeof(g_config_file_name) - 1,
+			"%.*s%c%s",
+			(int)(p - argv[0]),
+			argv[0],
+			SYS_DIRSEP_C,
+			CONFIG_FILE);
+	}
+	g_config_file_name[sizeof(g_config_file_name) - 1] = 0;
+
+#if defined(CONFIG_FILE2)
+	fp = fopen(g_config_file_name, "r");
+
+	/* try alternate config file */
+	if (fp == NULL) {
+		fp = fopen(CONFIG_FILE2, "r");
+		if (fp != NULL) {
+			strcpy(g_config_file_name, CONFIG_FILE2);
+		}
+	}
+	if (fp != NULL) {
+		fclose(fp);
+	}
+#endif
+
+	/* read all configurations from a config file */
+	if (0 == read_config_file(g_config_file_name, options)) {
+		if (cmd_line_opts_start == 2) {
+			/* If config file was set in command line and open failed, die. */
+			/* Errno will still hold the error from fopen. */
+			die("Cannot open config file %s: %s",
+				g_config_file_name,
+				strerror(errno));
+		}
+		/* Otherwise: `url` can work without a config file */
+	}
+
+	/* If we're under MacOS and started by launchd, then the second
+	   argument is process serial number, -psn_.....
+	   In this case, don't process arguments at all. */
+	if (argv[1] == NULL || memcmp(argv[1], "-psn_", 5) != 0) {
+		/* Handle command line flags.
+		   They override config file and default settings. */
+		for (i = cmd_line_opts_start; argv[i] != NULL; i += 2) {
+			if (argv[i][0] != '-' || argv[i + 1] == NULL) {
+				show_usage_and_exit(argv[0]);
+			}
+			if (!set_option(options, &argv[i][1], argv[i + 1])) {
+				fprintf(
+					stderr,
+					"command line option is invalid, ignoring it:\n %s %s\n",
+					argv[i],
+					argv[i + 1]);
+			}
+		}
+	}
+}
+
+static void init_system_info(void) {
+	int len = http_get_system_info(NULL, 0);
+	if (len > 0) {
+		g_system_info = (char *)malloc((unsigned)len + 1);
+		(void)http_get_system_info(g_system_info, len + 1);
+	} else {
+		g_system_info = sdup("Not available");
+	}
+}
+
+static void init_server_name(void) {
+	DEBUG_ASSERT(sizeof(main_config_options) / sizeof(main_config_options[0])
+		== NUM_MAIN_OPTIONS + 1);
+	DEBUG_ASSERT((strlen(httpie_version()) + 12) < sizeof(g_server_base_name));
+	snprintf(g_server_base_name,
+		sizeof(g_server_base_name),
+		"url V%s",
+		httpie_version());
+	g_server_name = g_server_base_name;
+	g_icon_name = NULL;
+	g_website = "https://zelang-dev.github.io/httpie/";
+	g_num_add_domains = 0;
+	g_add_domain = NULL;
+}
+
+static void free_system_info(void) {
+	free(g_system_info);
+}
+
+static int is_path_absolute(string_t path) {
+#if defined(_WIN32)
+	return path != NULL
+		&& ((path[0] == '\\' && path[1] == '\\') || /* UNC path, e.g.
+													   \\server\dir */
+			(isalpha((unsigned char)path[0]) && path[1] == ':'
+				&& path[2] == '\\')); /* E.g. X:\dir */
+#else
+	return path != NULL && path[0] == '/';
+#endif
+}
+
+static int verify_existence(string_t *options, string_t option_name, int must_be_dir) {
+	struct stat st;
+	string_t path = get_option(options, option_name);
+#if defined(_WIN32)
+	wchar_t wbuf[1024];
+	char mbbuf[1024];
+	int len;
+
+	if (path) {
+		memset(wbuf, 0, sizeof(wbuf));
+		memset(mbbuf, 0, sizeof(mbbuf));
+		len = MultiByteToWideChar(
+			CP_UTF8, 0, path, -1, wbuf, sizeof(wbuf) / sizeof(wbuf[0]) - 1);
+		wcstombs(mbbuf, wbuf, sizeof(mbbuf) - 1);
+		path = mbbuf;
+		(void)len;
+	}
+#endif
+
+	if (path != NULL
+		&& (stat(path, &st) != 0
+			|| ((S_ISDIR(st.st_mode) ? 1 : 0) != must_be_dir))) {
+		warn("Invalid path for %s: [%s]: (%s). Make sure that path is either "
+			"absolute, or it is relative to `url` executable.",
+			option_name,
+			path,
+			strerror(errno));
+		return 0;
+	}
+	return 1;
+}
+
+
+static void set_absolute_path(string_t options[],
+	string_t option_name,
+	string_t path_to_url_exe) {
+	char path[PATH_MAX] = "", absolute[PATH_MAX] = "";
+	string_t option_value;
+	string_t p;
+
+	/* Check whether option is already set */
+	option_value = get_option(options, option_name);
+
+	/* If option is already set and it is an absolute path,
+	   leave it as it is -- it's already absolute. */
+	if (option_value != NULL && !is_path_absolute(option_value)) {
+		/* Not absolute. Use the directory where `url` executable lives
+		   be the relative directory for everything.
+		   Extract `url` executable directory into path. */
+		if ((p = strrchr(path_to_url_exe, SYS_DIRSEP_C)) == NULL) {
+			(void)(getcwd(path, sizeof(path)));
+		} else {
+			snprintf(path,
+				sizeof(path) - 1,
+				"%.*s",
+				(int)(p - path_to_url_exe),
+				path_to_url_exe);
+			path[sizeof(path) - 1] = 0;
+		}
+
+		strncat(path, "/", sizeof(path) - strlen(path) - 1);
+		strncat(path, option_value, sizeof(path) - strlen(path) - 1);
+
+		/* Absolutize the path, and set the option */
+		realpath(path, absolute);
+		set_option(options, option_name, absolute);
+	}
+}
+
+static int run_quickjs_ng(string_t file_name) {
+	http_t *ctx = http_for(null, 1.1);
+	if (!is_empty(ctx)) {
+		qjs_exec_script(ctx, file_name);
+		return 1;
+	} else {
+		cerr("Failed to create a HttPie `QuickJS-NG` heap.\n");
+		return 1;
+	}
+}
+
+static int run_client(string_t url_arg) {
+	/* connection data */
+	uri_t *uri = parse_uri(url_arg);
+	if (is_empty(uri)) {
+		cerr("Invalid host\n");
+		return 0;
+	}
+
+	string_t url = url_arg;
+	char *host = uri->host;
+	char *resource = null;
+	int is_ssl = 0;
+	unsigned long port = 0;
+	size_t sep;
+	char *endp = 0;
+	char empty[] = "";
+
+	/* connection object */
+	http_t *conn;
+	char ebuf[1024] = {0};
+
+	port = uri->port;
+	/* Check parameter */
+	if (uri->type == DATA_TCP) {
+		is_ssl = 0;
+	} else if (uri->type == DATA_TLS) {
+		is_ssl = 1;
+	} else {
+		cerr("URL must start with http:// or https://\n");
+		return 0;
+	}
+
+	if (uri->path && uri->query && uri->fragment) {
+		resource = str_cat_ex(5, uri->path, "?", uri->query, "#", uri->fragment);
+		defer_free(resource);
+	} else if (uri->path && uri->query) {
+		resource = str_cat_ex(3, uri->path, "?", uri->query);
+		defer_free(resource);
+	} else {
+		resource = uri->path;
+	}
+
+	cout("Protocol: %s\n", is_ssl ? "https" : "http");
+	cout("Host: %s\n", host);
+	cout("Port: %lu\n", port);
+	cout("Resource: %s\n", resource);
+
+	/* Connect to host */
+	conn = http_connect_client(host, (int)port, is_ssl, ebuf, sizeof(ebuf));
+	if (conn) {
+		/* Connecting to server worked */
+		char buf[1024] = {0};
+		int ret;
+
+		cout("Connected to %s\n", host);
+
+		/* Send GET request */
+		http_printf(conn,
+			"GET /%s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			resource,
+			host);
+
+  /* Wait for server to respond with a HTTP header */
+		if (http_get_response(conn, ebuf, sizeof(ebuf), 10000) >= 0) {
+			cout("Response info: %i %s\n", http_get_code(conn), http_get_message(conn));
+
+			/* Respond reader read. Read body (if any) */
+			ret = http_read(conn, buf, sizeof(buf));
+			while (ret > 0) {
+				fout(buf, ret);
+				ret = http_read(conn, buf, sizeof(buf));
+			}
+
+			cout("Closing connection to %s\n", host);
+		} else {
+			/* Server did not reply to HTTP request */
+			cerr("Got no response from %s:\n%s\n", host, ebuf);
+		}
+
+		http_close_connection(conn);
+	} else {
+		/* Connecting to server failed */
+		cerr("Error connecting to %s:\n%s\n", host, ebuf);
+	}
+
+	return 1;
+}
+
+
+static int sanitize_options(string_t options[] /* server options */,
+	string_t arg0 /* argv[0] */) {
+	int ok = 1;
+	/* Make sure we have absolute paths for files and directories */
+	set_absolute_path(options, "document_root", arg0);
+	set_absolute_path(options, "fallback_document_root", arg0);
+	set_absolute_path(options, "put_delete_auth_file", arg0);
+	set_absolute_path(options, "cgi_interpreter", arg0);
+	set_absolute_path(options, "access_log_file", arg0);
+	set_absolute_path(options, "error_log_file", arg0);
+	set_absolute_path(options, "global_auth_file", arg0);
+#if defined(USE_LUA)
+	set_absolute_path(options, "lua_preload_file", arg0);
+#endif
+	set_absolute_path(options, "ssl_certificate", arg0);
+
+	/* Make extra verification for certain options */
+	if (!verify_existence(options, "document_root", 1))
+		ok = 0;
+	if (!verify_existence(options, "fallback_document_root", 1))
+		ok = 0;
+	if (!verify_existence(options, "cgi_interpreter", 0))
+		ok = 0;
+	if (!verify_existence(options, "ssl_certificate", 0))
+		ok = 0;
+	if (!verify_existence(options, "ssl_ca_path", 1))
+		ok = 0;
+	if (!verify_existence(options, "ssl_ca_file", 0))
+		ok = 0;
+	return ok;
+}
+
+#ifdef _WIN32
+/* Forward declaration for Windows only */
+static void show_settings_dialog(void);
+#endif
+
+static void start_httpie(int argc, char *argv[]) {
+	struct http_clb_s callbacks;
+	string_t options[2 * MAX_OPTIONS + 1];
+	struct init_data init;
+	struct error_data error;
+	char error_text[256];
+	int i;
+
+	/* Start option -I:
+	 * Show system information and exit
+	 * This is very useful for diagnosis. */
+	if (argc > 1 && !strcmp(argv[1], "-I")) {
+#if defined(WIN32)
+		(void)MakeConsole();
+#endif
+		cout("\n%s (%s)\n%s\n", g_server_base_name,	g_server_name, g_system_info);
+		exit(EXIT_SUCCESS);
+	}
+
+	/* Edit passwords file: Add user or change password, if -A option is
+	 * specified */
+	if (argc > 1 && !strcmp(argv[1], "-A")) {
+		if (argc != 6) {
+			show_usage_and_exit(argv[0]);
+		}
+		exit(http_modify_passwords_file(argv[2], argv[3], argv[4], argv[5])
+			? EXIT_SUCCESS
+			: EXIT_FAILURE);
+	}
+
+	/* Edit passwords file: Remove user, if -R option is specified */
+	if (argc > 1 && !strcmp(argv[1], "-R")) {
+		if (argc != 5) {
+			show_usage_and_exit(argv[0]);
+		}
+		exit(http_modify_passwords_file(argv[2], argv[3], argv[4], NULL)
+			? EXIT_SUCCESS
+			: EXIT_FAILURE);
+	}
+
+	/* Client mode */
+	if (argc > 1 && !strcmp(argv[1], "-C")) {
+		if (argc != 3) {
+			show_usage_and_exit(argv[0]);
+		}
+
+		exit(run_client(argv[2]) ? EXIT_SUCCESS : EXIT_FAILURE);
+	}
+
+	/* Call `QuickJS-NG`, if -E option is specified */
+	if (argc > 1 && !strcmp(argv[1], "-E")) {
+		if (argc != 3) {
+			show_usage_and_exit(argv[0]);
+		}
+#if defined(WIN32)
+		(void)MakeConsole();
+#endif
+		exit(run_quickjs_ng(argv[2]));
+	}
+
+	/* Show usage if -h or --help options are specified */
+	if (argc == 2 && (!strcmp(argv[1], "-h") || !strcmp(argv[1], "-H")
+			|| !strcmp(argv[1], "--help"))) {
+		show_usage_and_exit(argv[0]);
+	}
+
+	/* Initialize options structure */
+	memset((void *)options, 0, sizeof(options));
+	set_option(options, "document_root", ".");
+
+	/* Update config based on command line arguments */
+	process_command_line_arguments(argc, argv, options);
+
+	i = sanitize_options(options, argv[0]);
+	if (!i) {
+		die("Invalid options");
+	}
+
+#if !defined(_WIN32)
+	/* Daemonize */
+	for (i = 0; options[i] != NULL; i++) {
+		if (str_is(options[i], "daemonize")) {
+			if (options[i + 1] != NULL) {
+				if (str_is_case(options[i + 1], "yes")) {
+					cout("daemonize.\n");
+					if (daemon(0, 0) != 0) {
+						cout("Failed to daemonize main process.\n");
+						exit(EXIT_FAILURE);
+					}
+					FILE *fp;
+					if ((fp = fopen(PID_FILE, "w")) == 0) {
+						cout("Can not open %s.\n", PID_FILE);
+						exit(EXIT_FAILURE);
+					}
+					fprintf(fp, "%d", getpid());
+					fclose(fp);
+				}
+			}
+			break;
+		}
+	}
+#endif
+
+	/* Initialize user data */
+	memset(&g_user_data, 0, sizeof(g_user_data));
+	memset(&callbacks, 0, sizeof(callbacks));
+	memset(&init, 0, sizeof(init));
+	init.callbacks = &callbacks;
+	init.configuration_options = options;
+	init.user_data = &g_user_data;
+
+	memset(&error, 0, sizeof(error));
+	error.text = error_text;
+	error.text_buffer_size = sizeof(error_text);
+
+	/* Start `url` */
+	g_ctx = http_start(0, &callbacks, &g_user_data, (const options_ini_t **)options);
+
+	/* http_start copies all options to an internal buffer.
+	 * The options data field here is not required anymore. */
+	for (i = 0; options[i] != NULL; i++) {
+		free((char *)options[i]);
+	}
+
+	/* If http_start fails, it returns NULL */
+	if (g_ctx == NULL) {
+#ifdef _WIN32
+		/* On Windows: provide option to edit configuration file. */
+		char msgboxtxt[1024];
+		int ret;
+		sprintf(msgboxtxt,
+			"Failed to start %s with code %u:\n%s\n\nEdit settings?",
+			g_server_name,
+			error.code,
+			error_text);
+		ret =
+			MessageBox(NULL, msgboxtxt, "Error", MB_ICONERROR | MB_YESNOCANCEL);
+		if (ret == IDYES) {
+			show_settings_dialog();
+
+			/* Hitting "save" will also restart the server. */
+			if (g_ctx != NULL) {
+				return;
+			}
+		}
+		exit(EXIT_FAILURE);
+#else
+		die("Failed to start %s with code %u:\n%s",
+			g_server_name,
+			error.code,
+			error_text);
+#endif
+	}
+
+	for (i = 0; i < g_num_add_domains; i++) {
+		int j;
+		memset((void_t)options, 0, sizeof(options));
+		set_option(options, "document_root", ".");
+
+		if (0 == read_config_file(g_add_domain[i], options)) {
+			die("Cannot open config file %s: %s",
+				g_add_domain[i],
+				strerror(errno));
+		}
+
+		j = sanitize_options(options, argv[0]);
+		if (!j) {
+			die("Invalid options");
+		}
+
+		j = http_add_domain(g_ctx, (string_t *)options, null);
+		if (j < 0) {
+			die("Error loading domain file %s: %i", g_add_domain[i], j);
+		} else {
+			cout("Domain file %s loaded\n", g_add_domain[i]);
+		}
+
+		for (j = 0; options[j] != NULL; j++) {
+			free((void *)options[j]);
+		}
+	}
+
+	(void)http_server(g_ctx);
+}
+
+static void stop_httpie(void) {
+	http_stop(g_ctx);
+}
+
+#if defined(_WIN32)
+/* Win32 has a small GUI.
+ * Define some GUI elements and Windows message handlers. */
+
+enum {
+	ID_ICON = 100,
+	ID_QUIT,
+	ID_SETTINGS,
+	ID_SEPARATOR,
+	ID_INSTALL_SERVICE,
+	ID_REMOVE_SERVICE,
+	ID_STATIC,
+	ID_GROUP,
+	ID_PASSWORD,
+	ID_SAVE,
+	ID_RESET_DEFAULTS,
+	ID_RESET_FILE,
+	ID_RESET_ACTIVE,
+	ID_STATUS,
+	ID_CONNECT,
+	ID_ADD_USER,
+	ID_ADD_USER_NAME,
+	ID_ADD_USER_REALM,
+	ID_INPUT_LINE,
+	ID_SYSINFO,
+	ID_WEBSITE,
+
+	/* All dynamically created text boxes for options have IDs starting from
+   ID_CONTROLS, incremented by one. */
+	ID_CONTROLS = 200,
+
+	/* Text boxes for files have "..." buttons to open file browser. These
+   buttons have IDs that are ID_FILE_BUTTONS_DELTA higher than associated
+   text box ID. */
+	ID_FILE_BUTTONS_DELTA = 1000
+};
+
+static HICON hIcon;
+static SERVICE_STATUS ss;
+static SERVICE_STATUS_HANDLE hStatus;
+static string_t service_magic_argument = "--";
+static NOTIFYICONDATA TrayIcon;
+static UINT msg_taskbar_created;
+
+static void WINAPI ControlHandler(DWORD code) {
+	if (code == SERVICE_CONTROL_STOP || code == SERVICE_CONTROL_SHUTDOWN) {
+		ss.dwWin32ExitCode = 0;
+		ss.dwCurrentState = SERVICE_STOPPED;
+	}
+	SetServiceStatus(hStatus, &ss);
+}
+
+static void WINAPI ServiceMain(void) {
+	ss.dwServiceType = SERVICE_WIN32;
+	ss.dwCurrentState = SERVICE_RUNNING;
+	ss.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+
+	hStatus = RegisterServiceCtrlHandler(g_server_name, ControlHandler);
+	SetServiceStatus(hStatus, &ss);
+
+	while (ss.dwCurrentState == SERVICE_RUNNING) {
+		Sleep(1000);
+	}
+	stop_httpie();
+
+	ss.dwCurrentState = SERVICE_STOPPED;
+	ss.dwWin32ExitCode = (DWORD)-1;
+	SetServiceStatus(hStatus, &ss);
+}
+
+static void show_error(void) {
+	char buf[256];
+	FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL,
+		GetLastError(),
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		buf,
+		sizeof(buf),
+		NULL);
+	MessageBox(NULL, buf, "Error", MB_OK);
+}
+
+static void save_config(HWND hDlg, FILE *fp) {
+	char value[2000] = "";
+	string_t default_value;
+	const struct ini_option *options;
+	int i, id;
+
+	fprintf(fp, "%s", config_file_top_comment);
+	options = http_get_valid_options();
+	for (i = 0; options[i].name != NULL; i++) {
+		id = ID_CONTROLS + i;
+		if (options[i].type == INI_TYPE_BOOLEAN) {
+			snprintf(value,
+				sizeof(value) - 1,
+				"%s",
+				IsDlgButtonChecked(hDlg, id) ? "yes" : "no");
+			value[sizeof(value) - 1] = 0;
+		} else {
+			GetDlgItemText(hDlg, id, value, sizeof(value));
+		}
+		default_value =
+			options[i].default_value == NULL ? "" : options[i].default_value;
+		/* If value is the same as default, skip it */
+		if (strcmp(value, default_value) != 0) {
+			fprintf(fp, "%s %s\n", options[i].name, value);
+		}
+	}
+}
+
+/* LPARAM pointer passed to WM_INITDIALOG */
+struct dlg_proc_param {
+	int _guard;
+	HWND hWnd;
+	string_t name;
+	char *buffer;
+	unsigned buflen;
+	int idRetry;
+	BOOL(*fRetry)(struct dlg_proc_param *data);
+};
+
+struct dlg_header_param {
+	/* https://docs.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-dlgtemplate
+	 */
+	DLGTEMPLATE dlg_template; /* 18 bytes */
+	WORD menu, dlg_class;
+	wchar_t caption[1];
+	WORD fontsize;
+	wchar_t fontface[7]; /* L"Tahoma" = 6 characters + terminating zero */
+};
+
+/* complete data required to create a dialog including child elements */
+struct dlg_complete {
+	struct dlg_header_param header;
+	/* TODO: if sizeof(header)%4 is not 0, add some filling bytes here */
+	BYTE elements[4096 * 2];
+	int used;
+};
+
+static void FillDialogHeader(struct dlg_complete *dlg, const short width) {
+	memset(dlg, 0, sizeof(*dlg));
+
+	dlg->header.dlg_template.style = WS_CAPTION | WS_POPUP | WS_SYSMENU
+		| WS_VISIBLE | DS_SETFONT | DS_CENTER
+		| WS_DLGFRAME;
+	dlg->header.dlg_template.dwExtendedStyle = WS_EX_TOOLWINDOW;
+	dlg->header.dlg_template.cdit = 0;
+	dlg->header.dlg_template.x = 0; /* ignored by DS_CENTER */
+	dlg->header.dlg_template.y = 0; /* ignored by DS_CENTER */
+	dlg->header.dlg_template.cx = width;
+	dlg->header.dlg_template.cy =
+		0; /* to be calculated after adding elements */
+	dlg->header.menu = 0;
+	dlg->header.dlg_class = 0;
+	dlg->header.caption[0] = (wchar_t)0;
+	dlg->header.fontsize = 8;
+	wcscpy(dlg->header.fontface, L"Tahoma");
+
+	/* counting used bytes */
+	dlg->used = 0;
+}
+
+/* Dialog proc for settings dialog */
+static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+	FILE *fp;
+	int i, j;
+	string_t name, value;
+	const struct ini_option *default_options = http_get_valid_options();
+	string_t file_options[MAX_OPTIONS * 2 + 1] = {0};
+	char *title;
+	struct dlg_proc_param *pdlg_proc_param;
+
+	switch (msg) {
+
+		case WM_CLOSE:
+			DestroyWindow(hDlg);
+			break;
+
+		case WM_COMMAND:
+			switch (LOWORD(wParam)) {
+
+				case ID_SAVE:
+					EnableWindow(GetDlgItem(hDlg, ID_SAVE), FALSE);
+					if ((fp = fopen(g_config_file_name, "w+")) != NULL) {
+						save_config(hDlg, fp);
+						fclose(fp);
+						stop_httpie();
+						start_httpie(__argc, __argv);
+					}
+					EnableWindow(GetDlgItem(hDlg, ID_SAVE), TRUE);
+					break;
+
+				case ID_RESET_DEFAULTS:
+					for (i = 0; default_options[i].name != NULL; i++) {
+						name = default_options[i].name;
+						value = default_options[i].default_value == NULL
+							? ""
+							: default_options[i].default_value;
+						if (default_options[i].type == INI_TYPE_BOOLEAN) {
+							CheckDlgButton(hDlg,
+								ID_CONTROLS + i,
+								!strcmp(value, "yes") ? BST_CHECKED
+								: BST_UNCHECKED);
+						} else {
+							SetWindowText(GetDlgItem(hDlg, ID_CONTROLS + i), value);
+						}
+					}
+					break;
+
+				case ID_RESET_FILE:
+					read_config_file(g_config_file_name, file_options);
+					for (i = 0; default_options[i].name != NULL; i++) {
+						name = default_options[i].name;
+						value = default_options[i].default_value;
+						for (j = 0; file_options[j * 2] != NULL; j++) {
+							if (!strcmp(name, file_options[j * 2])) {
+								value = file_options[j * 2 + 1];
+							}
+						}
+						if (value == NULL) {
+							value = "";
+						}
+						if (default_options[i].type == INI_TYPE_BOOLEAN) {
+							CheckDlgButton(hDlg,
+								ID_CONTROLS + i,
+								!strcmp(value, "yes") ? BST_CHECKED
+								: BST_UNCHECKED);
+						} else {
+							SetWindowText(GetDlgItem(hDlg, ID_CONTROLS + i), value);
+						}
+					}
+					for (i = 0; i < MAX_OPTIONS; i++) {
+						free((void *)file_options[2 * i]);
+						free((void *)file_options[2 * i + 1]);
+					}
+					break;
+
+				case ID_RESET_ACTIVE:
+					for (i = 0; default_options[i].name != NULL; i++) {
+						name = default_options[i].name;
+						value = http_get_option(g_ctx, name);
+						if (default_options[i].type == INI_TYPE_BOOLEAN) {
+							CheckDlgButton(hDlg,
+								ID_CONTROLS + i,
+								!strcmp(value, "yes") ? BST_CHECKED
+								: BST_UNCHECKED);
+						} else {
+							SetDlgItemText(hDlg,
+								ID_CONTROLS + i,
+								value == NULL ? "" : value);
+						}
+					}
+					break;
+			}
+
+			for (i = 0; default_options[i].name != NULL; i++) {
+				name = default_options[i].name;
+				if (((default_options[i].type == INI_TYPE_FILE)
+					|| (default_options[i].type == INI_TYPE_DIRECTORY))
+					&& LOWORD(wParam) == ID_CONTROLS + i + ID_FILE_BUTTONS_DELTA) {
+
+					/* Result of the Dialog: File/Folder selected by user */
+					char path[PATH_MAX] = "";
+
+					if (default_options[i].type == INI_TYPE_DIRECTORY) {
+
+						BROWSEINFO bi;
+						memset(&bi, 0, sizeof(bi));
+						bi.hwndOwner = (HWND)hDlg;
+						bi.ulFlags = BIF_RETURNONLYFSDIRS;
+
+						/* Use option name as Window title */
+						bi.lpszTitle = name;
+
+						SHGetPathFromIDList(SHBrowseForFolder(&bi), path);
+
+					} else {
+
+						OPENFILENAME of;
+						memset(&of, 0, sizeof(of));
+						of.lStructSize = sizeof(of);
+						of.hwndOwner = (HWND)hDlg;
+						of.lpstrFile = path;
+						of.nMaxFile = sizeof(path);
+						of.lpstrInitialDir = http_get_option(g_ctx, "document_root");
+						of.Flags =
+							OFN_CREATEPROMPT | OFN_NOCHANGEDIR | OFN_HIDEREADONLY;
+
+						/* Use option name as Window title */
+						of.lpstrTitle = name;
+
+						GetOpenFileName(&of);
+					}
+
+					if (path[0] != '\0') {
+						/* Something has been chosen */
+						SetWindowText(GetDlgItem(hDlg, ID_CONTROLS + i), path);
+					}
+				}
+			}
+			break;
+
+		case WM_INITDIALOG:
+			/* Store hWnd in a parameter accessible by the parent, so we can
+			 * bring this window to front if required. */
+			pdlg_proc_param = (struct dlg_proc_param *)lParam;
+			pdlg_proc_param->hWnd = hDlg;
+
+			/* Initialize the dialog elements */
+			SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_SMALL, (LPARAM)hIcon);
+			SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_BIG, (LPARAM)hIcon);
+			title = (char *)malloc(strlen(g_server_name) + 16);
+			if (title) {
+				strcpy(title, g_server_name);
+				strcat(title, " settings");
+				SetWindowText(hDlg, title);
+				free(title);
+			}
+			SetFocus(GetDlgItem(hDlg, ID_SAVE));
+
+			/* Init dialog with active settings */
+			SendMessage(hDlg, WM_COMMAND, ID_RESET_ACTIVE, 0);
+			/* alternative: SendMessage(hDlg, WM_COMMAND, ID_RESET_FILE, 0); */
+			break;
+
+		default:
+			break;
+	}
+
+	return FALSE;
+}
+
+/* Dialog proc for input dialog */
+static INT_PTR CALLBACK InputDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+	static struct dlg_proc_param *inBuf = 0;
+	WORD ctrlId;
+	HWND hIn;
+
+	switch (msg) {
+		case WM_CLOSE:
+			inBuf = 0;
+			DestroyWindow(hDlg);
+			break;
+
+		case WM_COMMAND:
+			ctrlId = LOWORD(wParam);
+			if (ctrlId == IDOK) {
+				/* Get handle of input line */
+				hIn = GetDlgItem(hDlg, ID_INPUT_LINE);
+
+				if (hIn) {
+					/* Get content of input line */
+					GetWindowText(hIn, inBuf->buffer, (int)inBuf->buflen);
+					if (inBuf->buffer[0] != 0) {
+						/* Input dialog is not empty. */
+						EndDialog(hDlg, IDOK);
+					}
+				} else {
+					/* There is no input line in this dialog. */
+					EndDialog(hDlg, IDOK);
+				}
+
+			} else if (ctrlId == IDRETRY) {
+
+				/* Get handle of input line */
+				hIn = GetDlgItem(hDlg, inBuf->idRetry);
+
+				if (hIn) {
+					/* Load current string */
+					GetWindowText(hIn, inBuf->buffer, (int)inBuf->buflen);
+					if (inBuf->fRetry) {
+						if (inBuf->fRetry(inBuf)) {
+							SetWindowText(hIn, inBuf->buffer);
+						}
+					}
+				}
+
+			} else if (ctrlId == IDCANCEL) {
+				EndDialog(hDlg, IDCANCEL);
+			}
+			break;
+
+		case WM_INITDIALOG:
+			/* Get handle of input line */
+			hIn = GetDlgItem(hDlg, ID_INPUT_LINE);
+
+			/* Get dialog parameters */
+			inBuf = (struct dlg_proc_param *)lParam;
+
+			/* Set dialog handle for the caller */
+			inBuf->hWnd = hDlg;
+
+			/* Set dialog name */
+			SetWindowText(hDlg, inBuf->name);
+
+			if (hIn) {
+				/* This is an input dialog */
+				DEBUG_ASSERT(inBuf != NULL);
+				DEBUG_ASSERT((inBuf->buffer != NULL) && (inBuf->buflen != 0));
+				DEBUG_ASSERT(strlen(inBuf->buffer) < inBuf->buflen);
+				SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_SMALL, (LPARAM)hIcon);
+				SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_BIG, (LPARAM)hIcon);
+				SendMessage(hIn, EM_LIMITTEXT, inBuf->buflen - 1, 0);
+				SetWindowText(hIn, inBuf->buffer);
+				SetFocus(hIn);
+			}
+
+			break;
+
+		default:
+			break;
+	}
+
+	return FALSE;
+}
+
+static void suggest_passwd(char *passwd) {
+	unsigned u;
+	char *p;
+	union {
+		FILETIME ft;
+		LARGE_INTEGER li;
+	} num;
+
+	/* valid characters are 32 to 126 */
+	GetSystemTimeAsFileTime(&num.ft);
+	num.li.HighPart |= (LONG)GetCurrentProcessId();
+	p = passwd;
+	while (num.li.QuadPart) {
+		u = (unsigned)(num.li.QuadPart % 95);
+		num.li.QuadPart -= u;
+		num.li.QuadPart /= 95;
+		*p = (char)(u + 32);
+		p++;
+	}
+}
+
+static void add_control(struct dlg_complete *dlg,
+	WORD type,
+	WORD id,
+	DWORD style,
+	short x,
+	short y,
+	short cx,
+	short cy,
+	string_t caption);
+
+
+static int get_password(string_t user,
+	string_t realm,
+	char *passwd,
+	unsigned passwd_len) {
+/* Parameter for size/format tuning of the dialog */
+	short HEIGHT = 15;
+	short WIDTH = 280;
+	short LABEL_WIDTH = 90;
+
+	/* Other variables */
+	struct dlg_complete dlg;
+	static struct dlg_proc_param s_dlg_proc_param;
+	int ok;
+	short y;
+
+	DEBUG_ASSERT((user != NULL) && (realm != NULL) && (passwd != NULL));
+
+	/* Only allow one instance of this dialog to be open. */
+	if (s_dlg_proc_param._guard == 0) {
+		memset(&s_dlg_proc_param, 0, sizeof(s_dlg_proc_param));
+		s_dlg_proc_param._guard = 1;
+	} else {
+		SetForegroundWindow(s_dlg_proc_param.hWnd);
+		return 0;
+	}
+
+	FillDialogHeader(&dlg, WIDTH);
+
+	/* Do not open a password dialog, if the username is empty */
+	if (user[0] == 0) {
+		s_dlg_proc_param._guard = 0;
+		return 0;
+	}
+
+	/* Create a password suggestion */
+	memset(passwd, 0, passwd_len);
+	suggest_passwd(passwd);
+
+	/* Make buffer available for input dialog */
+	s_dlg_proc_param.buffer = passwd;
+	s_dlg_proc_param.buflen = passwd_len;
+
+	/* Create the dialog */
+	y = HEIGHT;
+	add_control(&dlg,
+		0x82,
+		ID_STATIC,
+		WS_VISIBLE | WS_CHILD,
+		10,
+		y,
+		LABEL_WIDTH,
+		HEIGHT,
+		"User:");
+	add_control(&dlg,
+		0x81,
+		ID_CONTROLS + 1,
+		WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL
+		| ES_READONLY,
+		15 + LABEL_WIDTH,
+		y,
+		WIDTH - LABEL_WIDTH - 25,
+		HEIGHT,
+		user);
+
+	y += HEIGHT;
+	add_control(&dlg,
+		0x82,
+		ID_STATIC,
+		WS_VISIBLE | WS_CHILD,
+		10,
+		y,
+		LABEL_WIDTH,
+		HEIGHT,
+		"Realm:");
+	add_control(&dlg,
+		0x81,
+		ID_CONTROLS + 2,
+		WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL
+		| ES_READONLY,
+		15 + LABEL_WIDTH,
+		y,
+		WIDTH - LABEL_WIDTH - 25,
+		HEIGHT,
+		realm);
+
+	y += HEIGHT;
+	add_control(&dlg,
+		0x82,
+		ID_STATIC,
+		WS_VISIBLE | WS_CHILD,
+		10,
+		y,
+		LABEL_WIDTH,
+		HEIGHT,
+		"Password:");
+	add_control(&dlg,
+		0x81,
+		ID_INPUT_LINE,
+		WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
+		15 + LABEL_WIDTH,
+		y,
+		WIDTH - LABEL_WIDTH - 25,
+		HEIGHT,
+		"");
+
+	y += (WORD)(HEIGHT * 2);
+	add_control(&dlg,
+		0x80,
+		IDOK,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		80,
+		y,
+		55,
+		12,
+		"Ok");
+	add_control(&dlg,
+		0x80,
+		IDCANCEL,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		140,
+		y,
+		55,
+		12,
+		"Cancel");
+
+	dlg.header.dlg_template.cy = y + (WORD)(HEIGHT * 1.5);
+
+	s_dlg_proc_param.name = "Modify password";
+	s_dlg_proc_param.fRetry = NULL;
+
+	ok = (IDOK
+		== DialogBoxIndirectParam(NULL,
+			&dlg.header.dlg_template,
+			NULL,
+			InputDlgProc,
+			(LPARAM)&s_dlg_proc_param));
+
+	s_dlg_proc_param.hWnd = NULL;
+	s_dlg_proc_param._guard = 0;
+
+	return ok;
+}
+
+
+/* Dialog proc for password dialog */
+static INT_PTR CALLBACK PasswordDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+	static string_t passfile = 0;
+	char domain[256], user[256], password[256];
+	WORD ctrlId;
+	struct dlg_proc_param *pdlg_proc_param;
+
+	switch (msg) {
+		case WM_CLOSE:
+			passfile = 0;
+			DestroyWindow(hDlg);
+			break;
+
+		case WM_COMMAND:
+			ctrlId = LOWORD(wParam);
+			if (ctrlId == ID_ADD_USER) {
+				/* Add user */
+				GetWindowText(GetDlgItem(hDlg, ID_ADD_USER_NAME),
+					user,
+					sizeof(user));
+				GetWindowText(GetDlgItem(hDlg, ID_ADD_USER_REALM),
+					domain,
+					sizeof(domain));
+				if (get_password(user, domain, password, sizeof(password))) {
+					http_modify_passwords_file(passfile, domain, user, password);
+					EndDialog(hDlg, IDOK);
+				}
+			} else if ((ctrlId >= (ID_CONTROLS + ID_FILE_BUTTONS_DELTA * 3))
+				&& (ctrlId < (ID_CONTROLS + ID_FILE_BUTTONS_DELTA * 4))) {
+		 /* Modify password */
+				GetWindowText(GetDlgItem(hDlg, ctrlId - ID_FILE_BUTTONS_DELTA * 3),
+					user,
+					sizeof(user));
+				GetWindowText(GetDlgItem(hDlg, ctrlId - ID_FILE_BUTTONS_DELTA * 2),
+					domain,
+					sizeof(domain));
+				if (get_password(user, domain, password, sizeof(password))) {
+					http_modify_passwords_file(passfile, domain, user, password);
+					EndDialog(hDlg, IDOK);
+				}
+			} else if ((ctrlId >= (ID_CONTROLS + ID_FILE_BUTTONS_DELTA * 2))
+				&& (ctrlId < (ID_CONTROLS + ID_FILE_BUTTONS_DELTA * 3))) {
+		 /* Remove user */
+				GetWindowText(GetDlgItem(hDlg, ctrlId - ID_FILE_BUTTONS_DELTA * 2),
+					user,
+					sizeof(user));
+				GetWindowText(GetDlgItem(hDlg, ctrlId - ID_FILE_BUTTONS_DELTA),
+					domain,
+					sizeof(domain));
+				http_modify_passwords_file(passfile, domain, user, NULL);
+				EndDialog(hDlg, IDOK);
+			}
+			break;
+
+		case WM_INITDIALOG:
+			pdlg_proc_param = (struct dlg_proc_param *)lParam;
+			pdlg_proc_param->hWnd = hDlg;
+			passfile = pdlg_proc_param->name;
+			SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_SMALL, (LPARAM)hIcon);
+			SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_BIG, (LPARAM)hIcon);
+			SetWindowText(hDlg, passfile);
+			SetFocus(GetDlgItem(hDlg, ID_ADD_USER_NAME));
+			break;
+
+		default:
+			break;
+	}
+
+	return FALSE;
+}
+
+static void add_control(struct dlg_complete *dlg,
+	WORD type,
+	WORD id,
+	DWORD style,
+	short x,
+	short y,
+	short cx,
+	short cy,
+	string_t caption) {
+	DLGITEMTEMPLATE *tp;
+	LPWORD p;
+	WORD cap_len = caption ? (WORD)strlen(caption) : 0;
+	int i;
+	DWORD expected_size = sizeof(DLGITEMTEMPLATE) + 4 + (cap_len + 1) * 2 + 2;
+
+	if ((dlg->used + expected_size + /* alignment */ 16)
+		>= sizeof(dlg->elements)) {
+		/* out if memory protection */
+		return;
+	}
+
+	/* Add one child element */
+	dlg->header.dlg_template.cdit++;
+
+	/* align to 4 bytes */
+	while (dlg->used % 4) {
+		dlg->used++;
+	}
+
+	/* start with DLGITEMTEMPLATE structure */
+	tp = (DLGITEMTEMPLATE *)(dlg->elements + dlg->used);
+	tp->id = id;
+	tp->style = style;
+	tp->dwExtendedStyle = 0;
+	tp->x = x;
+	tp->y = y;
+	tp->cx = cx;
+	tp->cy = cy;
+	dlg->used += sizeof(*tp);
+
+	/* add class */
+	p = (LPWORD)(dlg->elements + dlg->used);
+	p[0] = 0xffff;
+	p[1] = type;
+	dlg->used += 2 * sizeof(*p);
+
+	/* add title */
+	p = (LPWORD)(dlg->elements + dlg->used);
+	for (i = 0; i < cap_len; i++) {
+		p[i] = (WCHAR)caption[i];
+	}
+	p[cap_len] = 0;
+	dlg->used += (cap_len + 1) * sizeof(*p);
+
+	/* align to 2 bytes */
+	while (dlg->used % 2) {
+		dlg->used++;
+	}
+
+	/* add creation data */
+	p = (LPWORD)(dlg->elements + dlg->used);
+	*p = 0;
+	dlg->used += sizeof(*p);
+}
+
+
+static int optioncmp(string_t o1, string_t o2) {
+	/* string compare for option names */
+	while (*o1 || *o2) {
+		int c1 = 256 * (int)*o1;
+		int c2 = 256 * (int)*o2;
+		if (isalpha(*o1))
+			c1 = toupper(*o1);
+		else if (*o1 == '_')
+			c1 = 1;
+		if (isalpha(*o2))
+			c2 = toupper(*o2);
+		else if (*o2 == '_')
+			c2 = 1;
+		if (c1 < c2)
+			return -1;
+		if (c1 > c2)
+			return +1;
+		o1++;
+		o2++;
+	}
+	return 0;
+}
+
+
+static void show_settings_dialog(void) {
+	/* Parameter for size/format tuning of the dialog */
+	short HEIGHT = 15;
+	short BORDER_WIDTH = 10;
+	short BORDER_HEIGTH = BORDER_WIDTH / 2;
+	short CELL_WIDTH = 125;
+	short LABEL_WIDTH = 115;
+	short FILE_DIALOG_BUTTON_WIDTH = 15;
+	short NO_OF_COLUMNS = 3;
+	short NO_OF_OPTIONS = 0;       /* to be calculated */
+	short NO_OF_OPTION_SPACES = 0; /* to be calculated */
+	short NO_OF_ROWS = 0;          /* to be calculated */
+
+	/* Calculates size */
+	short COLUMN_WIDTH = LABEL_WIDTH + CELL_WIDTH + BORDER_WIDTH;
+	short DIALOG_WIDTH = BORDER_WIDTH + NO_OF_COLUMNS * COLUMN_WIDTH;
+
+	/* All other variables */
+	const struct ini_option *cv_options;
+	DWORD style;
+	WORD i, cl, nelems = 0;
+	short x, y, next_cell_width, next_cell_height;
+	static struct dlg_proc_param s_dlg_proc_param;
+	short *option_index, *option_top, *option_bottom;
+	char text[64];
+	struct dlg_complete dlg;
+
+	if (s_dlg_proc_param._guard == 0) {
+		memset(&s_dlg_proc_param, 0, sizeof(s_dlg_proc_param));
+		s_dlg_proc_param._guard = 1;
+	} else {
+		SetForegroundWindow(s_dlg_proc_param.hWnd);
+		return;
+	}
+
+	FillDialogHeader(&dlg, DIALOG_WIDTH);
+
+	/* Determine space required for input fields */
+	cv_options = http_get_valid_options();
+	for (i = 0; cv_options[i].name != NULL; i++) {
+		NO_OF_OPTIONS++;
+		if (cv_options[i].type == INI_TYPE_STRING_MULTILINE) {
+			/* Multiline input fields require double space */
+			NO_OF_OPTION_SPACES += 2;
+		} else {
+			/* All other option types require single space */
+			NO_OF_OPTION_SPACES++;
+		}
+	}
+	NO_OF_ROWS = (NO_OF_OPTION_SPACES + NO_OF_COLUMNS - 1) / NO_OF_COLUMNS;
+
+	/* All options should be displayed sorted. */
+	/* First allocate some memory to store option order: The array should store
+	 * 1) the option order of all options (NO_OF_OPTIONS), followed by
+	 * 2) the option index for the option name displayed on top of a column
+	 * 3) the option index for the option name displayed on bottom of a column
+	 */
+	option_index = (short *)calloc(NO_OF_OPTIONS + 2 * NO_OF_COLUMNS,
+		sizeof(short)); /* 1 */
+	if (!option_index) {
+		/* unlikely case of "out of memory" */
+		return;
+	}
+	option_top = option_index + NO_OF_OPTIONS;  /* 2 */
+	option_bottom = option_top + NO_OF_COLUMNS; /* 3 */
+
+	/* Initialize option order */
+	for (i = 0; i < NO_OF_OPTIONS; i++) {
+		option_index[i] = i;
+	}
+	/* Sort all options */
+	for (;;) {
+		int swapped = 0;
+		for (i = 1; i < NO_OF_OPTIONS; i++) {
+			if (optioncmp(cv_options[option_index[i - 1]].name,
+				cv_options[option_index[i]].name)
+		> 0) {
+				short swap = option_index[i];
+				option_index[i] = option_index[i - 1];
+				option_index[i - 1] = swap;
+				swapped = 1;
+			}
+		}
+		if (!swapped) {
+			break;
+		}
+	}
+
+	/* Create input fields for all options */
+	for (i = 0; i < NO_OF_OPTIONS; i++) {
+
+		/* Get option according to option order */
+		const struct ini_option *opt = &cv_options[option_index[i]];
+
+		/* Template style for all input fields (will be modified for specific
+		 * field types) */
+		style = WS_CHILD | WS_VISIBLE | WS_TABSTOP;
+
+		/* TODO: Bottom of a column must not be a MULTILINE input field.
+		 * If the last input field in a column would of multi-line type
+		 * (opt->type == INI_TYPE_STRING_MULTILINE), then
+		 * skip one field (nelems++).
+		 * But in this case, maybe one more ROW might be required. */
+
+		/* Position and size of the input field (will be modified) */
+		x = BORDER_WIDTH + COLUMN_WIDTH * (nelems / NO_OF_ROWS);
+		y = BORDER_HEIGTH + HEIGHT + HEIGHT * (nelems % NO_OF_ROWS);
+		next_cell_width = CELL_WIDTH;
+		next_cell_height = HEIGHT - 3;
+
+		/* Determine top/bottom option for every column */
+		if ((nelems % NO_OF_ROWS) == 0) {
+			/* Set option on top of a new column once */
+			option_top[nelems / NO_OF_ROWS] = option_index[i];
+		}
+		/* Set/overwrite option on bottom of a column */
+		option_bottom[nelems / NO_OF_ROWS] = option_index[i];
+
+		/* Depending on option type: create suitable input field */
+		if (opt->type == INI_TYPE_NUMBER) {
+			style |= ES_NUMBER;
+			cl = 0x81;
+			style |= WS_BORDER | ES_AUTOHSCROLL;
+
+		} else if (opt->type == INI_TYPE_BOOLEAN) {
+			cl = 0x80;
+			style |= BS_AUTOCHECKBOX;
+
+		} else if ((opt->type == INI_TYPE_FILE)
+			|| (opt->type == INI_TYPE_DIRECTORY)) {
+			style |= WS_BORDER | ES_AUTOHSCROLL;
+			cl = 0x81;
+
+			/* Additional button for file dialog */
+			add_control(&dlg,
+				0x80,
+				ID_CONTROLS + option_index[i] + ID_FILE_BUTTONS_DELTA,
+				WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+				x + LABEL_WIDTH + CELL_WIDTH - FILE_DIALOG_BUTTON_WIDTH,
+				y,
+				FILE_DIALOG_BUTTON_WIDTH,
+				HEIGHT - 3,
+				"...");
+
+			next_cell_width -= FILE_DIALOG_BUTTON_WIDTH + BORDER_WIDTH / 2;
+
+		} else if (opt->type == INI_TYPE_STRING_MULTILINE) {
+
+			/* Multiline input */
+			cl = 0x81;
+			style |= WS_BORDER | ES_AUTOHSCROLL | ES_MULTILINE | ES_WANTRETURN
+				| WS_VSCROLL | ES_AUTOVSCROLL;
+	   /* Add more space below */
+			nelems += 1;
+			next_cell_height += HEIGHT;
+
+		} else {
+			/* Standard text input field */
+			cl = 0x81;
+			style |= WS_BORDER | ES_AUTOHSCROLL;
+		}
+
+		/* Add label (static text) */
+		add_control(&dlg,
+			0x82,
+			ID_STATIC,
+			WS_VISIBLE | WS_CHILD,
+			x,
+			y,
+			LABEL_WIDTH,
+			HEIGHT,
+			opt->name);
+
+/* Add input field */
+		add_control(&dlg,
+			cl,
+			ID_CONTROLS + option_index[i],
+			style,
+			x + LABEL_WIDTH,
+			y,
+			next_cell_width,
+			next_cell_height,
+			"");
+		nelems++;
+	}
+
+	/* "Settings" frame around all options */
+	y = ((nelems + NO_OF_COLUMNS - 1) / NO_OF_COLUMNS + 1) * HEIGHT;
+	for (i = 0; i < NO_OF_COLUMNS; i++) {
+		sprintf(text,
+			" Settings %c - %c ",
+			cv_options[option_top[i]].name[0],
+			cv_options[option_bottom[i]].name[0]);
+		add_control(&dlg,
+			0x80,
+			ID_GROUP,
+			WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+			BORDER_WIDTH / 2
+			+ i * (DIALOG_WIDTH - BORDER_WIDTH) / NO_OF_COLUMNS,
+			BORDER_WIDTH / 2,
+			(DIALOG_WIDTH - BORDER_WIDTH) / NO_OF_COLUMNS,
+			y + 2,
+			text);
+	}
+
+	/* Buttons below "Settings" frame */
+	y += HEIGHT;
+	add_control(&dlg,
+		0x80,
+		ID_SAVE,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		DIALOG_WIDTH - 70,
+		y,
+		65,
+		12,
+		"Save Settings");
+	add_control(&dlg,
+		0x80,
+		ID_RESET_DEFAULTS,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		DIALOG_WIDTH - 140,
+		y,
+		65,
+		12,
+		"Reset to defaults");
+	add_control(&dlg,
+		0x80,
+		ID_RESET_FILE,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		DIALOG_WIDTH - 210,
+		y,
+		65,
+		12,
+		"Reload from file");
+	add_control(&dlg,
+		0x80,
+		ID_RESET_ACTIVE,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		DIALOG_WIDTH - 280,
+		y,
+		65,
+		12,
+		"Reload active");
+	add_control(&dlg,
+		0x82,
+		ID_STATIC,
+		WS_CHILD | WS_VISIBLE | WS_DISABLED,
+		5,
+		y,
+		100,
+		12,
+		g_server_base_name);
+
+/* Calculate total height of the dialog */
+	dlg.header.dlg_template.cy = y + HEIGHT;
+
+	s_dlg_proc_param.fRetry = NULL;
+
+	DialogBoxIndirectParam(NULL,
+		&dlg.header.dlg_template,
+		NULL,
+		SettingsDlgProc,
+		(LPARAM)&s_dlg_proc_param);
+
+	free(option_index);
+
+	s_dlg_proc_param.hWnd = NULL;
+	s_dlg_proc_param._guard = 0;
+}
+
+
+static void change_password_file(void) {
+	/* Parameter for size/format tuning of the dialog */
+	short HEIGHT = 15;
+	short WIDTH = 320;
+	short LABEL_WIDTH = 90;
+
+	/* Other variables */
+	OPENFILENAME of;
+	char path[PATH_MAX] = PASSWORDS_FILE_NAME;
+	char strbuf[256], u[256], d[256];
+	HWND hDlg = NULL;
+	FILE *f;
+	short y, nelems;
+	string_t domain = http_get_option(g_ctx, "authentication_domain");
+	static struct dlg_proc_param s_dlg_proc_param;
+	struct dlg_complete dlg;
+
+	if (s_dlg_proc_param._guard == 0) {
+		memset(&s_dlg_proc_param, 0, sizeof(s_dlg_proc_param));
+		s_dlg_proc_param._guard = 1;
+	} else {
+		SetForegroundWindow(s_dlg_proc_param.hWnd);
+		return;
+	}
+
+	memset(&of, 0, sizeof(of));
+	of.lStructSize = sizeof(of);
+	of.hwndOwner = (HWND)hDlg;
+	of.lpstrFile = path;
+	of.nMaxFile = sizeof(path);
+	of.lpstrInitialDir = http_get_option(g_ctx, "document_root");
+	of.Flags = OFN_CREATEPROMPT | OFN_NOCHANGEDIR | OFN_HIDEREADONLY;
+
+	if (!GetSaveFileName(&of)) {
+		/* Cancel/Close by user */
+		s_dlg_proc_param._guard = 0;
+		return;
+	}
+
+	f = fopen(path, "a+");
+	if (f) {
+		fclose(f);
+	} else {
+		MessageBox(NULL, path, "Can not open file", MB_ICONERROR);
+		s_dlg_proc_param._guard = 0;
+		return;
+	}
+
+	do {
+		s_dlg_proc_param.hWnd = NULL;
+
+		FillDialogHeader(&dlg, WIDTH);
+
+		f = fopen(path, "r+");
+		if (!f) {
+			MessageBox(NULL, path, "Can not open file", MB_ICONERROR);
+			s_dlg_proc_param._guard = 0;
+			return;
+		}
+
+		nelems = 0;
+		while (fgets(strbuf, sizeof(strbuf), f)) {
+			if (sscanf(strbuf, "%255[^:]:%255[^:]:%*s", u, d) != 2) {
+				continue;
+			}
+			u[255] = 0;
+			d[255] = 0;
+			y = (nelems + 1) * HEIGHT + 5;
+			add_control(&dlg,
+				0x80,
+				ID_CONTROLS + nelems + ID_FILE_BUTTONS_DELTA * 3,
+				WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+				10,
+				y,
+				65,
+				12,
+				"Modify password");
+			add_control(&dlg,
+				0x80,
+				ID_CONTROLS + nelems + ID_FILE_BUTTONS_DELTA * 2,
+				WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+				80,
+				y,
+				55,
+				12,
+				"Remove user");
+			add_control(&dlg,
+				0x81,
+				ID_CONTROLS + nelems + ID_FILE_BUTTONS_DELTA,
+				WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL
+				| ES_READONLY,
+				245,
+				y,
+				60,
+				12,
+				d);
+			add_control(&dlg,
+				0x81,
+				ID_CONTROLS + nelems,
+				WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL
+				| ES_READONLY,
+				140,
+				y,
+				100,
+				12,
+				u);
+
+			nelems++;
+		}
+		fclose(f);
+
+		y = (nelems + 1) * HEIGHT + 10;
+		add_control(&dlg,
+			0x80,
+			ID_ADD_USER,
+			WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+			80,
+			y,
+			55,
+			12,
+			"Add user");
+		add_control(&dlg,
+			0x81,
+			ID_ADD_USER_NAME,
+			WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL
+			| WS_TABSTOP,
+			140,
+			y,
+			100,
+			12,
+			"");
+		add_control(&dlg,
+			0x81,
+			ID_ADD_USER_REALM,
+			WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL
+			| WS_TABSTOP,
+			245,
+			y,
+			60,
+			12,
+			domain);
+
+		y = (nelems + 2) * HEIGHT + 10;
+		add_control(&dlg,
+			0x80,
+			ID_GROUP,
+			WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+			5,
+			5,
+			WIDTH - 10,
+			y,
+			" Users ");
+
+		y += HEIGHT;
+		add_control(&dlg,
+			0x82,
+			ID_STATIC,
+			WS_CHILD | WS_VISIBLE | WS_DISABLED,
+			5,
+			y,
+			100,
+			12,
+			g_server_base_name);
+
+		dlg.header.dlg_template.cy = y + 20;
+
+		s_dlg_proc_param.name = path;
+		s_dlg_proc_param.fRetry = NULL;
+
+	} while ((IDOK
+		== DialogBoxIndirectParam(NULL,
+			&dlg.header.dlg_template,
+			NULL,
+			PasswordDlgProc,
+			(LPARAM)&s_dlg_proc_param))
+		&& (!g_exit_flag));
+
+	s_dlg_proc_param.hWnd = NULL;
+	s_dlg_proc_param._guard = 0;
+}
+
+
+static BOOL sysinfo_reload(struct dlg_proc_param *prm) {
+	static char *buf = 0;
+	int cl, rl;
+
+	cl = http_get_context_info(g_ctx, NULL, 0);
+	free(buf);
+	cl += 510;
+	buf = (char *)malloc(cl + 1);
+	rl = http_get_context_info(g_ctx, buf, cl);
+	if ((rl > cl) || (rl <= 0)) {
+		if (g_ctx == NULL) {
+			prm->buffer = "Server not running";
+		} else if (rl <= 0) {
+			prm->buffer = "No server statistics available";
+		} else {
+			prm->buffer = "Please retry";
+		}
+	} else {
+		prm->buffer = buf;
+	}
+
+	return TRUE;
+}
+
+
+int show_system_info(void) {
+	/* Parameter for size/format tuning of the dialog */
+	short HEIGHT = 15;
+	short WIDTH = 320;
+	short LABEL_WIDTH = 50;
+
+	/* Other parameters */
+	int ok;
+	short y;
+	static struct dlg_proc_param s_dlg_proc_param;
+	struct dlg_complete dlg;
+
+	/* Only allow one instance of this dialog to be open. */
+	if (s_dlg_proc_param._guard == 0) {
+		memset(&s_dlg_proc_param, 0, sizeof(s_dlg_proc_param));
+		s_dlg_proc_param._guard = 1;
+	} else {
+		SetForegroundWindow(s_dlg_proc_param.hWnd);
+		return 0;
+	}
+
+	/* Create the dialog */
+	FillDialogHeader(&dlg, WIDTH);
+
+	y = HEIGHT;
+	add_control(&dlg,
+		0x82,
+		ID_STATIC,
+		WS_VISIBLE | WS_CHILD,
+		10,
+		y,
+		LABEL_WIDTH,
+		HEIGHT,
+		"System Information:");
+	add_control(&dlg,
+		0x81,
+		ID_CONTROLS + 1,
+		WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL
+		| ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY,
+		15 + LABEL_WIDTH,
+		y,
+		WIDTH - LABEL_WIDTH - 25,
+		HEIGHT * 7,
+		g_system_info);
+
+	y += (WORD)(HEIGHT * 8);
+
+	add_control(&dlg,
+		0x80,
+		IDRETRY,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		WIDTH - 10 - 55 - 10 - 55,
+		y,
+		55,
+		12,
+		"Reload");
+
+	add_control(&dlg,
+		0x80,
+		IDOK,
+		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+		WIDTH - 10 - 55,
+		y,
+		55,
+		12,
+		"Close");
+
+	dlg.header.dlg_template.cy = y + (WORD)(HEIGHT * 1.5);
+
+	s_dlg_proc_param.name = "System information";
+	s_dlg_proc_param.fRetry = sysinfo_reload;
+	s_dlg_proc_param.idRetry = ID_CONTROLS + 1; /* Reload field with this ID */
+
+	ok = (IDOK
+		== DialogBoxIndirectParam(NULL,
+			&dlg.header.dlg_template,
+			NULL,
+			InputDlgProc,
+			(LPARAM)&s_dlg_proc_param));
+
+	s_dlg_proc_param.hWnd = NULL;
+	s_dlg_proc_param._guard = 0;
+
+	return ok;
+}
+
+
+static int manage_service(int action) {
+	string_t service_name = g_server_name;
+	SC_HANDLE hSCM = NULL, hService = NULL;
+	SERVICE_DESCRIPTION descr;
+	char path[PATH_MAX + 20] = ""; /* Path to executable plus magic argument */
+	int success = 1;
+
+	descr.lpDescription = (LPSTR)g_server_name;
+
+	if ((hSCM = OpenSCManager(NULL,
+		NULL,
+		action == ID_INSTALL_SERVICE ? GENERIC_WRITE
+		: GENERIC_READ))
+		== NULL) {
+		success = 0;
+		show_error();
+	} else if (action == ID_INSTALL_SERVICE) {
+		path[sizeof(path) - 1] = 0;
+		GetModuleFileName(NULL, path, sizeof(path) - 1);
+		strncat(path, " ", sizeof(path) - 1 - strlen(path));
+		strncat(path, service_magic_argument, sizeof(path) - 1 - strlen(path));
+		hService = CreateService(hSCM,
+			service_name,
+			service_name,
+			SERVICE_ALL_ACCESS,
+			SERVICE_WIN32_OWN_PROCESS,
+			SERVICE_AUTO_START,
+			SERVICE_ERROR_NORMAL,
+			path,
+			NULL,
+			NULL,
+			NULL,
+			NULL,
+			NULL);
+		if (hService) {
+			ChangeServiceConfig2(hService, SERVICE_CONFIG_DESCRIPTION, &descr);
+		} else {
+			show_error();
+		}
+	} else if (action == ID_REMOVE_SERVICE) {
+		if ((hService = OpenService(hSCM, service_name, DELETE)) == NULL
+			|| !DeleteService(hService)) {
+			show_error();
+		}
+	} else if ((hService =
+		OpenService(hSCM, service_name, SERVICE_QUERY_STATUS))
+		== NULL) {
+		success = 0;
+	}
+
+	if (hService)
+		CloseServiceHandle(hService);
+	if (hSCM)
+		CloseServiceHandle(hSCM);
+
+	return success;
+}
+
+
+static void add_icon_to_systray(HWND hWnd) {
+	/* tray icon is entry point to the menu */
+	if (!g_hide_tray) {
+		TrayIcon.cbSize = sizeof(TrayIcon);
+		TrayIcon.uID = ID_ICON;
+		TrayIcon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+		TrayIcon.hIcon = hIcon;
+		TrayIcon.hWnd = hWnd;
+		snprintf(TrayIcon.szTip, sizeof(TrayIcon.szTip), "%s", g_server_name);
+		TrayIcon.uCallbackMessage = WM_USER;
+		Shell_NotifyIcon(NIM_ADD, &TrayIcon);
+	} else {
+		TrayIcon.cbSize = 0;
+	}
+}
+
+
+/* Window proc for taskbar icon */
+static LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	int service_installed;
+	char buf[200];
+	POINT pt;
+	HMENU hMenu;
+
+	switch (msg) {
+
+		case WM_CREATE:
+			if ((__argv[1] != NULL) && !strcmp(__argv[1], service_magic_argument)) {
+				static SERVICE_TABLE_ENTRY service_table[2];
+				char *service_argv[2];
+
+				service_argv[0] = __argv[0];
+				service_argv[1] = NULL;
+
+				start_httpie(1, service_argv);
+
+				memset(service_table, 0, sizeof(service_table));
+				service_table[0].lpServiceName = (LPSTR)g_server_name;
+				service_table[0].lpServiceProc =
+					(LPSERVICE_MAIN_FUNCTION)ServiceMain;
+
+				StartServiceCtrlDispatcher(service_table);
+				exit(EXIT_SUCCESS);
+			} else {
+				start_httpie(__argc, __argv);
+			}
+			break;
+
+		case WM_COMMAND:
+			switch (LOWORD(wParam)) {
+				case ID_QUIT:
+					stop_httpie();
+					if (TrayIcon.cbSize) {
+						Shell_NotifyIcon(NIM_DELETE, &TrayIcon);
+					}
+					g_exit_flag = 1;
+					PostQuitMessage(0);
+					return 0;
+				case ID_SETTINGS:
+					show_settings_dialog();
+					break;
+				case ID_PASSWORD:
+					change_password_file();
+					break;
+				case ID_SYSINFO:
+					show_system_info();
+					break;
+				case ID_INSTALL_SERVICE:
+				case ID_REMOVE_SERVICE:
+					manage_service(LOWORD(wParam));
+					break;
+				case ID_CONNECT: {
+					/* Get port from server configuration (listening_ports) and build
+					 * URL from port. */
+						string_t url = get_url_to_first_open_port(g_ctx);
+
+						/* Open URL with Windows default browser */
+						ShellExecute(NULL, "open", url, NULL, NULL, SW_SHOW);
+					} break;
+				case ID_WEBSITE:
+					cout("[%s]\n", g_website);
+					ShellExecute(NULL, "open", g_website, NULL, NULL, SW_SHOW);
+					break;
+			}
+			break;
+
+		case WM_USER:
+			switch (lParam) {
+				case WM_RBUTTONUP:
+				case WM_LBUTTONUP:
+				case WM_LBUTTONDBLCLK:
+					hMenu = CreatePopupMenu();
+					AppendMenu(hMenu,
+						MF_STRING | MF_GRAYED,
+						ID_SEPARATOR,
+						g_server_name);
+					AppendMenu(hMenu, MF_SEPARATOR, ID_SEPARATOR, "");
+					service_installed = manage_service(0);
+					snprintf(buf,
+						sizeof(buf) - 1,
+						"NT service: %s installed",
+						service_installed ? "" : "not");
+					buf[sizeof(buf) - 1] = 0;
+					AppendMenu(hMenu, MF_STRING | MF_GRAYED, ID_SEPARATOR, buf);
+					AppendMenu(hMenu,
+						MF_STRING | (service_installed ? MF_GRAYED : 0),
+						ID_INSTALL_SERVICE,
+						"Install service");
+					AppendMenu(hMenu,
+						MF_STRING | (!service_installed ? MF_GRAYED : 0),
+						ID_REMOVE_SERVICE,
+						"Deinstall service");
+					AppendMenu(hMenu, MF_SEPARATOR, ID_SEPARATOR, "");
+					AppendMenu(hMenu, MF_STRING, ID_CONNECT, "Start browser");
+					AppendMenu(hMenu, MF_STRING, ID_SETTINGS, "Edit settings");
+					AppendMenu(hMenu, MF_STRING, ID_PASSWORD, "Modify password file");
+					AppendMenu(hMenu, MF_STRING, ID_SYSINFO, "Show system info");
+					AppendMenu(hMenu, MF_STRING, ID_WEBSITE, "Visit website");
+					AppendMenu(hMenu, MF_SEPARATOR, ID_SEPARATOR, "");
+					AppendMenu(hMenu, MF_STRING, ID_QUIT, "Exit");
+					GetCursorPos(&pt);
+					SetForegroundWindow(hWnd);
+					TrackPopupMenu(hMenu, 0, pt.x, pt.y, 0, hWnd, NULL);
+					PostMessage(hWnd, WM_NULL, 0, 0);
+					DestroyMenu(hMenu);
+					break;
+			}
+			break;
+
+		case WM_CLOSE:
+			stop_httpie();
+			if (TrayIcon.cbSize) {
+				Shell_NotifyIcon(NIM_DELETE, &TrayIcon);
+			}
+			g_exit_flag = 1;
+			PostQuitMessage(0);
+			return 0; /* We've just sent our own quit message, with proper hwnd. */
+
+		default:
+			if (msg == msg_taskbar_created) {
+				add_icon_to_systray(hWnd);
+			}
+			break;
+	}
+
+	return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+
+/* An executable with "Subsystem: Windows" does not have a Console.
+ * Create one manually, if required. */
+static int MakeConsole(void) {
+	DWORD err;
+	HANDLE hConWnd = GetConsoleWindow();
+	int ok = 1;
+
+	if (hConWnd == NULL) {
+		if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+			FreeConsole();
+			if (!AllocConsole()) {
+				err = GetLastError();
+				if (err == ERROR_ACCESS_DENIED) {
+					ok = 0;
+					MessageBox(NULL,
+						"Insufficient rights to create a console window",
+						"Error",
+						MB_ICONERROR);
+				}
+			}
+			AttachConsole(GetCurrentProcessId());
+		}
+
+		/* Retry to get a console handle */
+		hConWnd = GetConsoleWindow();
+
+		if (hConWnd == NULL) {
+			ok = 0;
+		} else {
+			/* Reopen console handles according to
+			 * https://stackoverflow.com/questions/9020790/using-stdin-with-an-allocconsole
+			 */
+			if (NULL == freopen("CONIN$", "r", stdin)) {
+				ok = 0;
+			}
+			if (NULL == freopen("CONOUT$", "w", stdout)) {
+				ok = 0;
+			}
+			if (NULL == freopen("CONOUT$", "w", stderr)) {
+				ok = 0;
+			}
+		}
+	}
+
+	if (hConWnd == NULL) {
+		ok = 0;
+	} else {
+		SetConsoleTitle(g_server_name);
+	}
+
+	return ok;
+}
+
+
+/* main() for Windows (Subsystem: Windows). */
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
+	WNDCLASS cls;
+	HWND hWnd;
+	MSG msg;
+
+#if defined(DEBUG)
+	(void)MakeConsole();
+#endif
+
+	(void)hInst;
+	(void)hPrev;
+	(void)cmdline;
+	(void)show;
+
+	init_server_name();
+	init_system_info();
+	msg_taskbar_created = RegisterWindowMessage("TaskbarCreated");
+
+	memset(&cls, 0, sizeof(cls));
+	cls.lpfnWndProc = WindowProc;
+	cls.hInstance = GetModuleHandle(NULL);
+	cls.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	cls.lpszClassName = g_server_base_name;
+
+	RegisterClass(&cls);
+	hWnd = CreateWindow(cls.lpszClassName,
+		g_server_name,
+		WS_OVERLAPPEDWINDOW,
+		0,
+		0,
+		0,
+		0,
+		NULL,
+		NULL,
+		cls.hInstance,
+		NULL);
+	ShowWindow(hWnd, SW_HIDE);
+
+	/* Load icon for systray and other dialogs */
+	if (g_icon_name) {
+		hIcon = (HICON)
+			LoadImage(NULL, g_icon_name, IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+	} else {
+		hIcon = (HICON)LoadImage(GetModuleHandle(NULL),
+			MAKEINTRESOURCE(ID_ICON),
+			IMAGE_ICON,
+			16,
+			16,
+			0);
+	}
+
+	add_icon_to_systray(hWnd);
+
+	/* Message loop */
+	while (GetMessage(&msg, hWnd, 0, 0) > 0) {
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+
+	free_system_info();
+
+	/* Return the WM_QUIT value. */
+	return (int)msg.wParam;
+}
+
+
+/* main() for Windows (Subsystem: Console). */
+int main(int argc, char *argv[]) {
+	(void)argc;
+	(void)argv;
+
+	return WinMain(0, 0, 0, 0);
+}
+
+#elif __APPLE__ || __MACH__
+#import <Cocoa/Cocoa.h>
+
+@interface Civetweb : NSObject <NSApplicationDelegate>
+-(void)openBrowser;
+-(void)shutDown;
+@end
+
+@implementation Civetweb
+- (void)openBrowser {
+	[[NSWorkspace sharedWorkspace]
+		openURL:[NSURL URLWithString:[NSString stringWithUTF8String:
+	get_url_to_first_open_port(
+		g_ctx)] ] ];
+}
+- (void)editConfig {
+	create_config_file(g_ctx, g_config_file_name);
+	NSString *path = [NSString stringWithUTF8String:g_config_file_name];
+	if (![[NSWorkspace sharedWorkspace]openFile:path
+		withApplication : @"TextEdit"] ) {
+		NSAlert *alert = [[[NSAlert alloc]init] autorelease];
+		[alert setAlertStyle:NSWarningAlertStyle] ;
+		[alert setMessageText:NSLocalizedString(@"Unable to open config file.",
+			"")] ;
+		[alert setInformativeText:path] ;
+		(void)[alert runModal];
+	}
+}
+- (void)shutDown
+{
+	[NSApp terminate:nil] ;
+}
+@end
+
+int main(int argc, char *argv[]) {
+	init_server_name();
+	init_system_info();
+	start_civetweb(argc, argv);
+
+	[NSAutoreleasePool new] ;
+	[NSApplication sharedApplication] ;
+
+	/* Add delegate to process menu item actions */
+	Civetweb *myDelegate = [[Civetweb alloc]autorelease];
+	[NSApp setDelegate:myDelegate] ;
+
+	/* Run this app as agent */
+	ProcessSerialNumber psn = {0, kCurrentProcess};
+	TransformProcessType(&psn, kProcessTransformToBackgroundApplication);
+	SetFrontProcess(&psn);
+
+	/* Add status bar menu */
+	id menu = [[NSMenu new]autorelease];
+
+	/* Add version menu item */
+	[menu
+		addItem:[[[NSMenuItem alloc]
+					/*initWithTitle:[NSString stringWithFormat:@"%s",
+					   server_name]*/
+		initWithTitle:[NSString stringWithUTF8String:g_server_name]
+		action : @selector(noexist)
+		keyEquivalent:@""] autorelease] ] ;
+
+/* Add configuration menu item */
+	[menu addItem:[[[NSMenuItem alloc]initWithTitle:@"Edit configuration"
+		action:@selector(editConfig)
+		keyEquivalent:@""] autorelease] ] ;
+
+/* Add connect menu item */
+	[menu
+		addItem:[[[NSMenuItem alloc]initWithTitle:@"Open web root in a browser"
+		action:@selector(openBrowser)
+		keyEquivalent:@""] autorelease] ] ;
+
+/* Separator */
+	[menu addItem:[NSMenuItem separatorItem] ] ;
+
+	/* Add quit menu item */
+	[menu addItem:[[[NSMenuItem alloc]initWithTitle:@"Quit"
+		action:@selector(shutDown)
+		keyEquivalent:@"q"] autorelease] ] ;
+
+/* Attach menu to the status bar */
+	id item = [[[NSStatusBar systemStatusBar]
+		statusItemWithLength:NSVariableStatusItemLength] retain];
+	[item setHighlightMode:YES] ;
+	[item setImage:[NSImage imageNamed:@"civetweb_22x22.png"] ] ;
+	[item setMenu:menu] ;
+
+	/* Run the app */
+	[NSApp activateIgnoringOtherApps:YES] ;
+	[NSApp run] ;
+
+	stop_civetweb();
+	free_system_info();
+
+	return EXIT_SUCCESS;
+}
+
+#else
+
+/* main for Linux (and others) */
+int main(int argc, char *argv[]) {
+	init_server_name();
+	init_system_info();
+	start_httpie(argc, argv);
+	cout("%s started on port(s) %s with web root [%s]\n", g_server_name,
+		http_get_option(g_ctx, "listening_ports"),
+		http_get_option(g_ctx, "document_root"));
+
+	while (g_exit_flag == 0) {
+		sleep(1);
+	}
+
+	cout("Exiting on signal %d, waiting for all threads to finish...", g_exit_flag);
+	stop_httpie();
+	cout("%s", " done.\n");
+
+	free_system_info();
+
+	return EXIT_SUCCESS;
+}
+#endif /* _WIN32 */

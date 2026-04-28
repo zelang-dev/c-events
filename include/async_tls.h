@@ -76,10 +76,10 @@ typedef client_cb tls_client_cb;
 C_API bool socket_is_eof(int);
 C_API bool socket_is_secure(int);
 
-C_API int tls_out(char *msg, size_t nread);
 C_API void tls_closer(int);
 C_API ssize_t tls_reader(int, char *buf, size_t max);
 C_API ssize_t tls_writer(int, char *buf, size_t len);
+C_API tls_config_t *tls_get_config(int fd);
 C_API int tls_dial(const char *);
 C_API int tls_bind(const char *, int backlog);
 C_API int tls_accept(int, char *server, int *port);
@@ -90,13 +90,11 @@ C_API bool tls_is_selfserver(void);
 C_API void tls_selfserver_set(void);
 C_API void tls_selfserver_clear(void);
 
+C_API const char *default_cert_path(char *path);
 C_API const char *ca_cert_file(void);
 C_API const char *cert_file(void);
 C_API const char *pkey_file(void);
 C_API const char *csr_file(void);
-
-C_API int cerr(const char *msg, ...);
-C_API int cout(const char *msg, ...);
 
 C_API X509 *x509_get(const char *file_path);
 C_API EVP_PKEY *pkey_get(const char *file_path);

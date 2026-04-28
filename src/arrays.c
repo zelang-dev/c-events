@@ -360,6 +360,30 @@ EVENTS_INLINE bool is_ptr_usable(void *self) {
 	return ((ptrdiff_t)self > 0x20000000);
 }
 
+int cerr(const char *msg, ...) {
+	fflush(stdout);
+	va_list ap;
+	va_start(ap, msg);
+	int r = vfprintf(stderr, msg, ap);
+	va_end(ap);
+	return r;
+}
+
+int cout(const char *msg, ...) {
+	va_list ap;
+	va_start(ap, msg);
+	int r = vfprintf(stdout, msg, ap);
+	va_end(ap);
+	if (r)
+		fflush(stdout);
+
+	return r;
+}
+
+EVENTS_INLINE int fout(char *msg, size_t nread) {
+	return fwrite(msg, nread, 1, stdout);
+}
+
 EVENTS_INLINE char *str_cpy(char *dest, const char *src, size_t len) {
 	return (char *)memcpy(dest, src, (len ? len : strlen(src)));
 }
@@ -734,6 +758,32 @@ static EVENTS_INLINE char *rtrim(char *s) {
 
 EVENTS_INLINE char *trim(char *s) {
 	return rtrim(ltrim(s));
+}
+
+bool str_has_either(const char *src, char *match, char *match2) {
+	size_t c, d, e, position = -1;
+	if (is_empty(match) || is_empty(src))
+		return false;
+
+	size_t src_length = strlen(src);
+	size_t match_length = strlen(match);
+	if (match_length > src_length)
+		return false;
+
+	for (c = 0; c <= src_length - match_length; c++) {
+		position = e = c;
+		for (d = 0; d < match_length; d++)
+			if ((unsigned char *)match[d] == (const unsigned char *)src[e]
+				|| (unsigned char *)match2[d] == (const unsigned char *)src[e])
+				e++;
+			else
+				break;
+
+		if (d == match_length)
+			return true;
+	}
+
+	return false;
 }
 
 int mempos(const unsigned char *src, size_t src_length,

@@ -39,6 +39,7 @@ void udp_to(int fd, char *addr, unsigned int flags) {
 	int port = 0;
 	char *host = str_parseip(addr, &ip, &port, false);
 	udp_t packet = events_target(fd)->udp;
+	packet->addr = &events_get_sockaddr(fd)->storage;
 
 	packet->flags = flags;
 	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
@@ -90,6 +91,7 @@ udp_t udp_recv(int fd) {
 	uchar *ip;
 	char buf[Kb(48)] = {0};
 	udp_t client = null, packet = events_target(fd)->udp;
+	packet->addr = &events_get_sockaddr(fd2socket(fd))->storage;
 	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
 	socklen_t client_len = sizeof(packet->addr);
 
@@ -107,15 +109,22 @@ udp_t udp_recv(int fd) {
 			client->nread = m;
 			ip = (uchar *)&sa->sin_addr;
 			snprintf(client->ip4addr, 16, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-			memcpy((void *)client->addr, packet->addr, sizeof(client->addr));
 			client->message = events_calloc(1, m + 1);
-			if (!is_empty(client->message)) {
+			client->addr = events_calloc(1, sizeof(struct sockaddr_storage));
+			if (!is_empty(client->message) && !is_empty(client->addr)) {
+				memcpy((void *)client->addr, packet->addr, sizeof(client->addr));
 				memcpy(client->message, buf, m);
 				client->message_set = true;
 				client->type = DATA_UDP;
 				events_target(fd)->udp = client;
 				errno = 0;
 			} else {
+				if (!is_empty(client->message))
+					events_free(client->message);
+
+				if (!is_empty(client->addr))
+					events_free(client->addr);
+
 				events_free(client);
 				return null;
 			}
@@ -129,6 +138,7 @@ EVENTS_INLINE char *udp_message(udp_t packet) {
 	if (packet->message && packet->message_set) {
 		packet->message_set = false;
 		defer_free((void *)packet->message);
+		defer_free((void *)packet->addr);
 	}
 	return packet->message;
 }

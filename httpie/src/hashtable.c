@@ -539,7 +539,7 @@ FORCEINLINE void_t hash_string_cp(const_t data, void_t arg) {
 
 FORCEINLINE void_t hash_str_autofree(const_t data, void_t arg) {
 	(void)arg;
-	return (void_t)str_dup((string_t)data);
+	return (void_t)(str_is_empty((string_t)data) ? "" : str_dup((string_t)data));
 }
 
 // String operations

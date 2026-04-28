@@ -55,13 +55,35 @@ Content-Type: text/xml\n\n";
 	ASSERT_STR("ZDEDebuggerPresent", http_cookie_names(parser)[0].char_ptr);
 	ASSERT_STR("PHPSESSID", http_cookie_names(parser)[1].char_ptr);
 
-	return exit_scope();
+	return 0;
+}
+
+TEST(http_get_decoded) {
+	hash_http_t *buf = http_extract_var(null, "&", "=");
+	ASSERT_NULL(buf);
+
+	ASSERT_TRUE(is_type(buf = http_extract_var("key1=value1&key2=value2&key3=value%203&key4=value+4", "&", "="),
+		DATA_HASHTABLE));
+	ASSERT_STR(http_get_decoded(buf, "key1"), "value1");
+	ASSERT_STR(http_get_decoded(buf, "key2"), "value2");
+	ASSERT_STR(http_get_decoded(buf, "key3"), "value 3");
+	ASSERT_STR(http_get_decoded(buf, "key4"), "value 4");
+	ASSERT_NULL(http_get_decoded(buf, "f"));
+
+	ASSERT_NOTNULL((buf = http_extract_var("a=1&&b=2&d&=&c=3%20&e=", "&", "=")));
+	ASSERT_STR(http_get_decoded(buf, "a"), "1");
+	ASSERT_STR(http_get_decoded(buf, "b"), "2");
+	ASSERT_STR(http_get_decoded(buf, "c"), "3 ");
+	ASSERT_STR(http_get_decoded(buf, "d"), "");
+	ASSERT_STR(http_get_decoded(buf, "e"), "");
+	return 0;
 }
 
 TEST(list) {
     int result = 0;
 
     EXEC_TEST(parse_http);
+	EXEC_TEST(http_get_decoded);
 
     return result;
 }

@@ -3,7 +3,7 @@
 FindHttpie
 ------------
 
-Find the Httpie - dual webclient/server processor.
+Find the HttPie - dual webclient/server processor.
 
 Imported Targets
 ^^^^^^^^^^^^^^^^
@@ -11,7 +11,7 @@ Imported Targets
 This module defines the following imported targets:
 
 HTTPIE::WEB
-    The httpie tls library, if found.
+    The HttPie library, if found.
 
 Result Variables
 ^^^^^^^^^^^^^^^^
@@ -19,18 +19,18 @@ Result Variables
 This module will set the following variables in your project:
 
 ``HTTPIE_FOUND``
-    System has the httpie library.
+    System has the HttPie library.
 ``HTTPIE_INCLUDE_DIR``
-    The httpie include directory.
+    The HttPie include directory.
 ``HTTPIE_LIBRARY``
-    The httpie library.
+    The HttPie library.
 ``HTTPIE_VERSION``
     This is set to $major.$minor.$revision (e.g. 2.6.8).
 
 Hints
 ^^^^^
 
-Set HTTPIE_ROOT_DIR to the root directory of an httpie installation.
+Set HTTPIE_ROOT_DIR to the root directory of an HttPie installation.
 
 ]=======================================================================]
 
@@ -56,13 +56,13 @@ find_package_handle_standard_args(httpie
     VERSION_VAR HTTPIE_VERSION
     HANDLE_COMPONENTS
         FAIL_MESSAGE
-        "Could NOT find httpie, try setting the path to httpie using the HTTPIE_ROOT_DIR environment variable"
+        "Could NOT find HttPie, try setting the path to HttPie using the HTTPIE_ROOT_DIR environment variable"
 )
 
 set(HTTPIE_FOUND ${httpie_FOUND})
 set(HTTPIE_LIBRARY ${HTTPIE_LIBRARY})
 
-# httpie Found
+# HttPie Found
 if(HTTPIE_FOUND)
 	set(HTTPIE_INCLUDE_DIRS ${HTTPIE_INCLUDE_DIR})
 	set(HTTPIE_LIBRARIES ${HTTPIE_LIBRARY})

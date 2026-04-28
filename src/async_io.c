@@ -57,6 +57,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	}
 
 	if (is_unix) {
+		uds->addr = &events_get_sockaddr(fd)->sun;
 		strncpy(uds->addr->sun_path, address, sizeof(uds->addr->sun_path) - 1);
 		uds->addr->sun_family = AF_UNIX;
 		uds->socket = fd;
@@ -64,6 +65,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 		err = bind(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
 	} else {
 		err = bind(fd, (struct sockaddr *)&sa, sizeof(sa));
+		events_get_sockaddr(fd)->sin = sa;
 	}
 
 	if (err < 0) {
@@ -97,6 +99,11 @@ fds_t async_accept(fds_t fd, char *server, int *port) {
 		errno = os_geterror();
 		return -1;
 	}
+
+	if (is_unix)
+		events_get_sockaddr(cfd)->sun = u_sa;
+	else
+		events_get_sockaddr(cfd)->sin = sa;
 
 	if (!is_unix && server) {
 		ip = (uchar *)&sa.sin_addr;
@@ -155,17 +162,20 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 
 	// start connecting
 	if (is_unix) {
+		uds->addr = &events_get_sockaddr(fd)->sun;
 		strncpy(uds->addr->sun_path, hostname, sizeof(uds->addr->sun_path) - 1);
 		uds->addr->sun_family = AF_UNIX;
 		uds->socket= fd;
 		uds->type = DATA_UNIX;
 		err = connect(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
 	} else {
+		sa = events_get_sockaddr(fd)->sin;
 		memset(&sa, 0, sizeof sa);
 		memmove(&sa.sin_addr, ip, 4);
 		sa.sin_family = AF_INET;
 		sa.sin_port = htons(port);
 		err = connect(fd, (struct sockaddr *)&sa, sizeof sa);
+		events_get_sockaddr(fd)->sin = sa;
 	}
 
 	if (err < 0 && (os_geterror() != EINPROGRESS && os_geterror() != EAGAIN)) {
@@ -726,4 +736,12 @@ static EVENTS_INLINE void *_os_fgetc(param_t args) {
 
 EVENTS_INLINE int fs_fgetc(FILE *stream) {
 	return queue_get(queue_work(futures_pool(), _os_fgetc, 1, stream)).integer;
+}
+
+static EVENTS_INLINE void *_os_fgets(param_t args) {
+	return fgets(args[0].char_ptr, args[1].integer, (FILE *)args[3].object);
+}
+
+EVENTS_INLINE char *fs_fgets(char *buf, int count, FILE *stream) {
+	return queue_get(queue_work(futures_pool(), _os_fgets, 3, buf, casting(count), stream)).char_ptr;
 }

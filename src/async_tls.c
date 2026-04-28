@@ -21,12 +21,12 @@
 static char default_ssl_conf_filename[MAXHOSTNAMELEN];
 static char events_powered_by[MAXHOSTNAMELEN] = {0};
 static char events_host[MAXHOSTNAMELEN] = {0};
-static char events_directory[MAXHOSTNAMELEN] = {0};
-static char events_ca_cert[MAXHOSTNAMELEN + 4] = {0};
-static char events_cert[MAXHOSTNAMELEN + 4] = {0};
-static char events_csr[MAXHOSTNAMELEN + 4] = {0};
-static char events_pkey[MAXHOSTNAMELEN + 4] = {0};
-static char events_self_touch[MAXHOSTNAMELEN + 6] = {0};
+static char events_directory[PATH_MAX] = {0};
+static char events_ca_cert[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
+static char events_cert[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
+static char events_csr[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
+static char events_pkey[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
+static char events_self_touch[PATH_MAX + MAXHOSTNAMELEN + 6] = {0};
 static bool events_useing_secure_client = false;
 
 struct x509_request {
@@ -624,6 +624,16 @@ EVENTS_INLINE const char *cert_file(void) {
 	return (const char *)events_cert;
 }
 
+const char *default_cert_path(char *path) {
+	char *dir = is_empty(path) ? ".." SYS_DIRSEP : path;
+	if (str_is_empty((const char *)events_directory)) {
+		if (!(snprintf(events_directory, sizeof(events_directory), "%s", dir)))
+			cerr("Invalid certificate path %s names:", events_directory);
+	}
+
+	return (const char *)events_directory;
+}
+
 static const char *default_cert_file(char *path) {
 	char *name = (char *)events_hostname();
 	char *dir = is_empty(path) ? ".." SYS_DIRSEP : path;
@@ -724,26 +734,6 @@ const char *events_uname(void) {
 	return (const char *)events_powered_by;
 }
 
-int cerr(const char *msg, ...) {
-	fflush(stdout);
-	va_list ap;
-	va_start(ap, msg);
-	int r = vfprintf(stderr, msg, ap);
-	va_end(ap);
-	return r;
-}
-
-int cout(const char *msg, ...) {
-	va_list ap;
-	va_start(ap, msg);
-	int r = vfprintf(stdout, msg, ap);
-	va_end(ap);
-	if (r)
-		fflush(stdout);
-
-	return r;
-}
-
 static int tlserr(int const rc, struct tls *const secure) {
 	if (0 == rc) return 0;
 	assert(-1 == rc);
@@ -789,12 +779,8 @@ bool socket_is_eof(int socket) {
 	return false;
 }
 
-EVENTS_INLINE int tls_out(char *msg, size_t nread) {
-	int r = fwrite(msg, nread, 1, stdout);
-	if (r)
-		fflush(stdout);
-
-	return r;
+EVENTS_INLINE tls_config_t *tls_get_config(int fd) {
+	return events_target(fd)->tls_config;
 }
 
 int tls_bind(const char *host, int backlog) {

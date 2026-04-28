@@ -245,7 +245,7 @@ int scan_directory(http_t *conn,	string_t dir, void *data, int (*cb)(struct de *
 
 			/* If we don't memset stat structure to zero, mtime will have
 			 * garbage and strftime() will segfault later on in
-			 * print_dir_entry(). memset is required only if mg_stat()
+			 * print_dir_entry(). memset is required only if `stat()`
 			 * fails. For more details, see
 			 * http://code.google.com/p/mongoose/issues/detail?id=79 */
 			memset(&de.file, 0, sizeof(de.file));
@@ -757,12 +757,7 @@ void http_cors_header(http_t *conn) {
 	}
 }
 
-/*
- * Print message to buffer. If buffer is large enough to hold the message,
- * return buffer. If buffer is to small, allocate large enough buffer on heap,
- * and return allocated buffer.
- */
-static int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap) {
+int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap) {
 	va_list ap_copy;
 	int len;
 
@@ -838,7 +833,7 @@ void http_construct_etag(http_t *ctx, string buf, size_t buf_len, const struct f
 	}
 }
 
-string_t xx_http_fgets_xx(char *buf, size_t size, struct file *filep, char **p) {
+string_t http_fgets(char *buf, size_t size, struct file *filep, char **p) {
 	string_t eof;
 	size_t len;
 	string_t memend;
@@ -864,8 +859,8 @@ string_t xx_http_fgets_xx(char *buf, size_t size, struct file *filep, char **p) 
 		return (len) ? eof : NULL;
 	}
 
-	if (filep->fp != NULL) return
-		fgets(buf, (int)size, filep->fp);
+	if (filep->fp != NULL)
+		return fs_fgets(buf, (int)size, filep->fp);
 
 	return NULL;
 }
@@ -1293,42 +1288,21 @@ void http_no_cache_header(http_t *conn) {
 	http_response_add(conn, "Cache-Control", val, -1);
 }
 
-/* HTTP 1.1 assumes keep alive if "Connection:" header is not set
- * This function must tolerate situations when connection info is not
- * set up, for example if request parsing failed. */
-static int should_keep_alive(http_t *conn) {
-	string_t http_version;
-	string_t header;
-
-	/* First satisfy needs of the server */
-	if ((conn == NULL) || conn->req.must_close) {
-		/* Close, if `httpie` framework needs to close */
-		return 0;
-	}
-
-	if (!str_is_case(conn->domain->config[ENABLE_KEEP_ALIVE], "yes") != 0) {
-		/* Close, if keep alive is not enabled */
-		return 0;
-	}
-
-	/* Check explicit wish of the client */
-	header = http_get_header(conn, "Connection");
-	if (header) {
-		/* If there is a connection header from the client, obey */
-		if (http_has_flag(conn, "Connection", "keep-alive")) {
-			return true;
+int should_keep_alive(http_t *conn) {
+	if (conn != NULL) {
+		const char *http_version = conn->req.http_version;
+		const char *header = http_get_header(conn, "Connection");
+		if (conn->req.must_close || conn->code == 401 ||
+			!str_is_case(conn->ctx->host.config[ENABLE_KEEP_ALIVE], "yes") ||
+			(header != NULL && !str_is_case(header, "keep-alive") != 0) ||
+			(header == NULL && http_version &&
+				0 != strcmp(http_version, "1.1"))) {
+			return 0;
 		}
-		return 0;
-	}
 
-	/* Use default of the standard */
-	http_version = conn->req.http_version;
-	if (http_version && (0 == strcmp(http_version, "1.1"))) {
-		/* HTTP 1.1 default is keep alive */
 		return 1;
 	}
 
-	/* HTTP 1.0 (and earlier) default is to close the connection */
 	return 0;
 }
 
@@ -1460,14 +1434,7 @@ static int get_http_header_len(string_t buf, int buflen) {
 	return 0;
 }
 
-/* Keep reading the input `conn` until \r\n\r\n appears in the
- * buffer (which marks the end of HTTP request). Buffer buf may already
- * have some data. The length of the data is stored in nread.
- * Upon every read operation, increase nread by the number of bytes read. */
-static int read_message(http_t *conn,
-	char *buf,
-	int bufsiz,
-	int *nread) {
+int read_message(http_t *conn, char *buf, int bufsiz, int *nread) {
 	int request_len, n = 0;
 	struct timespec last_action_time;
 	double request_timeout;
@@ -1504,7 +1471,7 @@ static int read_message(http_t *conn,
 	return request_len;
 }
 
-static int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
+int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	if (ebuf_len > 0) {
 		ebuf[0] = '\0';
 	}
@@ -1571,42 +1538,42 @@ static int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	return 1;
 }
 
-int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
+int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	string_t cl;
-
-	conn->action = HTTP_REQUEST; /* request (valid of not) */
 
 	if (!get_message(conn, ebuf, ebuf_len, err)) {
 		return 0;
 	}
 
-	if (parse_http(HTTP_REQUEST, conn, conn->req.buf) <= 0) {
+	if (parse_http(conn->action, conn, conn->req.buf) <= 0) {
 		http_snprintf(conn,
 			NULL, /* No truncation check for ebuf */
 			ebuf,
 			ebuf_len,
 			"%s",
-			"Bad request");
+			(conn->action == HTTP_REQUEST ? "Bad request" : "Bad response"));
 		*err = 400;
 		return 0;
 	}
 
-	/* Message is a valid request */
-	if (!http_switch_domain(conn)) {
-		http_snprintf(conn,
-			NULL, /* No truncation check for ebuf */
-			ebuf,
-			ebuf_len,
-			"%s",
-			"Bad request: Host mismatch");
-		*err = 400;
-		return 0;
-	}
+	/* Message is a valid request or response */
+	if (conn->action == HTTP_REQUEST) {
+		if (!http_switch_domain(conn)) {
+			http_snprintf(conn,
+				NULL, /* No truncation check for ebuf */
+				ebuf,
+				ebuf_len,
+				"%s",
+				"Bad request: Host mismatch");
+			*err = 400;
+			return 0;
+		}
 
-	if (((cl = http_get_header(conn, "Accept-Encoding"))
-		!= NULL)
-		&& strstr(cl, "gzip")) {
-		conn->req.accept_gzip = 1;
+		if (((cl = http_get_header(conn, "Accept-Encoding"))
+			!= NULL)
+			&& strstr(cl, "gzip")) {
+			conn->req.accept_gzip = 1;
+		}
 	}
 
 	if (((cl = http_get_header(conn, "Transfer-Encoding"))
@@ -1626,7 +1593,7 @@ int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 		conn->req.content_len = 0; /* not yet read */
 	} else if ((cl = http_get_header(conn, "Content-Length"))
 		!= NULL) {
- 		/* Request has content length set */
+		/* Request has content length set */
 		char *endptr = NULL;
 		conn->req.content_len = strtoll(cl, &endptr, 10);
 		if ((endptr == cl) || (conn->req.content_len < 0)) {
@@ -1641,12 +1608,125 @@ int get_request(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 		}
 		/* Publish the content length back to the request info. */
 		conn->content_length = conn->req.content_len;
+
+		if (conn->action == HTTP_RESPONSE) {
+			/* TODO: we should also consider HEAD method */
+			if (conn->code == 304) {
+				conn->req.content_len = 0;
+			}
+		}
 	} else {
-		/* There is no exception, see RFC7230. */
-		conn->req.content_len = 0;
+		if (conn->action == HTTP_RESPONSE) {
+			/* There is no exception, see RFC7230. */
+			/* TODO: we should also consider HEAD method */
+			if (((conn->code >= 100)
+				&& (conn->code <= 199))
+				|| (conn->code == 204)
+				|| (conn->code == 304)) {
+				conn->req.content_len = 0;
+			} else {
+				conn->req.content_len = -1; /* unknown content length */
+			}
+		} else {
+			/* There is no exception, see RFC7230. */
+			conn->req.content_len = 0;
+		}
 	}
 
 	return 1;
+}
+
+static void close_socket_gracefully(http_t *conn) {
+#if defined(_WIN32)
+	char buf[BUF_LEN];
+	int n;
+#endif
+	struct linger linger;
+	int error_code = 0;
+	int linger_timeout = -2;
+	socklen_t opt_len = sizeof(error_code);
+
+	if (!conn) {
+		return;
+	}
+
+	/*
+	 * Set linger option to avoid socket hanging out after close. This
+	 * prevent ephemeral port exhaust problem under high QPS. */
+	linger.l_onoff = 1;
+	linger.l_linger = 1;
+	getsockopt(conn->client.sock, SOL_SOCKET, SO_ERROR, (char *)&error_code, &opt_len);
+	if (error_code == ECONNRESET) {
+		/* Socket already closed by client/peer, close socket without linger */
+	} else {
+		if (conn->domain->config[LINGER_TIMEOUT]) {
+			linger_timeout = atoi(conn->domain->config[LINGER_TIMEOUT]);
+			linger.l_linger = (linger_timeout + 999) / 1000;
+		}
+
+		if (setsockopt(conn->client.sock, SOL_SOCKET, SO_LINGER, (char *)&linger, sizeof(linger)) != 0) {
+			http_log(DEBUG_ERROR, conn,
+				"%s: getsockopt(SOL_SOCKET SO_ERROR) failed: %s",
+				__func__,
+				strerror(os_geterror()));
+		}
+	}
+
+	/* Send FIN to the client */
+	if (!conn->client.has_ssl)
+		shutdown(conn->client.sock, SHUT_WR);
+
+#if defined(_WIN32)
+	/* Read and discard pending incoming data. If we do not do that and
+	 * close
+	 * the socket, the data in the send buffer may be discarded. This
+	 * behaviour is seen on Windows, when client keeps sending data
+	 * when server decides to close the connection; then when client
+	 * does recv() it gets no data back. */
+	discard_unread_request_data(conn);
+#endif
+
+	/* Now we know that our FIN is ACK-ed, safe to close */
+	tls_closer(conn->client.sock);
+	conn->client.sock = INVALID_SOCKET;
+}
+
+static void close_connection(http_t *conn) {
+	atomic_lock(&conn->ctx->nonce_mutex);
+	/* Set close flag, so keep-alive loops will stop */
+	conn->req.must_close = 1;
+	if (conn->client.sock != INVALID_SOCKET) {
+		close_socket_gracefully(conn);
+		conn->client.sock = INVALID_SOCKET;
+	}
+	atomic_unlock(&conn->ctx->nonce_mutex);
+}
+
+void http_close_connection(http_t *conn) {
+	if ((conn == NULL) || (conn->ctx == NULL)) {
+		return;
+	}
+
+	if (conn->ctx->http_type == HTTP_INI_SERVER) {
+		if (conn->req.in_websocket_handling) {
+			/* Set close flag, so the server thread can exit. */
+			conn->req.must_close = 1;
+			return;
+		}
+	}
+
+	if (conn->ctx->http_type == HTTP_INI_WEBSOCKET) {
+		/* client context: loops must end */
+		conn->ctx->status = HTTP_STATUS_STOPPING;
+		conn->req.must_close = 1;
+		task_set_canceled(conn->ctx->worker_taskid);
+	}
+
+	close_connection(conn);
+	if (conn->ctx->http_type == HTTP_INI_WEBSOCKET
+		|| conn->ctx->http_type == HTTP_INI_CLIENT) {
+		free(conn);
+	}
 }
 
 bool http_is_file_in_memory(http_ini_t *ctx, http_t *conn, string_t path, struct file *filep) {
@@ -1750,7 +1830,7 @@ int http_stat(http_t *conn, string_t path, struct file *filep) {
 	return 0;
 }
 
-bool http_is_file_opened(const struct file *filep) {
+bool http_is_file_opened(struct file *filep) {
 	return (filep != NULL && (filep->membuf != NULL || filep->fp != NULL));
 }
 
@@ -1868,7 +1948,7 @@ FORCEINLINE bool http_get_random(uint64_t *out) {
 	return true;
 }
 
-FORCEINLINE void_t http_free_ex(void_t memory) {
+void_t free_ex(void_t memory) {
 	if (!is_empty(memory) && is_ptr_usable(memory))
 		free(memory);
 
@@ -2027,7 +2107,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 	conn->req.data_len = 0;
 	was_error = false;
 	do {
-		if (!get_request(conn, ebuf, sizeof(ebuf), &reqerr)) {
+		if (!get_request_response(conn, ebuf, sizeof(ebuf), &reqerr)) {
 			/*
 			 * The request sent by the client could not be understood by
 			 * the server, or it was incomplete or a timeout. Send an
@@ -2095,7 +2175,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 
 		if (ri->remote_user != NULL) {
 			ptr.con = ri->remote_user;
-			http_free_ex(ptr.var);
+			free_ex(ptr.var);
 
 			/*
 			 * Important! When having connections with and without auth
@@ -2134,6 +2214,199 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 			break;
 		conn->req.handled_requests++;
 	} while (keep_alive);
+}
+
+int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src) {
+	struct addrinfo hints, *res, *ressave;
+	int func_ret = 0;
+	int gai_ret;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = af;
+	if (!resolve_src) {
+		hints.ai_flags = AI_NUMERICHOST;
+	}
+
+	gai_ret = async_getaddrinfo(src, NULL, &hints, &res);
+	if (gai_ret != 0) {
+		/* gai_strerror could be used to convert gai_ret to a string */
+		/* POSIX return values: see
+		 * http://pubs.opengroup.org/onlinepubs/9699919799/functions/freeaddrinfo.html
+		 */
+		/* Windows return values: see
+		 * https://msdn.microsoft.com/en-us/library/windows/desktop/ms738520%28v=vs.85%29.aspx
+		 */
+		return 0;
+	}
+
+	ressave = res;
+
+	while (res) {
+		if ((dstlen >= (size_t)res->ai_addrlen)
+			&& (res->ai_addr->sa_family == af)) {
+			memcpy(dst, res->ai_addr, res->ai_addrlen);
+			func_ret = 1;
+		}
+		res = res->ai_next;
+	}
+
+	freeaddrinfo(ressave);
+	return func_ret;
+}
+
+http_t *http_connect_client_impl(const struct client_options *client_options,
+	int use_ssl, struct error_data *error) {
+	http_t *conn = NULL;
+	fds_t sock;
+	union usa sa;
+	struct sockaddr *psa;
+	socklen_t len;
+	unsigned max_req_size =	(unsigned)atoi(http_get_default_option(MAX_REQUEST_SIZE));
+
+	/* Size of structures, aligned to 8 bytes */
+	size_t conn_size = ((sizeof(http_t) + 7) >> 3) << 3;
+	size_t ctx_size = ((sizeof(http_ini_t) + 7) >> 3) << 3;
+	size_t alloc_size = conn_size + ctx_size + max_req_size;
+
+	conn = (http_t *)calloc(1, alloc_size);
+	if (error != NULL) {
+		error->code = 0;
+		error->code_sub = 0;
+		if (error->text_buffer_size > 0) {
+			error->text[0] = 0;
+		}
+	}
+
+	if (conn == NULL) {
+		if (error != NULL) {
+			error->code = ENOMEM;
+			error->code_sub = (unsigned)alloc_size;
+			http_snprintf(NULL,
+				NULL, /* No truncation check for ebuf */
+				error->text,
+				error->text_buffer_size,
+				"calloc(): %s",
+				strerror(os_geterror()));
+		}
+		return NULL;
+	}
+
+#if defined(GCC_DIAGNOSTIC)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
+#endif /* defined(GCC_DIAGNOSTIC) */
+	/* conn_size is aligned to 8 bytes */
+
+	conn->ctx = (http_ini_t *)(((char *)conn) + conn_size);
+
+#if defined(GCC_DIAGNOSTIC)
+#pragma GCC diagnostic pop
+#endif /* defined(GCC_DIAGNOSTIC) */
+
+	conn->req.buf = (((char *)conn) + conn_size + ctx_size);
+	conn->req.buf_size = (int)max_req_size;
+	conn->ctx->http_type = HTTP_INI_CLIENT;
+	conn->domain = &(conn->ctx->host);
+	if (use_ssl) {
+		char addr[ARRAY_SIZE] = {0};
+		snprintf(addr, sizeof(addr), "https://%s:%d", client_options->host, client_options->port);
+		if (sock = tls_dial(addr) < 0) {
+			/* "error" will be set by connect_socket. */
+			/* free all memory and return NULL; */
+			free(conn);
+			return NULL;
+		}
+	} else {
+		if (sock = async_connect((string)client_options->host, client_options->port, 1) < 0) {
+			/* "error" will be set by connect_socket. */
+			/* free all memory and return NULL; */
+			free(conn);
+			return NULL;
+		}
+	}
+
+	sa = *events_get_sockaddr(sock);
+	len = sizeof(conn->client.rsa.sin);
+	psa = (struct sockaddr *)&(conn->client.rsa.sin);
+	conn->client.sock = sock;
+	conn->client.lsa = sa;
+
+	if (getsockname(sock, psa, &len) != 0) {
+		http_log(DEBUG_ERROR, conn,
+			"%s: getsockname() failed: %s",
+			__func__,
+			strerror(os_geterror()));
+	}
+
+	conn->client.has_ssl = use_ssl ? 1 : 0;
+	return conn;
+}
+
+
+http_t *http_connect_client(string_t host,
+                  int port,
+                  int use_ssl,
+                  char *error_buffer,
+                  size_t error_buffer_size) {
+	struct client_options opts;
+	struct error_data error;
+
+	memset(&error, 0, sizeof(error));
+	error.text_buffer_size = error_buffer_size;
+	error.text = error_buffer;
+
+	memset(&opts, 0, sizeof(opts));
+	opts.host = host;
+	opts.port = port;
+	if (use_ssl) {
+		opts.host_name = host;
+	}
+
+	return http_connect_client_impl(&opts, use_ssl, &error);
+}
+
+http_t *http_download(string_t host, int port,
+	int use_ssl, string ebuf, size_t ebuf_len, string_t fmt, ...) {
+	http_t *conn = null;
+	va_list ap;
+	int i;
+	int reqerr;
+
+	if (ebuf_len > 0) {
+		ebuf[0] = '\0';
+	}
+
+	va_start(ap, fmt);
+
+	/* open a connection */
+	conn = http_connect_client(host, port, use_ssl, ebuf, ebuf_len);
+	if (conn != NULL) {
+		i = http_vprintf(conn, fmt, ap);
+		if (i <= 0) {
+			http_snprintf(conn,
+				NULL, /* No truncation check for ebuf */
+				ebuf,
+				ebuf_len,
+				"%s",
+				"Error sending request");
+		} else {
+			/* make sure the buffer is clear */
+			conn->req.data_len = 0;
+			http_get_response(conn, ebuf, ebuf_len, -1);
+
+			/* TODO: here, the URI is the http response code */
+			conn->req.local_uri = conn->url_to;
+		}
+	}
+
+	/* if an error occurred, close the connection */
+	if ((ebuf[0] != '\0') && (conn != NULL)) {
+		http_close_connection(conn);
+		conn = NULL;
+	}
+
+	va_end(ap);
+	return conn;
 }
 
 void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_type, bool is_delete_request,
@@ -2198,8 +2471,8 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 					 * remove existing handler
 					 */
 					*lastref = tmp_rh->next;
-					tmp_rh->uri = http_free_ex(tmp_rh->uri);
-					tmp_rh = http_free_ex(tmp_rh);
+					tmp_rh->uri = free_ex(tmp_rh->uri);
+					tmp_rh = free_ex(tmp_rh);
 				}
 
 				atomic_unlock(&ctx->host.nonce_mutex);
@@ -2228,7 +2501,7 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 	tmp_rh->uri = str_dup_ex(uri);
 	if (tmp_rh->uri == NULL) {
 		atomic_unlock(&ctx->host.nonce_mutex);
-		tmp_rh = http_free_ex(tmp_rh);
+		tmp_rh = free_ex(tmp_rh);
 		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
 		return;
 	}

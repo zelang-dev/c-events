@@ -436,6 +436,7 @@ C_API size_t fs_fread(void *buf, size_t items_size, size_t items_count, FILE *st
 C_API size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream);
 C_API int fs_fclose(FILE *stream);
 C_API int fs_fgetc(FILE *stream);
+C_API char *fs_fgets(char *buf, int count, FILE *stream);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

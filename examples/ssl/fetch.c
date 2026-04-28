@@ -7,18 +7,18 @@ void *main_main(param_t args) {
 		ssize_t len;
 
 		use_ca_certificate("cert.pem");
-		if ((client = tls_dial(getopts())) > 0 && tls_writer(client, "GET /"CRLF, 0)) {
+		if ((client = tls_dial(getopts())) > 0 && tls_writer(client, "GET / HTTP/1.0"CRLF CRLF, 0)) {
 			cout(CLR_LN);
 			while (!socket_is_eof(client)) {
 				if ((len = tls_reader(client, data, sizeof(data))) > 0)
-					tls_out(data, len);
+					fout(data, len);
 				else
 					break;
 
 				chunks++;
 			}
 		} else {
-			perror("\ntls_get/tls_writer");
+			perror("\ntls_dial/tls_writer");
 		}
 
 		cout("\n\nReceived: %d chunks.\n", chunks);

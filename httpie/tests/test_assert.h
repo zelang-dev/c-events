@@ -20,7 +20,12 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
     if (test_##name() != 0) { result = -1; printf( #name ": fail\033[0K\n\n"); } \
     else { printf(#name ": pass\033[0K\n\n"); }
 
+#define EXEC_TEST_WITH(name, with) \
+    if (test_##name(with) != 0) { result = -1; printf( #name ": fail\033[0K\n\n"); } \
+    else { printf(#name ": pass\033[0K\n\n"); }
+
 #define TEST(name)  int test_##name(void)
+#define TEST_WITH(name, with)  int test_##name(int with)
 
 #ifdef __linux__
 #  define PRINT_COLOR

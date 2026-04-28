@@ -1,8 +1,6 @@
 #include "../httpie_internal.h"
-#include <quickjs.h>
-#include <quickjs-libc.h>
 
-static void qjs_fatal_handler(JSContext *ctx, int code, const char *msg) {
+static void qjs_fatal_handler(JSContext *ctx, int code, string_t msg) {
 	/* Script is called "protected" (duk_peval_file), so script errors should
 	 * never yield in a call to this function. Maybe calls prior to executing
 	 * the script could raise a fatal error. */
@@ -15,7 +13,7 @@ static JSValue qjs_write(JSContext *ctx, JSValue this_val,
 	int argc, JSValue *argv) {
 	size_t n;
 	int res;
-	const char *buf;
+	string_t buf;
 	http_t *conn = (http_t *)JS_GetContextOpaque(ctx);
 
 	if (!conn) {
@@ -77,7 +75,7 @@ static JSValue qjs_read(JSContext *ctx, JSValue this_val,
 static JSValue qjs_getoption(JSContext *ctx, JSValue this_val,
 	int argc, JSValue *argv) {
 	size_t len;
-	const char *val, *ret;
+	string_t val, ret;
 	JSValue result = JS_UNDEFINED;
 	int optidx;
 	http_t *conn = (http_t *)JS_GetContextOpaque(ctx);
@@ -146,7 +144,7 @@ static FORCEINLINE size_t my_malloc_usable_size(const void *ptr) {
 	return malloc_usable_size((void_t)ptr); // Platform-specific implementation needed
 }
 
-void qjs_exec_script(http_t *conn, const char *script_name) {
+void qjs_exec_script(http_t *conn, string_t script_name) {
 	int i;
 	JSContext *ctx = NULL;
 	JSMallocFunctions mf = {

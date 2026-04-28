@@ -1,5 +1,4 @@
 #include "httpie_internal.h"
-static void remove_dot_segments(char *inout);
 static int is_put_or_delete_method(const http_t *conn) {
 	if (conn) {
 		string_t s = conn->method;
@@ -17,7 +16,7 @@ static int is_put_or_delete_method(const http_t *conn) {
 
 static int is_webdav_method(const http_t *conn) {
 	/* Note: Here we only have to identify the WebDav methods that need special
-	 * handling in the `httpie` code - not all methods used in WebDav. In
+	 * handling in the `HttPie` code - not all methods used in WebDav. In
 	 * particular, methods used on directories (when using Windows Explorer as
 	 * WebDav client). */
 	if (conn) {
@@ -564,7 +563,7 @@ static int http_get_request_handler(http_t *conn,
 	return 0; /* none found */
 }
 
-int http_url_decode(string_t src, int src_len, char *dst, int dst_len, int is_form_url_encoded) {
+int http_url_decode(string_t src, int src_len, string dst, int dst_len, int is_form_url_encoded) {
 	int i, j, a, b;
 
 #define HEXTOI(x) (isdigit(x) ? (x - '0') : (x - 'W'))
@@ -596,7 +595,7 @@ static void url_decode_in_place(char *buf) {
 	(void)http_url_decode(buf, len, buf, len + 1, 1);
 }
 
-int http_url_encode(string_t src, char *dst, size_t dst_len) {
+int http_url_encode(string_t src, string dst, size_t dst_len) {
 	static string_t dont_escape = "._-$,;~()";
 	static string_t hex = "0123456789abcdef";
 	char *pos = dst;
@@ -777,7 +776,7 @@ C_API int http_get_request_link(http_t *conn, char *buf, size_t buflen) {
 }
 
 /* Writes PROPFIND properties for a collection element */
-static int print_props(http_t *conn, const char *uri, const char *name, struct file *filep) {
+static int print_props(http_t *conn, string_t uri, string_t name, struct file *filep) {
 	size_t i;
 	char mtime[64];
 	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
@@ -856,8 +855,8 @@ static int print_dav_dir_entry(struct de *de, void *data) {
 	return 0;
 }
 
-static void handle_propfind(http_t *conn, const char *path, struct file *filep) {
-	const char *depth = http_get_header(conn, "Depth");
+static void handle_propfind(http_t *conn, string_t path, struct file *filep) {
+	string_t depth = http_get_header(conn, "Depth");
 
 	if (!conn || !path || !filep || !conn->domain) {
 		return;
@@ -891,7 +890,7 @@ static void handle_propfind(http_t *conn, const char *path, struct file *filep) 
 	http_printf(conn, "%s\n", "</d:multistatus>");
 }
 
-static void dav_lock_file(http_t *conn, const char *path) {
+static void dav_lock_file(http_t *conn, string_t path) {
 	/* internal function - therefore conn is assumed to be valid */
 	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
 	uint64_t new_locktime;
@@ -909,7 +908,7 @@ static void dav_lock_file(http_t *conn, const char *path) {
 	dav_lock = conn->ctx->webdav_lock;
 	http_get_request_link(conn, link_buf, sizeof(link_buf));
 
-	/* const char *refresh = http_get_header(conn, "If"); */
+	/* string_t refresh = http_get_header(conn, "If"); */
 	/* Link refresh should have an "If" header:
 	 * http://www.webdav.org/specs/rfc2518.html#n-example---refreshing-a-write-lock
 	 * But it seems Windows Explorer does not send them.
@@ -1019,7 +1018,7 @@ static void dav_lock_file(http_t *conn, const char *path) {
 		dav_lock[lock_index].path);
 }
 
-static void dav_unlock_file(http_t *conn, const char *path) {
+static void dav_unlock_file(http_t *conn, string_t path) {
 	/* internal function - therefore conn is assumed to be valid */
 	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
 	struct twebdav_lock *dav_lock = conn->ctx->webdav_lock;
@@ -1049,7 +1048,7 @@ static void dav_unlock_file(http_t *conn, const char *path) {
 	http_error(conn, 423, "%s", "Lock not found");
 }
 
-static void dav_proppatch(http_t *conn, const char *path) {
+static void dav_proppatch(http_t *conn, string_t path) {
 	char link_buf[UTF8_PATH_MAX * 2]; /* Path + server root */
 
 	if (!conn || !path || !conn->domain) {
@@ -1081,7 +1080,7 @@ static void dav_proppatch(http_t *conn, const char *path) {
 	http_printf(conn, "%s\n", "</d:response></d:multistatus>");
 }
 
-static void dav_mkcol(http_t *conn, const char *path) {
+static void dav_mkcol(http_t *conn, string_t path) {
 	int rc, body_len;
 	struct de de;
 
@@ -1150,10 +1149,10 @@ static void dav_mkcol(http_t *conn, const char *path) {
 	}
 }
 
-static void dav_move_file(http_t *conn, const char *path, int do_copy) {
-	const char *overwrite_hdr;
-	const char *destination_hdr;
-	const char *root;
+static void dav_move_file(http_t *conn, string_t path, int do_copy) {
+	string_t overwrite_hdr;
+	string_t destination_hdr;
+	string_t root;
 	enum uri_type_t dest_uri_type;
 	int rc;
 	int http_status = 400;
@@ -1184,7 +1183,7 @@ static void dav_move_file(http_t *conn, const char *path, int do_copy) {
 		if (dest_uri_type == URI_TYPE_RELATIVE) {
 			local_dest = str_dup_ex(destination_hdr);
 		} else if ((dest_uri_type == URI_TYPE_ABS_NOPORT) || (dest_uri_type == URI_TYPE_ABS_PORT)) {
-			const char *h =	http_get_rel_url_at_current_server(destination_hdr, conn);
+			string_t h =	http_get_rel_url_at_current_server(destination_hdr, conn);
 			if (h) {
 				size_t len = strlen(h);
 				local_dest = malloc(len + 1);
@@ -1192,7 +1191,7 @@ static void dav_move_file(http_t *conn, const char *path, int do_copy) {
 			}
 		}
 		if (local_dest != NULL) {
-			remove_dot_segments(local_dest);
+			remove_double_dots_slashes(local_dest);
 			if (local_dest[0] == '/') {
 				int trunc_check = 0;
 				http_snprintf(conn,
@@ -1325,156 +1324,27 @@ static int get_first_ssl_listener_index(const http_ini_t *ctx) {
 
 #undef in
 
-/* Pre-process URIs according to RFC + protect against directory disclosure
- * attacks by removing '..', excessive '/' and '\' characters */
-static void remove_dot_segments(char *inout) {
-	/* Windows backend protection
-	 * (https://tools.ietf.org/html/rfc3986#section-7.3): Replace backslash
-	 * in URI by slash */
-	char *out_end = inout;
-	char *in = inout;
+/* Protect against directory disclosure attack by removing '..',
+ * excessive '/' and '\' characters */
+void remove_double_dots_slashes(char *s) {
+	char *p = s;
 
-	if (!in) {
-		/* Param error. */
-		return;
-	}
-
-	while (*in) {
-		if (*in == '\\') {
-			*in = '/';
-		}
-		in++;
-	}
-
-	/* Algorithm "remove_dot_segments" from
-	 * https://tools.ietf.org/html/rfc3986#section-5.2.4 */
-	/* Step 1:
-	 * The input buffer is initialized.
-	 * The output buffer is initialized to the empty string.
-	 */
-	in = inout;
-
-	/* Step 2:
-	 * While the input buffer is not empty, loop as follows:
-	 */
-	/* Less than out_end of the inout buffer is used as output, so keep
-	 * condition: out_end <= in */
-	while (*in) {
-		/* Step 2a:
-		 * If the input buffer begins with a prefix of "../" or "./",
-		 * then remove that prefix from the input buffer;
-		 */
-		if (str_case_equal(in, "../", 3)) {
-			in += 3;
-		} else if (str_case_equal(in, "./", 2)) {
-			in += 2;
-		}
-		/* otherwise */
-		/* Step 2b:
-		 * if the input buffer begins with a prefix of "/./" or "/.",
-		 * where "." is a complete path segment, then replace that
-		 * prefix with "/" in the input buffer;
-		 */
-		else if (str_case_equal(in, "/./", 3)) {
-			in += 2;
-		} else if (!strcmp(in, "/.")) {
-			in[1] = 0;
-		}
-		/* otherwise */
-		/* Step 2c:
-		 * if the input buffer begins with a prefix of "/../" or "/..",
-		 * where ".." is a complete path segment, then replace that
-		 * prefix with "/" in the input buffer and remove the last
-		 * segment and its preceding "/" (if any) from the output
-		 * buffer;
-		 */
-		else if (str_case_equal(in, "/../", 4)) {
-			in += 3;
-			if (inout != out_end) {
-				/* remove last segment */
-				do {
-					out_end--;
-				} while ((inout != out_end) && (*out_end != '/'));
-			}
-		} else if (!strcmp(in, "/..")) {
-			in[1] = 0;
-			if (inout != out_end) {
-				/* remove last segment */
-				do {
-					out_end--;
-				} while ((inout != out_end) && (*out_end != '/'));
-			}
-		}
-		/* otherwise */
-		/* Step 2d:
-		 * if the input buffer consists only of "." or "..", then remove
-		 * that from the input buffer;
-		 */
-		else if (!strcmp(in, ".") || !strcmp(in, "..")) {
-			*in = 0;
-		}
-		/* otherwise */
-		/* Step 2e:
-		 * move the first path segment in the input buffer to the end of
-		 * the output buffer, including the initial "/" character (if
-		 * any) and any subsequent characters up to, but not including,
-		 * the next "/" character or the end of the input buffer.
-		 */
-		else {
-			do {
-				*out_end = *in;
-				out_end++;
-				in++;
-			} while ((*in != 0) && (*in != '/'));
-		}
-	}
-
-	/* Step 3:
-	 * Finally, the output buffer is returned as the result of
-	 * remove_dot_segments.
-	 */
-	/* Terminate output */
-	*out_end = 0;
-
-	/* For Windows, the files/folders "x" and "x." (with a dot but without
-	 * extension) are identical. Replace all "./" by "/" and remove a "." at
-	 * the end. Also replace all "//" by "/". Repeat until there is no "./"
-	 * or "//" anymore.
-	 */
-	out_end = in = inout;
-	while (*in) {
-		if (*in == '.') {
-			/* remove . at the end or preceding of / */
-			char *in_ahead = in;
-			do {
-				in_ahead++;
-			} while (*in_ahead == '.');
-			if (*in_ahead == '/') {
-				in = in_ahead;
-				if ((out_end != inout) && (out_end[-1] == '/')) {
-					/* remove generated // */
-					out_end--;
+	while (*s != '\0') {
+		*p++ = *s++;
+		if (s[-1] == '/' || s[-1] == '\\') {
+			/* Skip all following slashes, backslashes and double-dots */
+			while (s[0] != '\0') {
+				if (s[0] == '/' || s[0] == '\\') {
+					s++;
+				} else if (s[0] == '.' && s[1] == '.') {
+					s += 2;
+				} else {
+					break;
 				}
-			} else if (*in_ahead == 0) {
-				in = in_ahead;
-			} else {
-				do {
-					*out_end++ = '.';
-					in++;
-				} while (in != in_ahead);
 			}
-		} else if (*in == '/') {
-			/* replace // by / */
-			*out_end++ = '/';
-			do {
-				in++;
-			} while (*in == '/');
-		} else {
-			*out_end++ = *in;
-			in++;
 		}
 	}
-	*out_end = 0;
+	*p = '\0';
 }
 
 /* Look at the "path" extension and figure what mime type it has.
@@ -1770,7 +1640,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 /* Check if the script file is in a path, allowed for script files.
  * This can be used if uploading files is possible not only for the server
  * admin, and the upload mechanism does not check the file extension.  */
-static int is_in_script_path(http_t *conn, const char *path)
+static int is_in_script_path(http_t *conn, string_t path)
 {
 	/* TODO (Feature): Add config value for allowed script path.
 	 * Default: All allowed. */
@@ -1791,9 +1661,9 @@ static int http_fgetc(struct file *filep) {
 	}
 }
 
-static void send_ssi_file(http_t *conn, const char *path, struct file *filep, int include_level);
+static void send_ssi_file(http_t *conn, string_t path, struct file *filep, int include_level);
 
-static void do_ssi_include(http_t *conn, const char *ssi, char *tag, int include_level) {
+static void do_ssi_include(http_t *conn, string_t ssi, char *tag, int include_level) {
 	char file_name[BUF_LEN], path[512], *p;
 	struct file file = STRUCT_FILE_INITIALIZER;
 	size_t len;
@@ -1883,7 +1753,7 @@ static void do_ssi_exec(http_t *conn, char *tag) {
 }
 
 static void send_ssi_file(http_t *conn,
-	const char *path,
+	string_t path,
 	struct file *filep,
 	int include_level) {
 	char buf[BUF_LEN];
@@ -1973,7 +1843,7 @@ static void send_ssi_file(http_t *conn,
 }
 
 static void handle_ssi_file_request(http_t *conn,
-	const char *path,
+	string_t path,
 	struct file *filep) {
 	char date[64];
 	time_t curtime = time(NULL);
@@ -2107,9 +1977,9 @@ void handle_not_modified_static_file_request(http_t *conn, struct file *filep) {
 	http_response_send(conn);
 }
 
-static void discard_unread_request_data(http_t *conn) {
+void discard_unread_request_data(http_t *conn) {
 	char buf[BUF_LEN];
-	while (http_read(conn, buf, sizeof(buf)) > 0)
+	while (tls_reader(socket2fd(conn->client.sock), buf, sizeof(buf)) > 0)
 		;
 }
 
@@ -2303,7 +2173,7 @@ static void put_file(http_t *conn, string_t path) {
 	}
 
 	/* A file should be created or overwritten. */
-	/* Currently `httpie` does not need read+write access. */
+	/* Currently `HttPie` does not need read+write access. */
 	if (!http_fopen(conn->ctx, conn, path, "wb", &file)
 		|| file.fp == NULL) {
 		(void)http_fclose(&file);
@@ -2355,7 +2225,7 @@ static void delete_file(http_t *conn, string_t path) {
 	struct de de;
 	memset(&de.file, 0, sizeof(de.file));
 	if (!http_stat(conn, path, &de.file)) {
-		/* mg_stat returns 0 if the file does not exist */
+		/* http_stat returns 0 if the file does not exist */
 		http_error(conn,
 			404,
 			"Error: Cannot delete file\nFile %s not found",
@@ -2481,7 +2351,7 @@ void http_handle_request(http_t *conn) {
 		return;
 	}
 
-	remove_dot_segments(tmp);
+	remove_double_dots_slashes(tmp);
 	ri->local_uri = tmp;
 	/* Only compute if later code can actually use it */
 	/* Cache URI length once; recompute only if the buffer changes later. */
@@ -2508,7 +2378,7 @@ void http_handle_request(http_t *conn) {
 			debug_info("%s", "start handled request");
 			return;
 		} else if (i == 0) {
-			/* `httpie` should process the request */
+			/* `HttPie` should process the request */
 		} else {
 			/* unspecified - may change with the next version */
 			debug_info("%s", "done (undocumented behavior)");

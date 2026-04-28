@@ -15,3 +15,5 @@ foreach (TARGET ${TARGET_LIST})
     target_link_libraries(${TARGET} ${SUB_PROJECT})
     add_test(NAME ${TARGET} COMMAND ${TARGET} WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endforeach()
+
+add_subdirectory(httpie)

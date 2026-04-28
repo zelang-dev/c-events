@@ -29,7 +29,8 @@ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 option(BUILD_SHARED_LIBS "Build the library as a shared (dynamically-linked) " OFF)
 option(NO_RPMALLOC "Build without (rpmalloc) use standard `libc` malloc" OFF)
-option(BUILD_HTTPIE "Additional data structures, http parser and web client/server processor" OFF)
+option(BUILD_HTTPIE "Additional data structures, http parser, `web` client/server and `javascript` processor" OFF)
+option(BUILD_HTTPIE_APP "`url` frontend app for `HttPie`" OFF)
 
 message("Generated with config types: ${CMAKE_CONFIGURATION_TYPES}")
 set(CMAKE_CONFIGURATION_TYPES=Debug;Release)
@@ -257,10 +258,11 @@ else()
 	install(FILES include/*.h DESTINATION include)
 endif()
 set(CPACK_INSTALL_CMAKE_CONFIGURATIONS Release)
-include(CPack)
 
-if (BUILD_HTTPIE)
+if (BUILD_HTTPIE OR BUILD_HTTPIE_APP)
 	add_subdirectory(httpie)
+else()
+	include(CPack)
 endif()
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)

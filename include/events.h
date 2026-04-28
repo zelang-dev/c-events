@@ -67,6 +67,7 @@ typedef unsigned long __sigset_t;
 #		define SYS_PIPE "\\\\.\\pipe\\"
 #		define SYS_PIPE_PRE "\\pipe\\"
 #		define SYS_DIRSEP "\\"
+#		define SYS_DIRSEP_C '\\'
 #	endif
 #	include <WinSock2.h>
 #	include <ws2tcpip.h>
@@ -77,6 +78,7 @@ typedef unsigned long __sigset_t;
 		/* O.S. platform ~null~ `DEVICE`. */
 #		define SYS_NULL "/dev/null"
 #		define SYS_DIRSEP "/"
+#		define SYS_DIRSEP_C '/'
 #		ifdef __ANDROID__
 			/* O.S. platform ~pipe~ prefix. */
 #			define SYS_PIPE "/data/local/tmp/"
@@ -170,6 +172,7 @@ union usa {
 	struct sockaddr_in sin;
 	struct sockaddr_in6 sin6;
 	struct sockaddr_un sun;
+	struct sockaddr_storage storage;
 };
 
 C_API sys_events_t sys_event;
@@ -185,6 +188,12 @@ C_API int events_set_allocator(malloc_cb, realloc_cb, calloc_cb, free_cb);
 
 /* Sets I/O on the given fd to be non-blocking. */
 C_API int events_set_nonblocking(fds_t fd);
+
+/* Sets I/O on the given fd to be blocking. */
+C_API int events_set_blocking(fds_t fd);
+
+/* Return unified `sockaddr` ~union~ address of given `fd`. */
+C_API union usa *events_get_sockaddr(fds_t fd);
 
 /* Set custom `user_data` to given `fd` ~internal~ table,
  * only assignable if `main thread` caller. */
@@ -381,7 +390,8 @@ C_API size_t tasks_count(task_group_t *wg);
 /* Same as `tasks_wait()`, except require `waitgroup()` call for an ~waitgroup_t~ instance. */
 C_API array_t waitfor(waitgroup_t wg);
 
-/* Return the unique `result id` for the current `task`. */
+/* Return the unique `result id` for the current `task`,
+or `task id`, if `result id` set disabled. */
 C_API uint32_t task_id(void);
 
 /* Check for `task` termination that has an result available. */
@@ -392,6 +402,9 @@ C_API bool task_is_terminated(tasks_t *);
 
 /* Check `task` for ~cancel~ request. */
 C_API bool task_is_canceled(void);
+
+/* Set/request `task` to ~cancel~, only valid on `tasks` having results. */
+C_API void task_set_canceled(uint32_t id);
 
 /* Print `task` internal data state, only active in `debug` builds. */
 C_API void tasks_info(tasks_t *t, int pos);

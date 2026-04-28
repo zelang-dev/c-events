@@ -52,7 +52,7 @@ static int http_send_websocket_handshake(http_t *conn, string_t websock_key) {
 	SHA1_Update(&sha_ctx, (unsigned char *)buf, (uint32_t)strlen(buf));
 	SHA1_Final((unsigned char *)sha, &sha_ctx);
 
-	char *sha_data = str_encode64((string_t)sha, b64_sha, dst_len);
+	string sha_data = str_encode64((string_t)sha, b64_sha, dst_len);
 	http_printf(conn,
 		"HTTP/1.1 101 Switching Protocols\r\n"
 		"Upgrade: websocket\r\n"
@@ -75,7 +75,7 @@ static int http_send_websocket_handshake(http_t *conn, string_t websock_key) {
 }
 
 /* Reads from a websocket connection. */
-void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handler, void *callback_data) {
+void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handler, void_t callback_data) {
 	/* Pointer to the beginning of the portion of the incoming websocket
 	 * message queue.
 	 * The original websocket upgrade request is never removed, so the queue
@@ -98,7 +98,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	 * the websocket_data callback.  This is either mem on the stack, or a
 	 * dynamically allocated buffer if it is too large. */
 	char mem[4096];
-	char *data;
+	string data;
 	/* mask flag and opcode */
 	unsigned char mop;
 	/* Variables used for connection monitoring */
@@ -107,7 +107,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	if (ctx == NULL || conn == NULL) return;
 
 	if (conn->domain->config[ENABLE_WEBSOCKET_PING_PONG]) {
-		enable_ping_pong = str_is_cast(conn->domain->config[ENABLE_WEBSOCKET_PING_PONG], "yes");
+		enable_ping_pong = str_is_case(conn->domain->config[ENABLE_WEBSOCKET_PING_PONG], "yes");
 	}
 
 	data = mem;
@@ -194,8 +194,8 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				len = body_len - header_len;
 				memcpy(data, buf + header_len, len);
 				error = 0;
-				while ((uint64_t)len < data_len) {
-					n = tls_reader(socket2fd(conn->fd), (char *)(data + len), (int)(data_len - len));
+				while ((uint64_t)len < data_len && !task_is_canceled()) {
+					n = tls_reader(socket2fd(conn->fd), (string)(data + len), (int)(data_len - len));
 					if (n <= 0) {
 						error = 1;
 						break;
@@ -328,7 +328,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 								conn->req.websocket_inflate_state.avail_out;
 							if (!ws_data_handler(conn,
 								mop,
-								(char *)inflated,
+								(string)inflated,
 								inflate_buf_size,
 								callback_data)) {
 								exit_by_callback = 1;
@@ -338,7 +338,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 					} else
 						if (!ws_data_handler(conn,
 							mop,
-							(char *)data,
+							(string)data,
 							(size_t)data_len,
 							callback_data)) {
 							exit_by_callback = 1;
@@ -348,7 +348,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 
 			/* It a buffer has been allocated, free it again */
 			if (data != mem) {
-				data = http_free_ex(data);
+				data = free_ex(data);
 			}
 
 			if (exit_by_callback) {
@@ -410,6 +410,9 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 
 			conn->req.data_len += n;
 		}
+
+		if (task_is_canceled())
+			break;
 	}
 
 	task_name("webworker #%d", task_id());
@@ -423,7 +426,7 @@ void http_websocket_request(http_ini_t *ctx,
 	ws_ready_cb ws_ready_handler,
 	ws_data_cb ws_data_handler,
 	ws_close_cb ws_close_handler,
-	void *cbData) {
+	void_t cbData) {
 	string_t websock_key;
 	string_t version;
 	string_t key1;
@@ -550,12 +553,12 @@ void http_websocket_request(http_ini_t *ctx,
 }
 
 /* Use to mask data when writing data over a websocket client connection. */
-static void mask_data(string_t _in, size_t in_len, uint32_t masking_key, char *out) {
+static void mask_data(string_t _in, size_t in_len, uint32_t masking_key, string out) {
 	size_t i = 0;
 	if (in_len > 3 && ((ptrdiff_t)_in % 4) == 0) {
 		/* Convert in 32 bit words, if data is 4 byte aligned */
 		while (i + 3 < in_len) {
-			*(uint32_t *)(void *)(out + i) = *(const uint32_t *)(const_t)(_in + i) ^ masking_key;
+			*(uint32_t *)(void_t )(out + i) = *(const uint32_t *)(const_t)(_in + i) ^ masking_key;
 			i += 4;
 		}
 	}
@@ -563,7 +566,7 @@ static void mask_data(string_t _in, size_t in_len, uint32_t masking_key, char *o
 	if (i != in_len) {
 		/* convert 1-3 remaining bytes if ((dataLen % 4) != 0) */
 		while (i < in_len) {
-			*(uint8_t *)(void *)(out + i) = *(const uint8_t *)(const_t)(_in + i) ^ *(((uint8_t *)&masking_key) + (i % 4));
+			*(uint8_t *)(void_t )(out + i) = *(const uint8_t *)(const_t)(_in + i) ^ *(((uint8_t *)&masking_key) + (i % 4));
 			i++;
 		}
 	}
@@ -571,7 +574,7 @@ static void mask_data(string_t _in, size_t in_len, uint32_t masking_key, char *o
 
 int http_websocket_client_write(http_t *conn, websocket_type opcode, string_t data, size_t dataLen) {
 	int retval;
-	char *masked_data;
+	string masked_data;
 	uint32_t masking_key;
 
 	if (conn == NULL) return -1;
@@ -696,4 +699,324 @@ FORCEINLINE int http_websocket_pong(http_t *conn, string_t data, size_t dataLen)
 
 FORCEINLINE int http_websocket_continuation(http_t *conn, string_t data, size_t dataLen) {
 	return http_websocket_write_exec(conn, WS_OPS_CONTINUATION, data, dataLen, 0);
+}
+
+struct websocket_client_thread_data {
+	http_t *conn;
+	ws_data_cb data_handler;
+	ws_close_cb close_handler;
+	void_t callback_data;
+};
+
+static void_t websocket_client_thread(param_t data) {
+	struct websocket_client_thread_data *cdata = (struct websocket_client_thread_data *)data->object;
+	http_ini_t *ctx;
+	http_t *conn;
+
+	if (!is_empty(cdata = cdata) && !is_empty(conn = cdata->conn) && !is_empty(ctx = conn->ctx)) {
+		ctx->status = HTTP_STATUS_RUNNING;
+		ctx->worker_taskid = task_id();
+		task_name("ws-client #%d", ctx->worker_taskid);
+
+		if (ctx->callbacks.init_context) {
+			ctx->callbacks.init_context(cdata->conn->ctx);
+		}
+
+		http_read_websocket(ctx, conn, cdata->data_handler, cdata->callback_data);
+		debug_info("%s", "Websocket client task exited\n");
+		if (cdata->close_handler != NULL) {
+			cdata->close_handler(cdata->conn, cdata->callback_data);
+		}
+
+		/* The websocket_client context has only this task. If it runs out,
+		set the stop_flag. */
+		ctx->status = HTTP_STATUS_TERMINATED;
+	}
+
+	free_ex(cdata);
+	return 0;
+}
+
+static void generate_websocket_magic(string magic25) {
+	uint64_t rnd = 0;
+	unsigned char buffer[(2 * sizeof(rnd)) + 1] = {0};
+
+	http_get_random(&rnd);
+	memcpy(buffer, &rnd, sizeof(rnd));
+	http_get_random(&rnd);
+	memcpy(buffer + sizeof(rnd), &rnd, sizeof(rnd));
+
+	size_t dst_len = 24 + 1;
+	str_encode64(buffer, magic25, dst_len);
+}
+
+static http_t *http_connect_websocket_client_impl(struct client_options *client_options,
+	int use_ssl,
+	string error_buffer,
+	size_t error_buffer_size,
+	string_t path,
+	string_t origin,
+	string_t extensions,
+	ws_data_cb data_func,
+	ws_close_cb close_func,
+	void_t user_data) {
+	http_t *conn = NULL;
+
+	struct websocket_client_thread_data *thread_data;
+	char magic[32] = {0};
+	generate_websocket_magic(magic);
+
+	string_t host = client_options->host;
+	int i;
+
+	struct init_data init;
+	struct error_data error;
+
+	memset(&init, 0, sizeof(init));
+	memset(&error, 0, sizeof(error));
+	error.text_buffer_size = error_buffer_size;
+	error.text = error_buffer;
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#endif
+
+	/* Establish the client connection and request upgrade */
+	conn = http_connect_client_impl(client_options, use_ssl, &error);
+
+	/* Connection object will be null if something goes wrong */
+	if (conn == NULL) {
+		/* error_buffer should be already filled ... */
+		if (!error_buffer[0]) {
+			/* ... if not add an error message */
+			http_snprintf(conn,
+				NULL, /* No truncation check for ebuf */
+				error_buffer,
+				error_buffer_size,
+				"Unexpected error");
+		}
+		return NULL;
+	}
+
+	if (origin != NULL) {
+		if (extensions != NULL) {
+			i = http_printf(conn,
+				"GET %s HTTP/1.1\r\n"
+				"Host: %s\r\n"
+				"Upgrade: websocket\r\n"
+				"Connection: Upgrade\r\n"
+				"Sec-WebSocket-Key: %s\r\n"
+				"Sec-WebSocket-Version: 13\r\n"
+				"Sec-WebSocket-Extensions: %s\r\n"
+				"Origin: %s\r\n"
+				"\r\n",
+				path,
+				host,
+				magic,
+				extensions,
+				origin);
+		} else {
+			i = http_printf(conn,
+				"GET %s HTTP/1.1\r\n"
+				"Host: %s\r\n"
+				"Upgrade: websocket\r\n"
+				"Connection: Upgrade\r\n"
+				"Sec-WebSocket-Key: %s\r\n"
+				"Sec-WebSocket-Version: 13\r\n"
+				"Origin: %s\r\n"
+				"\r\n",
+				path,
+				host,
+				magic,
+				origin);
+		}
+	} else {
+		if (extensions != NULL) {
+			i = http_printf(conn,
+				"GET %s HTTP/1.1\r\n"
+				"Host: %s\r\n"
+				"Upgrade: websocket\r\n"
+				"Connection: Upgrade\r\n"
+				"Sec-WebSocket-Key: %s\r\n"
+				"Sec-WebSocket-Version: 13\r\n"
+				"Sec-WebSocket-Extensions: %s\r\n"
+				"\r\n",
+				path,
+				host,
+				magic,
+				extensions);
+		} else {
+			i = http_printf(conn,
+				"GET %s HTTP/1.1\r\n"
+				"Host: %s\r\n"
+				"Upgrade: websocket\r\n"
+				"Connection: Upgrade\r\n"
+				"Sec-WebSocket-Key: %s\r\n"
+				"Sec-WebSocket-Version: 13\r\n"
+				"\r\n",
+				path,
+				host,
+				magic);
+		}
+	}
+
+	if (i <= 0) {
+		http_snprintf(conn,
+			NULL, /* No truncation check for ebuf */
+			error_buffer,
+			error_buffer_size,
+			"%s",
+			"Error sending request");
+		http_close_connection(conn);
+		return NULL;
+	}
+
+	conn->req.data_len = 0;
+	conn->action = HTTP_RESPONSE;
+	if (!get_request_response(conn, error_buffer, error_buffer_size, &i)) {
+		http_close_connection(conn);
+		return NULL;
+	}
+	conn->req.local_uri = conn->uri;
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+	if (conn->code != 101) {
+		/* We sent an "upgrade" request. For a correct websocket
+		 * protocol handshake, we expect a "101 Continue" response.
+		 * Otherwise it is a protocol violation. Maybe the HTTP
+		 * Server does not know websockets. */
+		if (!*error_buffer) {
+			/* set an error, if not yet set */
+			http_snprintf(conn,
+				NULL, /* No truncation check for ebuf */
+				error_buffer,
+				error_buffer_size,
+				"Unexpected server reply");
+		}
+
+		debug_info("Websocket client connect error: %s\r\n", error_buffer);
+		http_close_connection(conn);
+		return NULL;
+	}
+
+	thread_data = (struct websocket_client_thread_data *)calloc(
+		1, sizeof(struct websocket_client_thread_data));
+	if (!thread_data) {
+		debug_info("%s\r\n", "Out of memory");
+		http_close_connection(conn);
+		return NULL;
+	}
+
+	thread_data->conn = conn;
+	thread_data->data_handler = data_func;
+	thread_data->close_handler = close_func;
+	thread_data->callback_data = user_data;
+
+	/* Now upgrade to ws/wss client context */
+	conn->ctx->user_data = user_data;
+	conn->ctx->http_type = HTTP_INI_WEBSOCKET;
+
+	/* Start a ~threaded~ `task` to read the websocket client connection
+	 * This `task` will automatically stop when http_disconnect is
+	 * called on the client connection */
+	if (go(websocket_client_thread, 1, thread_data) == TASK_ERRED) {
+		free(thread_data);
+		http_close_connection(conn);
+		conn = NULL;
+		debug_info("%s", "Websocket client connect task could not be started\r\n");
+	}
+
+	return conn;
+}
+
+http_t *http_connect_websocket_client(string_t host,
+	int port,
+	int use_ssl,
+	string error_buffer,
+	size_t error_buffer_size,
+	string_t path,
+	string_t origin,
+	ws_data_cb data_func,
+	ws_close_cb close_func,
+	void_t user_data) {
+	struct client_options client_options;
+	memset(&client_options, 0, sizeof(client_options));
+	client_options.host = host;
+	client_options.port = port;
+	if (use_ssl) {
+		client_options.host_name = host;
+	}
+
+	return http_connect_websocket_client_impl(&client_options,
+		use_ssl,
+		error_buffer,
+		error_buffer_size,
+		path,
+		origin,
+		NULL,
+		data_func,
+		close_func,
+		user_data);
+}
+
+http_t *http_connect_websocket_client_secure(struct client_options *client_options,
+	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
+	ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
+	if (!client_options) {
+		return NULL;
+	}
+
+	return http_connect_websocket_client_impl(client_options,
+		1,
+		error_buffer,
+		error_buffer_size,
+		path,
+		origin,
+		NULL,
+		data_func,
+		close_func,
+		user_data);
+}
+
+http_t *http_connect_websocket_client_extensions(string_t host, int port, int use_ssl,
+	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
+	string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
+	struct client_options client_options;
+	memset(&client_options, 0, sizeof(client_options));
+	client_options.host = host;
+	client_options.port = port;
+
+	return http_connect_websocket_client_impl(&client_options,
+		use_ssl,
+		error_buffer,
+		error_buffer_size,
+		path,
+		origin,
+		extensions,
+		data_func,
+		close_func,
+		user_data);
+}
+
+http_t *http_connect_websocket_client_secure_extensions(struct client_options *client_options,
+	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
+	string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
+	if (!client_options) {
+		return NULL;
+	}
+
+	return http_connect_websocket_client_impl(client_options,
+		1,
+		error_buffer,
+		error_buffer_size,
+		path,
+		origin,
+		extensions,
+		data_func,
+		close_func,
+		user_data);
 }

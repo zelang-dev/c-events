@@ -66,6 +66,10 @@ static inline unsigned int sleep(unsigned int seconds) {
 }
 #endif
 
+#if !defined(PATH_MAX)
+#	define PATH_MAX MAX_PATH
+#endif
+
 #define realpath(a, b) _fullpath((b), (a), FILENAME_MAX)
 #define mkdir(a, b) _mkdir(a)
 #define timegm(x) _mkgmtime(x)
@@ -84,6 +88,7 @@ typedef unsigned __int32  uint32_t;
 typedef unsigned __int64  uint64_t;
 
 #ifndef lstat
+#define fstat	_fstat
 #ifdef _WIN64
 #		define  stat 		_stat64i32
 #		define  lstat(a,b) 	_stat64i32((const char *)(a), (struct stat*)(b))

@@ -271,18 +271,6 @@ static int parse_auth_header(http_t *conn, char *buf,
 	return (auth_header->user != NULL);
 }
 
-static string_t http_fgets(char *buf, size_t size, struct file *filep) {
-	if (!filep) {
-		return NULL;
-	}
-
-	if (filep->fp != NULL) {
-		return fgets(buf, (int)size, filep->fp);
-	} else {
-		return NULL;
-	}
-}
-
 /* Define the initial recursion depth for procesesing htpasswd files that
  * include other htpasswd
  * (or even the same) files.  It is not difficult to provide a file or files
@@ -356,18 +344,22 @@ static void open_auth_file(http_t *conn,string_t path,struct file *filep) {
 }
 
 static int read_auth_file(struct file *filep,
-	struct read_auth_file_struct *workdata,
-	int depth) {
+	struct read_auth_file_struct *workdata, int depth) {
 	int is_authorized = 0;
 	struct file fp;
 	size_t l;
+	union {
+		string_t con;
+		char *var;
+	} ptr;
 
 	if (!filep || !workdata || (0 == depth)) {
 		return 0;
 	}
 
 	/* Loop over passwords file */
-	while (fgets(workdata->buf, sizeof(workdata->buf), filep->fp) != NULL) {
+	ptr.con = filep->membuf;
+	while (http_fgets(workdata->buf, sizeof(workdata->buf), filep, &ptr.var) != NULL) {
 		l = strlen(workdata->buf);
 		while (l > 0) {
 			if (isspace((unsigned char)workdata->buf[l - 1])
@@ -558,11 +550,11 @@ int check_authorization(http_t *conn, string_t path) {
 		}
 	}
 
-	if (!is_file_opened(&file)) {
+	if (!http_is_file_opened(&file)) {
 		open_auth_file(conn, path, &file);
 	}
 
-	if (is_file_opened(&file)) {
+	if (http_is_file_opened(&file)) {
 		authorized = authorize(conn, &file, NULL);
 		(void)http_fclose(&file); /* ignore error on read only file */
 	}
@@ -639,7 +631,7 @@ int is_authorized_for_put(http_t *conn) {
 	return ret;
 }
 
-int http_modify_passwords_file_ha1(string_t fname,
+static int modify_passwords_file_ha1(string_t fname,
 	string_t domain,
 	string_t user,
 	string_t ha1) {
@@ -712,7 +704,7 @@ int http_modify_passwords_file_ha1(string_t fname,
 		}
 
 		/* File exists. Read it into a memory buffer. */
-		fp = fs_fopen(fname, "r");
+		fp = fopen(fname, "r");
 		if (fp == NULL) {
 			/* Cannot read file. No permission? */
 			free(temp_file);
@@ -720,7 +712,7 @@ int http_modify_passwords_file_ha1(string_t fname,
 		}
 
 		/* Read content and store in memory */
-		while ((fgets(line, sizeof(line), fp) != NULL)
+		while ((fs_fgets(line, sizeof(line), fp) != NULL)
 			&& ((temp_file_offs + 600) < temp_buf_len)) {
 		 /* file format is "user:domain:hash\n" */
 			if (sscanf(line, "%255[^:]:%255[^:]:%255s", u, d, h) != 3) {
@@ -740,7 +732,7 @@ int http_modify_passwords_file_ha1(string_t fname,
 						domain,
 						ha1);
 					if (i < 1) {
-						fs_fclose(fp);
+						fclose(fp);
 						free(temp_file);
 						return 0;
 					}
@@ -751,18 +743,18 @@ int http_modify_passwords_file_ha1(string_t fname,
 				/* Copy existing user, including password hash */
 				i = sprintf(temp_file + temp_file_offs, "%s:%s:%s\n", u, d, h);
 				if (i < 1) {
-					fs_fclose(fp);
+					fclose(fp);
 					free(temp_file);
 					return 0;
 				}
 				temp_file_offs += i;
 			}
 		}
-		fs_fclose(fp);
+		fclose(fp);
 	}
 
 	/* Create new file */
-	fp = fs_fopen(fname, "w");
+	fp = fopen(fname, "w");
 	if (!fp) {
 		free(temp_file);
 		return 0;
@@ -777,7 +769,7 @@ int http_modify_passwords_file_ha1(string_t fname,
 
 	if ((temp_file != NULL) && (temp_file_offs > 0)) {
 		/* Store buffered content of old file */
-		if (fs_fwrite(temp_file, 1, (size_t)temp_file_offs, fp)
+		if (fwrite(temp_file, 1, (size_t)temp_file_offs, fp)
 			!= (size_t)temp_file_offs) {
 			result = 0;
 		}
@@ -785,18 +777,27 @@ int http_modify_passwords_file_ha1(string_t fname,
 
 	/* If new user, just add it */
 	if ((ha1 != NULL) && (!found)) {
-		if (fs_fprintf(fp, "%s:%s:%s\n", user, domain, ha1) < 6) {
+		if (fprintf(fp, "%s:%s:%s\n", user, domain, ha1) < 6) {
 			result = 0;
 		}
 	}
 
 	/* All data written */
-	if (fs_fclose(fp) != 0) {
+	if (fclose(fp) != 0) {
 		result = 0;
 	}
 
 	free(temp_file);
 	return result;
+}
+
+static FORCEINLINE void *httpie_modify_passwords_file_ha1(param_t args) {
+	return casting(modify_passwords_file_ha1(args[0].const_char_ptr,
+		args[1].const_char_ptr, args[2].const_char_ptr, args[3].const_char_ptr));
+}
+
+FORCEINLINE int http_modify_passwords_file_ha1(string_t fname, string_t domain, string_t user, string_t ha1) {
+	return queue_get(queue_work(futures_pool(), httpie_modify_passwords_file_ha1, 4, fname, domain, user, ha1)).integer;
 }
 
 int http_modify_passwords_file(string_t fname,

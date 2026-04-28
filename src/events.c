@@ -244,7 +244,12 @@ int events_init(int max_fd) {
 	sys_event.gc = array();
 	deque_init(sys_event.local[0], sys_event.queue_size);
 #if !defined(_WIN32)
-	signal(SIGPIPE, SIG_IGN);
+	struct sigaction sa;
+
+	/* Ignore SIGPIPE */
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = SIG_IGN;
+	sigaction(SIGPIPE, &sa, NULL);
 #endif
 	return 0;
 }
@@ -321,6 +326,10 @@ EVENTS_INLINE void events_deinit(void) {
 #endif
 }
 
+EVENTS_INLINE union usa *events_get_sockaddr(fds_t fd) {
+	return &events_target(fd)->addr;
+}
+
 EVENTS_INLINE int events_set_nonblocking(fds_t fd) {
 #ifdef _WIN32
 	unsigned long flag = 1;
@@ -330,16 +339,22 @@ EVENTS_INLINE int events_set_nonblocking(fds_t fd) {
 #endif
 }
 
+EVENTS_INLINE int events_set_blocking(fds_t fd) {
+#ifdef _WIN32
+	unsigned long flag = 0;
+	return ioctlsocket(fd, FIONBIO, &flag);
+#else
+	return fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & (~(int)(O_NONBLOCK)));
+#endif
+}
+
 int events_tcp_timeout(fds_t fd, int milliseconds) {
-	int r0;
-	int r1;
-	int r2;
+	int r1 = 0;
+	int r2 = 0;
 #ifdef _WIN32
 	DWORD tv = (DWORD)milliseconds;
-	r0 = 0;
 #else
 	struct timeval tv;
-	r0 = 0;
 
 	memset(&tv, 0, sizeof(tv));
 	tv.tv_sec = milliseconds / 1000;
@@ -347,7 +362,7 @@ int events_tcp_timeout(fds_t fd, int milliseconds) {
 #endif
 	r1 = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
 	r2 = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv));
-	return (r0 || r1 || r2);
+	return (r1 || r2);
 }
 
 EVENTS_INLINE void events_set_timeout(fds_t sfd, int secs) {
@@ -451,9 +466,7 @@ int fsevents_stop(uint32_t rid) {
 		foreach(watch in events_fsevents_tasks) {
 			if (watch.integer == rid) {
 				$remove(events_fsevents_tasks, iwatch);
-				results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
-				results[rid]->is_canceled = true;
-				atomic_store_explicit(&sys_event.results, results, memory_order_release);
+				task_set_canceled(rid);
 				__thrd()->task_count--;
 				found = 0;
 				break;
@@ -1623,7 +1636,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 
 	if (atomic_load(&sys_event.id_generate) == 1 && !is_skipping) {
 		is_main = true;
-		heapsize = heapsize * 4;
+		heapsize = heapsize * 6;
 	}
 
 #if !defined(_WIN32) && !defined(USE_FIBER)
@@ -1759,6 +1772,14 @@ EVENTS_INLINE bool task_is_terminated(tasks_t *co) {
 
 EVENTS_INLINE bool task_is_canceled(void) {
 	return task_result_get(task_id())->is_canceled;
+}
+
+EVENTS_INLINE void task_set_canceled(uint32_t id) {
+	if ((int)id > 0 && id < (uint32_t)atomic_load(&sys_event.result_id_generate)); {
+		results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
+		results[id]->is_canceled = true;
+		atomic_store_explicit(&sys_event.results, results, memory_order_release);
+	}
 }
 
 EVENTS_INLINE values_t await_for(uint32_t id) {

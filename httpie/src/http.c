@@ -267,23 +267,6 @@ string_t http_status_str(uint16_t const status) {
  */
 static unsigned char hex_chars[] = "0123456789ABCDEF";
 
-static int htoi(string s) {
-	int value;
-	int c;
-
-	c = ((unsigned char *)s)[0];
-	if (isupper(c))
-		c = tolower(c);
-	value = (c >= '0' && c <= '9' ? c - '0' : c - 'a' + 10) * 16;
-
-	c = ((unsigned char *)s)[1];
-	if (isupper(c))
-		c = tolower(c);
-	value += c >= '0' && c <= '9' ? c - '0' : c - 'a' + 10;
-
-	return (value);
-}
-
 string url_encode(char const *s, size_t len) {
 	register unsigned char c;
 	unsigned char *to;
@@ -325,26 +308,57 @@ string url_encode(char const *s, size_t len) {
 	return ret;
 }
 
-string url_decode(string str, size_t len) {
-	string dest = str;
-	string data = str;
+string url_decode(string str) {
+	if (is_empty(str))
+		return "";
 
-	while (len--) {
-		if (*data == '+') {
-			*dest = ' ';
-		} else if (*data == '%' && len >= 2 && isxdigit((int)*(data + 1))
-			&& isxdigit((int)*(data + 2))) {
-			*dest = (char)htoi(data + 1);
-			data += 2;
-			len -= 2;
-		} else {
-			*dest = *data;
+	int len2 = (int)strlen(str);
+	(void)http_url_decode(str, len2, str, len2 + 1, 1);
+	return str;
+}
+
+hash_http_t *http_extract_var(string_t query, string delim, string sep) {
+	hash_http_t *this = null;
+	if (!str_is_empty(query) && defer_free(this = hash_create_auto(ARRAY_SIZE))) {
+		if (is_empty(sep))
+			sep = "=";
+
+		int i = 0, x;
+		string *token = str_split_ex(query, delim, &i);
+		if (!is_empty(token)) {
+			for (x = 0; x < i; x++) {
+				string *parts = str_split_ex(token[x], sep, nullptr);
+				if (!is_empty(parts)) {
+					if (!str_is_empty(parts[0]))
+						(void)hash_put_str(this, parts[0], (is_empty(parts[1]) ? "" : parts[1]));
+
+					free(parts);
+				}
+			}
+
+			free(token);
 		}
-		data++;
-		dest++;
 	}
-	*dest = '\0';
-	return dest;
+
+	return this;
+}
+
+FORCEINLINE string http_get_decoded(hash_http_t *this, string key) {
+	void_t value = hash_get(this, key);
+	return is_empty(value)
+		? null
+		: (strlen(value) == 0
+			? ""
+			: (str_has_either(value, "%", "+")
+				? url_decode(value)
+				: value));
+}
+
+FORCEINLINE int http_pattern_match(string pattern, string match) {
+	if (pattern == NULL)
+		return -1;
+
+	return http_match_prefix(pattern, strlen(pattern), match);
 }
 
 void parse_str(http_t *this, string lines, string sep, string part) {
@@ -371,7 +385,7 @@ void parse_str(http_t *this, string lines, string sep, string part) {
 	}
 }
 
-static void parse_multipart(http_t *this) {
+void parse_multipart(http_t *this) {
 	if (this->is_multipart) {
 		string key, value, line, delim = nullptr, keyname = nullptr,
 			*boundary = nullptr, *boundaries = nullptr, *params = nullptr,
@@ -466,6 +480,17 @@ static void parse_multipart(http_t *this) {
 	}
 }
 
+static FORCEINLINE int http_pos(string msg, size_t msg_len, string pattern) {
+	return mempos((const unsigned char *)msg, msg_len, (unsigned char *)pattern, strlen(pattern));
+}
+
+static FORCEINLINE bool is_valid_http_method(string method) {
+	return str_has("GET,HEAD,POST,PUT,PATCH,PURGE,PROPPATCH,DELETE,OPTIONS,CONNECT,PROPFIND,"
+		"TRACE,MKCOL,COPY,LOCK,MKCOL,MOVE,PROPFIND,UNLOCK,REPORT,"
+		"MKACTIVITY,CHECKOUT,MERGE,M-SEARCH,NOTIFY,SUBSCRIBE,"
+		"UNSUBSCRIBE,SEARCH", method);
+}
+
 int parse_http(http_parser_type action, http_t *this, string raw) {
 	string messages, key, value, line, parameters, *sessions = nullptr, *lines = nullptr;
 	int i = 0, x = 0, z = 0, s_pos = 0, count = 0;
@@ -482,10 +507,22 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 	}
 
 	this->is_valid = 4;
-	if ((s_pos = str_pos(raw, CRLF CRLF)) == DATA_INVALID) {
-		this->is_valid = 2;
-		if ((s_pos = str_pos(raw, LFLF)) == DATA_INVALID)
-			return -1;
+	this->num_headers = 0;
+	if (str_is_empty(raw))
+		return DATA_INVALID;
+
+	if (!this->req.request_len) {
+		if ((s_pos = str_pos(raw, CRLF CRLF)) == DATA_INVALID) {
+			this->is_valid = 2;
+			if ((s_pos = str_pos(raw, LFLF)) == DATA_INVALID)
+				return DATA_INVALID;
+		}
+	} else {
+		if ((s_pos = http_pos(raw, this->req.request_len, CRLF CRLF)) == DATA_INVALID) {
+			this->is_valid = 2;
+			if ((s_pos = http_pos(raw, this->req.request_len, LFLF)) == DATA_INVALID)
+				return DATA_INVALID;
+		}
 	}
 
 	this->action = action;
@@ -495,15 +532,21 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 	messages = this->raw;
 	this->body = trim(trim_at(messages, s_pos + this->is_valid));
 	lines = str_has(messages, "\n") ? str_split_ex(messages, "\n", &count) : nullptr;
-	if (count >= 1) {
+	if (count >= 0) {
 		if (is_empty(this->headers)) {
 			this->headers = hashtable_init(key_ops_auto, val_ops_auto, hash_lp_idx, ARRAY_SIZE);
 			defer_free(this->headers);
 		}
 
+		if (is_empty(lines))
+			count++;
+
 		for (x = 0; x < count; x++) {
 			// clean the line
-			line = lines[x];
+			if (is_empty(lines))
+				line = trim(messages);
+			else
+				line = trim(lines[x]);
 			found = false;
 			is_cookie_set = false;
 			s_pos = str_pos(line, ":");
@@ -512,6 +555,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 				line[s_pos] = '\0';
 				key = trim(line);
 				value = trim(trim_at(line, s_pos + 1));
+				this->num_headers++;
 			} else if (str_has(line, "HTTP/")) {
 				s_pos = str_pos(line, " ");
 				line[s_pos] = '\0';
@@ -521,6 +565,12 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 				string params2 = trim_at(params1, (s_pos + 1));
 				if (this->action == HTTP_REQUEST) {
 					snprintf(this->method, sizeof(this->method), "%s", trim(line));
+					if (!is_valid_http_method(this->method)) {
+						if (!is_empty(lines))
+							free(lines);
+						return DATA_INVALID;
+					}
+
 					this->url_to = str_dup(trim(params1));
 					this->path = this->url_to;
 					// split path and parameters string
@@ -622,7 +672,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 		return this->req.request_len;
 	}
 
-	return -1;
+	return DATA_INVALID;
 }
 
 void http_free(http_t *this) {
@@ -668,6 +718,7 @@ http_t *http_for(string hostname, double protocol) {
 		this->status = STATUS_NO_CONTENT;
 		this->hostname = hostname;
 		this->version = protocol;
+		this->req.http_version = "1.1";
 		this->type = (data_types)DATA_HTTPINFO;
 	}
 

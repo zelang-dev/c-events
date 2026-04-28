@@ -86,10 +86,12 @@ static FORCEINLINE void http_handler(int client) {
 			conn->req.buf_size = (int)conn->ctx->max_request_size;
 			conn->domain = &(conn->ctx->host); /* Use default domain and default host */
 			conn->req.user_data = conn->ctx->user_data;
+			conn->action = HTTP_REQUEST;
 			http_process_connection(conn->ctx, conn);
+			if (!conn->client.has_ssl)
+				shutdown(fd2socket(client), SHUT_RDWR);
 		}
 	} guarded;
-	shutdown(fd2socket(client), SHUT_RD);
 }
 
 /* Process new incoming connections to the server. */
@@ -106,8 +108,16 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		return nullptr;
 
 	memset(&so, 0, sizeof(so));
-	async_wait(listener->sock, 'r');
-	so.sock = accept(listener->sock, &so.rsa.sa, &len);
+	if (listener->has_ssl) {
+		so.sock = tls_accept(listener->sock, null, null);
+		so.rsa.sa = events_get_sockaddr(so.sock)->sa;
+	} else {
+		async_wait(listener->sock, 'r');
+		so.sock = accept(listener->sock, &so.rsa.sa, &len);
+		if (so.sock == INVALID_SOCKET)
+			return nullptr;
+	}
+
 	if (so.sock == INVALID_SOCKET)
 		return nullptr;
 
@@ -116,7 +126,7 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		sockaddr_to_str(src_addr, sizeof(src_addr), &so.rsa);
 		http_log(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
 			__func__, src_addr);
-		close(so.sock);
+		tls_closer(so.sock);
 		so.sock = INVALID_SOCKET;
 	} else {
 		/* Put so socket structure into the queue */
@@ -191,7 +201,7 @@ void http_stop(http_ini_t *ctx) {
 
 	thrd_pool_shutdown();
 	/* Wait until everything has stopped. */
-	os_sleep(5);
+	os_sleep(thrd_cpu_count() * 2);
 	http_free_ini(ctx);
 }
 
@@ -219,7 +229,7 @@ static void http_free_ini(http_ini_t *ctx) {
 	}
 
 	/* deallocate system name string */
-	ctx->systemName = http_free_ex(ctx->systemName);
+	ctx->systemName = free_ex(ctx->systemName);
 
 	/* Deallocate context itself */
 	free(ctx);
@@ -243,8 +253,9 @@ http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...) {
 	return nullptr;
 }
 
-FORCEINLINE http_clb_t http_callbacks(request_cb begin, log_message_cb message,
-	log_access_cb log, open_file_cb file, http_error_cb error, init_context_cb init) {
+FORCEINLINE struct init_data http_ini(struct init_data init, void_t user_data) {}
+FORCEINLINE http_clb_t http_callbacks(request_cb begin, log_msg_cb message,
+	log_access_cb log, file_open_cb file, http_error_cb error, init_context_cb init) {
 	http_clb_t callbacks = {0};
 	callbacks.start = begin;
 	callbacks.http_error = error;
@@ -255,8 +266,211 @@ FORCEINLINE http_clb_t http_callbacks(request_cb begin, log_message_cb message,
 	return callbacks;
 }
 
-http_ini_t *http_start(int max_fd, http_clb_t *callbacks, void *user_data,
-	const options_ini_t *options) {
+int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error) {
+	string_t name;
+	string_t value;
+	string_t default_value;
+	struct ini_domain_s *new_dom;
+	struct ini_domain_s *dom;
+	int idx, i;
+	uint64_t nonce1 = 0, nonce2 = 0;
+	const options_ini_t *config_options = http_get_valid_options();
+
+	if (error != NULL) {
+		error->code = 0;
+		error->code_sub = 0;
+		if (error->text_buffer_size > 0) {
+			*error->text = 0;
+		}
+	}
+
+	if ((ctx == NULL) || (options == NULL)) {
+		if (error != NULL) {
+			error->code = EINVAL;
+			http_snprintf(NULL,
+				NULL, /* No truncation check for error buffers */
+				error->text,
+				error->text_buffer_size,
+				"%s",
+				"Invalid parameters");
+		}
+		return -1;
+	}
+
+	if (ctx->status == HTTP_STATUS_STOPPING
+		|| ctx->status == HTTP_STATUS_TERMINATED) {
+		if (error != NULL) {
+			error->code = ENOEXEC;
+			http_snprintf(NULL,
+				NULL, /* No truncation check for error buffers */
+				error->text,
+				error->text_buffer_size,
+				"%s",
+				"Server already stopped");
+		}
+		return -7;
+	}
+
+	new_dom = (struct ini_domain_s *)calloc(1, sizeof(struct ini_domain_s));
+	if (!new_dom) {
+		/* Out of memory */
+		if (error != NULL) {
+			error->code = ENOMEM;
+			error->code_sub = (unsigned)sizeof(struct ini_domain_s);
+			http_snprintf(NULL,
+				NULL, /* No truncation check for error buffers */
+				error->text,
+				error->text_buffer_size,
+				"%s",
+				"Out or memory");
+		}
+		return -6;
+	}
+
+	/* Store options - TODO: unite duplicate code */
+	while (options && (name = *options++) != NULL) {
+		idx = http_get_option_index(name);
+		if (idx == -1) {
+			http_log(DEBUG_ERROR, null, "Invalid option: %s", name);
+			if (error != NULL) {
+				error->code = EINVAL;
+				error->code_sub = (unsigned)-1;
+				http_snprintf(NULL,
+					NULL, /* No truncation check for error buffers */
+					error->text,
+					error->text_buffer_size,
+					"Invalid option: %s",
+					name);
+			}
+			free(new_dom);
+			return -2;
+		} else if ((value = *options++) == NULL) {
+			http_log(DEBUG_ERROR, null, "%s: option value cannot be NULL", name);
+			if (error != NULL) {
+				error->code = EINVAL;
+				error->code_sub = (unsigned)idx;
+				http_snprintf(NULL,
+					NULL, /* No truncation check for error buffers */
+					error->text,
+					error->text_buffer_size,
+					"Invalid option value: %s",
+					name);
+			}
+			free(new_dom);
+			return -2;
+		}
+		if (new_dom->config[idx] != NULL) {
+			/* Duplicate option: Later values overwrite earlier ones. */
+			http_log(DEBUG_ERROR, null, "warning: %s: duplicate option", name);
+			free(new_dom->config[idx]);
+		}
+		new_dom->config[idx] = str_dup_ex(value);
+		debug_info("[%s] -> [%s]", name, value);
+	}
+
+	/* Authentication domain is mandatory */
+	/* TODO: Maybe use a new option hostname? */
+	if (!new_dom->config[AUTHENTICATION_DOMAIN]) {
+		http_log(DEBUG_ERROR, null, "%s", "authentication domain required");
+		if (error != NULL) {
+			error->code = EINVAL;
+			error->code_sub = AUTHENTICATION_DOMAIN;
+			http_snprintf(NULL,
+				NULL, /* No truncation check for error buffers */
+				error->text,
+				error->text_buffer_size,
+				"Mandatory option %s missing",
+				config_options[AUTHENTICATION_DOMAIN].name);
+		}
+		free(new_dom);
+		return -4;
+	}
+
+	/* Set default value if needed. Take the config value from
+	 * ctx as a default value. */
+	for (i = 0; config_options[i].name != NULL; i++) {
+		default_value = ctx->host.config[i];
+		if ((new_dom->config[i] == NULL) && (default_value != NULL)) {
+			new_dom->config[i] = str_dup_ex(default_value);
+		}
+	}
+
+	new_dom->handlers = ctx->host.handlers;
+	new_dom->next = NULL;
+	new_dom->nonce_count = 0;
+	http_get_random(&nonce2);
+	http_get_random(&nonce1);
+	new_dom->auth_nonce_mask = nonce1 ^ (nonce2 << 31);
+
+	for (i = 0; i < ctx->num_listening_sockets; i++) {
+		if (ctx->listening_sockets[i].has_ssl) {
+			char domain_cert[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
+			char domain_pkey[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
+			tls_config_t *config = tls_get_config(ctx->listening_sockets[i].sock);
+			snprintf(domain_cert, sizeof(domain_cert), "%s%s.crt", default_cert_path(null), new_dom->config[AUTHENTICATION_DOMAIN]);
+			snprintf(domain_pkey, sizeof(domain_pkey), "%s%s.key", default_cert_path(null), new_dom->config[AUTHENTICATION_DOMAIN]);
+			if (!tls_config_add_keypair_file(config, domain_cert, domain_pkey)) {
+				/* Init SSL failed */
+				if (error != NULL) {
+					error->code = tls_config_error_code(config);
+					http_snprintf(NULL,
+						NULL, /* No truncation check for error buffers */
+						error->text,
+						error->text_buffer_size,
+						"%s: %s",
+						"Initializing SSL context failed",
+						tls_config_error(config));
+				}
+				free(new_dom);
+				return -3;
+			}
+		}
+	}
+
+	/* Add element to linked list. */
+	atomic_lock(&ctx->nonce_mutex);
+
+	idx = 0;
+	dom = &(ctx->host);
+	for (;;) {
+		if (str_is_case(new_dom->config[AUTHENTICATION_DOMAIN],
+			dom->config[AUTHENTICATION_DOMAIN])) {
+			/* Domain collision */
+			http_log(DEBUG_ERROR, null,
+				"domain %s already in use",
+				new_dom->config[AUTHENTICATION_DOMAIN]);
+			if (error != NULL) {
+				error->code = EINVAL;
+				http_snprintf(NULL,
+					NULL, /* No truncation check for error buffers */
+					error->text,
+					error->text_buffer_size,
+					"Domain %s specified by %s is already in use",
+					new_dom->config[AUTHENTICATION_DOMAIN],
+					config_options[AUTHENTICATION_DOMAIN].name);
+			}
+			free(new_dom);
+			atomic_unlock(&ctx->nonce_mutex);
+			return -5;
+		}
+
+		/* Count number of domains */
+		idx++;
+
+		if (dom->next == NULL) {
+			dom->next = new_dom;
+			break;
+		}
+		dom = dom->next;
+	}
+
+	atomic_unlock(&ctx->nonce_mutex);
+	/* Return domain number */
+	return idx;
+}
+
+http_ini_t *http_start(int max_fd, http_clb_t *callbacks,
+	void_t user_data, const options_ini_t **options) {
 	uint64_t nonce = 0;
 	int i;
 
@@ -270,7 +484,10 @@ http_ini_t *http_start(int max_fd, http_clb_t *callbacks, void *user_data,
 	if (is_empty(ctx))
 		return nullptr;
 
-	if (events_init(max_fd))
+	if (http_init_options(ctx, (string_t *)options))
+		return nullptr;
+
+	if (events_init((max_fd <= 0 ? atoi(ctx->host.config[MAX_FD]) : max_fd)))
 		return http_abort_start(ctx, "Error setting `events_init()`");
 
 	/* Random number generator will initialize at the first call */
@@ -281,8 +498,6 @@ http_ini_t *http_start(int max_fd, http_clb_t *callbacks, void *user_data,
 	atomic_flag_clear(&ctx->host.nonce_mutex);
 	ctx->user_data = user_data;
 	ctx->handlers = nullptr;
-	if (http_init_options(ctx, (string_t *)options))
-		return nullptr;
 
 	struct utsname name;
 	memset(&name, 0, sizeof(name));
@@ -318,7 +533,8 @@ http_ini_t *http_start(int max_fd, http_clb_t *callbacks, void *user_data,
 			ctx->callbacks.init_context(ctx);
 	}
 
-	ctx->http_type = HTTP_TYPE_SERVER;
+	ctx->http_type = HTTP_INI_SERVER;
+	ctx->status = HTTP_STATUS_STARTING;
 	return ctx;
 }
 

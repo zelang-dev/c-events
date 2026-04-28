@@ -182,9 +182,37 @@ extern "C"
 {
 #endif
 
-C_API string url_decode(string str, size_t len);
+C_API string url_decode(string str);
 C_API string url_encode(char const *s, size_t len);
 C_API void parse_str(http_t *this, string lines, string sep, string part);
+C_API void parse_multipart(http_t *this);
+
+C_API hash_http_t *http_extract_var(string_t query, string delim, string sep);
+C_API string http_get_decoded(hash_http_t *this, string key);
+
+/* Perform case-insensitive match of string against pattern
+ *
+ * Parameters:
+ * `pattern`: Pattern string.
+ * `match`: String to search for match patterns.
+ *
+ * Return:
+ * - `Number` of characters matched.
+ * -	`-1` if no valid match was found.
+ *
+ * Note: `0` characters might be a valid match for some patterns.
+ *
+ * `Pattern` match starts at the beginning of the string, so essentially
+ * patterns are prefix patterns.
+ *
+ * Syntax is as follows:
+ *
+ * - `**` 	Matches everything
+ * - `*`	Matches everything but the slash character ('/')
+ * - `?` 	Matches any character but the slash character ('/')
+ * - `$` 	Matches the end of the string
+ * - `|` 	Matches if pattern on the left side or the right side matches.*/
+C_API int http_pattern_match(string pattern, string match);
 
 /*
 Returns valid HTTP status codes reasons.
