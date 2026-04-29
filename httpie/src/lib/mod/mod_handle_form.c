@@ -340,6 +340,169 @@ static int http_upload_field_stored(const char *path, long long file_size, void 
 	return 0;
 }
 
+int http_form_upload(http_t *conn, string_t destination_dir) {
+	string_t content_type_header, boundary_start, sc;
+	string s;
+	char buf[BUF_LEN], path[PATH_MAX], tmp_path[PATH_MAX], fname[1024],
+		boundary[100];
+	FILE *fp;
+	int bl, n, i, headers_len, boundary_len, eof, len = 0,
+		num_uploaded_files = 0;
+
+	/* Request looks like this:
+	 *
+	 * POST /upload HTTP/1.1
+	 * Host: 127.0.0.1:8080
+	 * Content-Length: 244894
+	 * Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryRVr
+	 *
+	 * ------WebKitFormBoundaryRVr
+	 * Content-Disposition: form-data; name="file"; filename="accum.png"
+	 * Content-Type: image/png
+	 *
+	 * <89>PNG
+	 * <PNG DATA>
+	 * ------WebKitFormBoundaryRVr */
+
+	/* Extract boundary string from the Content-Type header */
+	if ((content_type_header = http_get_header(conn, "Content-Type")) == NULL
+		|| conn->boundary == NULL) {
+		return num_uploaded_files;
+	}
+
+	snprintf(boundary, sizeof(boundary), "%s", conn->boundary);
+	boundary[99] = '\0';
+	boundary_len = (int)strlen(conn->boundary);
+	bl = boundary_len + 4; /* \r\n--<boundary> */
+	for (;;) {
+		/* Pull in headers */
+		/* assert(len >= 0 && len <= (int) sizeof(buf)); */
+		if (len < 0 || len >(int)sizeof(buf)) {
+			break;
+		}
+		while ((n = http_read(conn, buf + len, sizeof(buf) - (size_t)len)) > 0) {
+			len += n;
+			/* assert(len <= (int) sizeof(buf)); */
+			if (len > (int)sizeof(buf)) {
+				break;
+			}
+		}
+		if ((headers_len = get_request_len(buf, len)) <= 0) {
+			break;
+		}
+
+		/* terminate header */
+		buf[headers_len - 1] = 0;
+
+		/* Scan for the boundary string and skip it */
+		if (buf[0] == '-' && buf[1] == '-' &&
+			!memcmp(buf + 2, boundary, (size_t)boundary_len)) {
+			s = &buf[bl];
+		} else {
+			s = &buf[2];
+		}
+
+		/* Get headers for this part of the multipart message */
+		conn->body = buf;
+		parse_multipart(conn);
+		/* assert(&buf[headers_len-1] == s); */
+		if (&buf[headers_len - 1] != s) {
+			break;
+		}
+
+		/* Fetch file name. */
+		sc = http_get_header(conn, "Content-Disposition");
+		if (!sc) {
+			/* invalid part of a multipart message */
+			break;
+		}
+
+		sc = strstr(sc, "filename");
+		if (!sc) {
+			/* no filename set */
+			break;
+		}
+		sc += 8; /* skip "filename" */
+		fname[0] = '\0';
+		(void)(sscanf(sc, " = \"%1023[^\"]", fname));
+		fname[1023] = 0;
+
+		/* Give up if the headers are not what we expect */
+		if (fname[0] == '\0') {
+			break;
+		}
+
+		/* Construct destination file name. Do not allow paths to have
+		 * slashes. */
+		if ((s = strrchr(fname, '/')) == NULL &&
+			(s = strrchr(fname, '\\')) == NULL) {
+			s = fname;
+		} else {
+			s++;
+		}
+
+		/* There data is written to a temporary file first. */
+		/* Different users should use a different destination_dir. */
+		snprintf(path, sizeof(path) - 1, "%s/%s", destination_dir, s);
+		strcpy(tmp_path, path);
+		strcat(tmp_path, "~");
+
+		/* We open the file with exclusive lock held. This guarantee us
+		 * there is no other thread can save into the same file
+		 * simultaneously. */
+		fp = NULL;
+		/* Open file in binary mode. */
+		if ((fp = fs_fopen(tmp_path, "wb")) == NULL) {
+			break;
+		}
+
+		/* Move data to the beginning of the buffer */
+		/* part_request_info is no longer valid after this operation */
+		/* assert(len >= headers_len); */
+		if (len < headers_len) {
+			break;
+		}
+		memmove(buf, &buf[headers_len], (size_t)(len - headers_len));
+		len -= headers_len;
+
+		/* Read POST data, write into file until boundary is found. */
+		eof = n = 0;
+		do {
+			len += n;
+			for (i = 0; i < len - bl; i++) {
+				if (!memcmp(&buf[i], "\r\n--", 4) &&
+					!memcmp(&buf[i + 4], boundary, (size_t)boundary_len)) {
+					/* Found boundary, that's the end of file data. */
+					fs_fwrite(buf, 1, (size_t)i, fp);
+					eof = 1;
+					memmove(buf, &buf[i + bl], (size_t)(len - (i + bl)));
+					len -= i + bl;
+					break;
+				}
+			}
+			if (!eof && len > bl) {
+				fs_fwrite(buf, 1, (size_t)(len - bl), fp);
+				memmove(buf, &buf[len - bl], (size_t)bl);
+				len = bl;
+			}
+			n = http_read(conn, buf + len, sizeof(buf) - ((size_t)(len)));
+		} while (!eof && (n > 0));
+		fs_fclose(fp);
+		if (eof) {
+			fs_unlink(path);
+			fs_rename(tmp_path, path);
+			num_uploaded_files++;
+			if (conn && conn->ctx && conn->ctx->callbacks.upload != NULL) {
+				conn->ctx->callbacks.upload(conn, path);
+			}
+		} else {
+			fs_unlink(tmp_path);
+		}
+	}
+
+	return num_uploaded_files;
+}
+
 int http_upload(http_t *conn, string_t destination_dir) {
 	struct upload_user_data fud = {conn, destination_dir, 0};
 	form_data_handler_t fdh = {http_upload_field_found, http_upload_field_get, http_upload_field_stored, 0};

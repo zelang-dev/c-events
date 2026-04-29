@@ -3,8 +3,7 @@
 
 /* Stringify binary data. Output buffer must be twice as big as input,
  * because each byte takes 2 bytes in string representation */
-static void
-bin2str(char *to, const unsigned char *p, size_t len) {
+static void bin2str(char *to, const unsigned char *p, size_t len) {
 	static string_t hex = "0123456789abcdef";
 
 	for (; len--; p++) {
@@ -271,12 +270,10 @@ static int parse_auth_header(http_t *conn, char *buf,
 	return (auth_header->user != NULL);
 }
 
-/* Define the initial recursion depth for procesesing htpasswd files that
- * include other htpasswd
- * (or even the same) files.  It is not difficult to provide a file or files
- * s.t. they force civetweb
- * to infinitely recurse and then crash.
- */
+/* Define the initial recursion depth for processing htpasswd files that
+ * include other htpasswd (or even the same) files.
+ * It is not difficult to provide a file or files
+ * s.t. they force `HttPie` to infinitely recurse and then crash. */
 #define INITIAL_DEPTH 9
 
 /* Use the global passwords file, if specified by auth_gpass option,

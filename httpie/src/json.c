@@ -429,7 +429,7 @@ string json_for(string_t desc, ...) {
 }
 
 string json_read_file(string_t filename) {
-    FILE *fp = fopen(filename, "r");
+    FILE *fp = fopen(filename, "rb");
     size_t size_to_read = 0;
     size_t size_read = 0;
     long pos;

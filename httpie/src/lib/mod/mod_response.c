@@ -11,8 +11,7 @@
 #include "../httpie_internal.h"
 
 /* Send first line of HTTP/1.x response */
-static int send_http1_response_status_line(http_t *conn)
-{
+static int send_http1_response_status_line(http_t *conn) {
 	string_t status_txt;
 	string_t http_version = conn->req.http_version;
 	int status_code = conn->status;
@@ -26,17 +25,14 @@ static int send_http1_response_status_line(http_t *conn)
 	}
 
 	status_txt = http_status_str(conn->status);
-	if (http_printf(
-	        conn, "HTTP/%s %i %s\r\n", http_version, status_code, status_txt)
-	    < 10) {
+	if (http_printf(conn, "HTTP/%s %i %s\r\n", http_version, status_code, status_txt) < 10) {
 		/* Network sending failed */
 		return 0;
 	}
 	return 1;
 }
 
-int http_response_start(http_t *conn, int status)
-{
+int http_response_start(http_t *conn, int status) {
 	int ret = 0;
 	if ((conn == NULL) || (status < 100) || (status > 999)) {
 		/* Parameter error */
@@ -102,7 +98,7 @@ int http_response_multi(http_t *conn, string_t additional_headers) {
 		return -4;
 
 	ret = count;
-	if (count >= 1) {
+	if (count > 0) {
 		for (x = 0; x < count; x++) {
 			// clean the line
 			line = lines[x];
@@ -123,10 +119,6 @@ int http_response_multi(http_t *conn, string_t additional_headers) {
 	free(lines);
 	return ret;
 }
-
-#if defined(USE_HTTP2)
-static int http2_send_response_headers(http_t *conn);
-#endif
 
 int http_response_send(http_t *conn) {
 	if (conn == NULL) {
@@ -152,7 +144,7 @@ int http_response_send(http_t *conn) {
 	return 0;
 }
 
-int http_get_response(http_t *conn, char *ebuf, size_t ebuf_len, int timeout) {
+int http_get_response(http_t *conn, string ebuf, size_t ebuf_len, int timeout) {
 	int err, ret;
 	char txt[32]; /* will not overflow */
 	char *save_timeout;

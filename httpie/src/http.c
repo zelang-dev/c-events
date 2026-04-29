@@ -396,15 +396,12 @@ void parse_multipart(http_t *this) {
 		bool found;
 
 		snprintf(scrape, ARRAY_SIZE, "--%s", this->boundary);
-		if (this->is_valid == 2) {
-			this->raw[this->raw_pos] = '\n';
-		} else {
-			this->raw[this->raw_pos] = '\r';
-		}
+		if (!this->content_length)
+			this->content_length = atoi(http_get_header(this, "Content-Length"));
 
-		boundary = str_split_ex(this->raw, scrape, &count);
+		boundary = (string *)mem_split_ex(this->body, this->content_length, this->boundary, &count);
 		$append(this->garbage, boundary);
-		if (--count >= 2 && str_is(boundary[count], "--")) {
+		if (--count >= 1 && str_case_equal(boundary[count], "--", 2)) {
 			if (!is_empty(this->dispositions)) {
 				hash_free(this->dispositions);
 				this->dispositions = nullptr;
@@ -417,10 +414,9 @@ void parse_multipart(http_t *this) {
 				$reset(this->names);
 
 			for (x = 1; x < count; x++) {
-				if (this->is_valid == 2)
-					boundaries = str_split_ex(boundary[x], LFLF, &pieces);
-				else
-					boundaries = str_split_ex(boundary[x], CRLF CRLF, &pieces);
+				size_t boundarysize = ((uintptr_t)boundary[x + 1] - (uintptr_t)boundary[x]);
+				boundaries = (string *)mem_split_ex(boundary[x],
+					boundarysize, (this->is_valid == 2 ? LFLF : CRLF CRLF),	&pieces);
 				$append(this->garbage, boundaries);
 				if (pieces > 1) {
 					multipart = calloc(1, sizeof(form_data_t));
@@ -428,11 +424,15 @@ void parse_multipart(http_t *this) {
 						break;
 
 					$append(this->garbage, multipart);
-					multipart->body = trim(boundaries[1]);
 					// Calculate each multipart body size by memory region used
 					size_t headsize = ((uintptr_t)boundaries[1] - (uintptr_t)boundaries[0]);
-					size_t boundarysize = ((uintptr_t)boundary[x + 1] - (uintptr_t)boundary[x]);
-					multipart->bodysize = boundarysize - headsize - strlen(scrape) - 1;
+					multipart->bodysize = (boundarysize - headsize) - (strlen(scrape) - this->is_valid);
+					s_pos = mempos_str(boundaries[1],
+						multipart->bodysize, (this->is_valid == 2 ? "\n--" : "\r\n--"));
+
+					multipart->bodysize -= (this->is_valid == 2 ? 3 : 4);
+					multipart->body = boundaries[1];
+					multipart->body[s_pos] = '\0';
 					lines = str_split_ex(trim(boundaries[0]), "\n", &sects);
 					if (sects >= 1) {
 						for (y = 0; y < sects; y++) {
@@ -449,16 +449,23 @@ void parse_multipart(http_t *this) {
 							if (found) {
 								if (str_is(key, "Content-Disposition")) {
 									params = str_split_ex(value, "; ", &names);
-									$append(this->garbage, params);
-									multipart->disposition = params[0];
-									filenames = str_split_ex(params[1], "\"", nullptr);
-									$append(this->garbage, filenames);
-									keyname = trim(filenames[1]);
-									$append_string(this->names, keyname);
-									if (names > 2) {
-										filename = str_split_ex(params[2], "\"", nullptr);
-										$append(this->garbage, filename);
-										multipart->filename = trim(filename[1]);
+									if (!is_empty(params)) {
+										$append(this->garbage, params);
+										multipart->disposition = params[0];
+										filenames = str_split_ex(params[1], "\"", nullptr);
+										if (!is_empty(filenames)) {
+											$append(this->garbage, filenames);
+											keyname = trim(filenames[1]);
+											$append_string(this->names, keyname);
+											if (names > 2) {
+												filename = str_split_ex(params[2], "\"", nullptr);
+												if (!is_empty(filename)) {
+													$append(this->garbage, filename);
+													if (!is_empty(filename[1]))
+														multipart->filename = trim(filename[1]);
+												}
+											}
+										}
 									}
 								} else if (str_is(key, "Content-Type")) {
 									multipart->type = value;
@@ -473,15 +480,15 @@ void parse_multipart(http_t *this) {
 							keyname = nullptr;
 						}
 					}
-					free(lines);
+
+					if (!is_empty(lines)) {
+						free(lines);
+						lines = null;
+					}
 				}
 			}
 		}
 	}
-}
-
-static FORCEINLINE int http_pos(string msg, size_t msg_len, string pattern) {
-	return mempos((const unsigned char *)msg, msg_len, (unsigned char *)pattern, strlen(pattern));
 }
 
 static FORCEINLINE bool is_valid_http_method(string method) {
@@ -506,23 +513,19 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 		this->sessions = nullptr;
 	}
 
-	this->is_valid = 4;
 	this->num_headers = 0;
 	if (str_is_empty(raw))
 		return DATA_INVALID;
 
-	if (!this->req.request_len) {
-		if ((s_pos = str_pos(raw, CRLF CRLF)) == DATA_INVALID) {
-			this->is_valid = 2;
-			if ((s_pos = str_pos(raw, LFLF)) == DATA_INVALID)
-				return DATA_INVALID;
-		}
-	} else {
-		if ((s_pos = http_pos(raw, this->req.request_len, CRLF CRLF)) == DATA_INVALID) {
-			this->is_valid = 2;
-			if ((s_pos = http_pos(raw, this->req.request_len, LFLF)) == DATA_INVALID)
-				return DATA_INVALID;
-		}
+	this->is_valid = 4;
+	if ((s_pos = (!this->req.request_len
+		? str_pos(raw, CRLF CRLF)
+		: mempos_str(raw, this->req.request_len, CRLF CRLF))) == DATA_INVALID) {
+		this->is_valid = 2;
+		if ((s_pos = (!this->req.request_len
+			? str_pos(raw, LFLF)
+			: mempos_str(raw, this->req.request_len, LFLF))) == DATA_INVALID)
+			return DATA_INVALID;
 	}
 
 	this->action = action;
@@ -532,6 +535,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 	messages = this->raw;
 	this->body = trim(trim_at(messages, s_pos + this->is_valid));
 	lines = str_has(messages, "\n") ? str_split_ex(messages, "\n", &count) : nullptr;
+	this->raw[this->raw_pos] = (this->is_valid == 2) ? '\n' : '\r';
 	if (count >= 0) {
 		if (is_empty(this->headers)) {
 			this->headers = hashtable_init(key_ops_auto, val_ops_auto, hash_lp_idx, ARRAY_SIZE);
@@ -595,14 +599,13 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 
 			if (found) {
 				if (!is_multi_set && str_is(key, "Content-Type")
-					&& str_has(value, "multipart/form-data; boundary=")) {
+					&& str_case_equal(value, "multipart/form-data; boundary=", 30)) {
 					if (!is_data(this->garbage))
 						this->garbage = array();
 
 					is_multi_set = true;
 					string *para = str_split_ex(value, "; boundary=", nullptr);
 					this->is_multipart = true;
-					this->body = nullptr;
 					this->boundary = para[1];
 					$append(this->garbage, para);
 				} else if (str_is(key, "Set-Cookie")) {
@@ -665,7 +668,6 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 			}
 		}
 
-		parse_multipart(this);
 		if (!is_empty(lines))
 			free(lines);
 

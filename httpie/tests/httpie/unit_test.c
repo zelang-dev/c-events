@@ -1,5 +1,6 @@
 #include "../../src/lib/httpie_internal.h"
 #include "../test_assert.h"
+#include <openssl/md5.h>
 
 #if defined(_WIN32)
 #   define TESTDIR "../../httpie/tests/httpie"
@@ -7,12 +8,12 @@
 #   define TESTDIR "../httpie/tests/httpie"
 #endif
 
-void check_func(int condition, const char *cond_txt, unsigned line);
+void check_func(int condition, string_t cond_txt, unsigned line);
 
 static int s_total_tests = 0;
 static int s_failed_tests = 0;
 
-void check_func(int condition, const char *cond_txt, unsigned line)
+void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
@@ -204,8 +205,7 @@ TEST(remove_double_dots_slashes) {
 	return 0;
 }
 
-static char *read_file(const char *path, int *size)
-{
+static char *read_file(string_t path, int *size) {
 	FILE *fp;
 	struct stat st;
 	char *data = NULL;
@@ -221,14 +221,14 @@ static char *read_file(const char *path, int *size)
 
 static long fetch_data_size = 1024 * 1024;
 static char *fetch_data;
-static const char *inmemory_file_data = "hi there";
-static const char *upload_filename = "upload_test.txt";
+static string_t inmemory_file_data = "hi there";
+static string_t upload_filename = "upload_test.txt";
 #if 0
-static const char *upload_filename2 = "upload_test2.txt";
+static string_t upload_filename2 = "upload_test2.txt";
 #endif
-static const char *upload_ok_message = "upload successful";
+static string_t upload_ok_message = "upload successful";
 
-static const char *open_file_cb(http_t *conn, const char *path, size_t *size)
+static string_t open_file_cb(http_t *conn, string_t path, size_t *size)
 {
 	(void)conn;
 	if (!strcmp(path, "./blah")) {
@@ -238,7 +238,7 @@ static const char *open_file_cb(http_t *conn, const char *path, size_t *size)
 	return NULL;
 }
 
-static void upload_cb(http_t *conn, const char *path) {
+static void upload_cb(http_t *conn, string_t path) {
 	char *p1, *p2;
 	int len1, len2;
 
@@ -253,7 +253,7 @@ static void upload_cb(http_t *conn, const char *path) {
 		remove(upload_filename);
 	} else if (atoi(conn->req.query_string) == 2) {
 		if (!strcmp(path, "./upload_test.txt")) {
-			ASSERT((p1 = read_file("include/civetweb.h", &len1)) != NULL);
+			ASSERT((p1 = read_file("include/httpie.h", &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
 			ASSERT(memcmp(p1, p2, len1) == 0);
@@ -280,7 +280,7 @@ static void upload_cb(http_t *conn, const char *path) {
 
 static int begin_request_handler_cb(http_t *conn) {
 	int req_len = (int)(conn->content_length);
-	const char *s_req_len = http_get_header(conn, "Content-Length");
+	string_t s_req_len = http_get_header(conn, "Content-Length");
 	char *data;
 	long to_write, write_now;
 	int bytes_read, bytes_written;
@@ -354,7 +354,7 @@ static int begin_request_handler_cb(http_t *conn) {
 	return 0;
 }
 
-static int log_message_cb(const http_t *conn, const char *msg)
+static int log_message_cb(const http_t *conn, string_t msg)
 {
 	(void)conn;
 	printf("%s\n", msg);
@@ -363,19 +363,19 @@ static int log_message_cb(const http_t *conn, const char *msg)
 
 int (*begin_request)(http_t *);
 void (*end_request)(const http_t *, int reply_status_code);
-int (*log_message)(const http_t *, const char *message);
+int (*log_message)(const http_t *, string_t message);
 int (*init_ssl)(void *ssl_context, void *user_data);
 int (*websocket_connect)(const http_t *);
 void (*websocket_ready)(http_t *);
 int (*websocket_data)(http_t *, int bits, char *data, size_t data_len);
 void (*connection_close)(http_t *);
-const char *(*open_file)(const http_t *, const char *path, size_t *data_len);
+string_t (*open_file)(const http_t *, string_t path, size_t *data_len);
 void (*init_lua)(http_t *, void *lua_context);
-void (*upload)(http_t *, const char *file_name);
+void (*upload)(http_t *, string_t file_name);
 
 static struct http_clb_s CALLBACKS;
 static struct init_data init_ini;
-static const char *OPTIONS[] = {
+static string_t OPTIONS[] = {
     "document_root",
     ".",
     "listening_ports",
@@ -422,10 +422,10 @@ static void ut_http_stop(http_ini_t *ctx) {
 }
 
 TEST_WITH(http_download, use_ssl) {
-	const char *test_data = "123456789A123456789B";
+	string_t test_data = "123456789A123456789B";
 
 	char *p1, *p2, ebuf[100];
-	const char *h;
+	string_t h;
 	int i, len1, len2, port;
 	http_t *conn;
 	http_ini_t *ctx;
@@ -669,7 +669,7 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 	                                   NULL);
 	ASSERT(conn == NULL);
 
-	/* Should succeed, the default civetweb server should complete the handshake
+	/* Should succeed, the default `HttPie` server should complete the handshake
 	 */
 	conn = http_connect_websocket_client("localhost",
 	                                   port,
@@ -739,11 +739,12 @@ static int alloc_printf(char **out_buf, char *buf, size_t size, char *fmt, ...)
 	va_start(ap, fmt);
 	ret = alloc_vprintf(out_buf, buf, size, fmt, ap);
 	va_end(ap);
+
 	return ret;
 }
 
 TEST(http_upload) {
-	static const char *boundary = "OOO___MY_BOUNDARY___OOO";
+	static string_t boundary = "OOO___MY_BOUNDARY___OOO";
 	http_ini_t *ctx;
 #if 0
     http_t *conn;
@@ -793,7 +794,7 @@ TEST(http_upload) {
     http_close_connection(conn);
 
     /* Upload two files */
-    ASSERT((file_data = read_file("include/civetweb.h", &file_len)) != NULL);
+    ASSERT((file_data = read_file("include/httpie.h", &file_len)) != NULL);
     ASSERT((file2_data = read_file("README.md", &file2_len)) != NULL);
     post_data = NULL;
     post_data_len = alloc_printf(&post_data, 0,
@@ -854,7 +855,7 @@ TEST(set_throttle) {
 }
 
 TEST(http_next_option) {
-	const char *p, *list = "x/8,/y**=1;2k,z";
+	string_t p, list = "x/8,/y**=1;2k,z";
 	struct vec a, b;
 	int i;
 
@@ -898,7 +899,7 @@ TEST(request_replies) {
 	http_t *conn;
 	http_ini_t *ctx;
 	static struct {
-		const char *request, *reply_regex;
+		string_t request, reply_regex;
 	} tests[] = {
 	    {"GET hello.txt HTTP/1.0\r\nRange: bytes=3-5\r\n\r\n",
 	     "^HTTP/1.1 206 Partial Content"},
@@ -950,7 +951,7 @@ TEST(http_route) {
 	http_t *conn;
 	char uri[64];
 	int i;
-	const char *request = "GET /U7 HTTP/1.0\r\n\r\n";
+	string_t request = "GET /U7 HTTP/1.0\r\n\r\n";
 
 	ctx = http_start(0, NULL, NULL, (const options_ini_t **)OPTIONS);
 	ASSERT(ctx != NULL);
@@ -1011,7 +1012,7 @@ TEST(api_calls) {
 	struct http_clb_s callbacks;
 	http_t *conn;
 	http_ini_t *ctx;
-	static const char *request =
+	static string_t request =
 	    "POST /?a=%20&b=&c=xx HTTP/1.0\r\n"
 	    "Host:  blah.com\n"     /* More spaces before */
 	    "content-length: 3\r\n" /* Lower case header name */
@@ -1050,8 +1051,101 @@ TEST(http_url_decode) {
 	return 0;
 }
 
+TEST(http_md5) {
+	MD5_CTX md5_state;
+	unsigned char md5_val[16 + 1];
+	char md5_str[32 + 1];
+	string_t test_str = "The quick brown fox jumps over the lazy dog";
+
+	md5_val[16] = 0;
+	MD5_Init(&md5_state);
+	MD5_Final(md5_val, &md5_state);
+	ASSERT(strcmp((string_t)md5_val,
+		"\xd4\x1d\x8c\xd9\x8f\x00\xb2\x04\xe9"
+		"\x80\x09\x98\xec\xf8\x42\x7e") == 0);
+	sprintf(md5_str,
+		"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+		md5_val[0],
+		md5_val[1],
+		md5_val[2],
+		md5_val[3],
+		md5_val[4],
+		md5_val[5],
+		md5_val[6],
+		md5_val[7],
+		md5_val[8],
+		md5_val[9],
+		md5_val[10],
+		md5_val[11],
+		md5_val[12],
+		md5_val[13],
+		md5_val[14],
+		md5_val[15]);
+	ASSERT(strcmp(md5_str, "d41d8cd98f00b204e9800998ecf8427e") == 0);
+
+	http_md5(md5_str, "", NULL);
+	ASSERT(strcmp(md5_str, "d41d8cd98f00b204e9800998ecf8427e") == 0);
+
+	MD5_Init(&md5_state);
+	MD5_Update(&md5_state, (const unsigned char *)test_str, strlen(test_str));
+	MD5_Final(md5_val, &md5_state);
+	sprintf(md5_str,
+		"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+		md5_val[0],
+		md5_val[1],
+		md5_val[2],
+		md5_val[3],
+		md5_val[4],
+		md5_val[5],
+		md5_val[6],
+		md5_val[7],
+		md5_val[8],
+		md5_val[9],
+		md5_val[10],
+		md5_val[11],
+		md5_val[12],
+		md5_val[13],
+		md5_val[14],
+		md5_val[15]);
+	ASSERT(strcmp(md5_str, "9e107d9d372bb6826bd81d3542a419d6") == 0);
+
+	http_md5(md5_str, test_str, NULL);
+	ASSERT(strcmp(md5_str, "9e107d9d372bb6826bd81d3542a419d6") == 0);
+
+	http_md5(md5_str,
+		"The",
+		" ",
+		"quick brown fox",
+		"",
+		" jumps ",
+		"over the lazy dog",
+		"",
+		"",
+		NULL);
+	ASSERT(strcmp(md5_str, "9e107d9d372bb6826bd81d3542a419d6") == 0);
+
+	http_md5(md5_str, "HttPie", NULL);
+	ASSERT(strcmp(md5_str, "1a3e4874dfb17d96f8f8379adf7bd574") == 0);
+
+	return 0;
+}
+
+TEST(str_encode64) {
+	const char *_in[] = {"a", "ab", "abc", "abcd", NULL};
+	const char *out[] = {"YQ==", "YWI=", "YWJj", "YWJjZA=="};
+	char buf[100];
+	int i;
+
+	for (i = 0; _in[i] != NULL; i++) {
+		str_encode64((unsigned char *)_in[i], buf, sizeof(buf));
+		ASSERT(!strcmp(buf, out[i]));
+	}
+
+	return 0;
+}
+
 TEST(parse_port_string) {
-	static const char *valid[] = {
+	static string_t valid[] = {
 		"0",
 		"1",
 		"1s",
@@ -1063,7 +1157,7 @@ TEST(parse_port_string) {
 		"[3ffe:2a00:100:7031::1]:900",
 		NULL,
 	};
-	static const char *invalid[] = {
+	static string_t invalid[] = {
 	    "99999", "1k", "1.2.3", "1.2.3.4:", "1.2.3.4:2p", NULL};
 	struct server_socket_s so;
 	int ip_family;
@@ -1123,6 +1217,9 @@ TEST(list) {
 	EXEC_TEST(http_next_option);
 	EXEC_TEST(set_throttle);
 	EXEC_TEST(http_url_decode);
+	EXEC_TEST(http_md5);
+	EXEC_TEST(alloc_vprintf);
+	EXEC_TEST(str_encode64);
 
 	unused = chdir("../build");
 #if defined(_WIN32) || defined(_WIN64)

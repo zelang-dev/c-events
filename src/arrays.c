@@ -499,6 +499,69 @@ char *str_swap_ex(const char *haystack, const char *needle, const char *swap) {
 	return result;
 }
 
+#ifdef _WIN32
+void *memmem(const void *haystack, size_t haystack_len,
+	const void *const needle, const size_t needle_len) {
+	if (haystack == NULL || haystack_len == 0
+		|| needle == NULL || needle_len == 0)
+		return NULL;
+
+	for (const char *h = haystack; haystack_len >= needle_len; ++h, --haystack_len) {
+		if (!memcmp(h, needle, needle_len)) {
+			return (void *)h;
+		}
+	}
+
+	return NULL;
+}
+#endif
+
+void **mem_split_ex(const void *src, size_t src_len, const char *delim, int *count) {
+	if ((void *)src == NULL)
+		return NULL;
+
+	if ((void *)delim == NULL)
+		delim = " ";
+
+	size_t ptrsSize, nbWords = 1, sLen = src_len, delimLen = strlen(delim);
+	if (sLen == 0)
+		return NULL;
+
+	void *data;
+	char **ptrs, *_s = (char *)src;
+	char *haystack = _s;
+	while ((_s = memmem(haystack, sLen, delim, delimLen))) {
+		_s += delimLen;
+		sLen -= (_s - haystack);
+		haystack = _s;
+		++nbWords;
+	}
+
+	ptrsSize = (nbWords + 1) * sizeof(char *);
+	ptrs = data = events_calloc(1, ptrsSize + src_len + 1);
+
+	if (data) {
+		*ptrs = _s = str_cpy((char *)data + ptrsSize, (const char *)src, src_len);
+		if (nbWords > 1) {
+			sLen = src_len;
+			haystack = _s;
+			while ((_s = memmem(haystack, sLen, delim, delimLen))) {
+				*_s = '\0';
+				_s += delimLen;
+				sLen -= (_s - haystack);
+				haystack = _s;
+				*++ptrs = _s;
+			}
+		}
+
+		*++ptrs = NULL;
+		if (count)
+			*count = (int)nbWords;
+	}
+
+	return data;
+}
+
 char **str_split_ex(const char *s, const char *delim, int *count) {
 	if ((void *)s == NULL)
 		return NULL;
@@ -717,16 +780,16 @@ static const char *str_memnstr(const char *haystack, const char *needle, size_t 
 	return null;
 }
 
-int str_subcount(const char *text, char *pattern) {
+int mem_subcount(const void *src, size_t src_len, char *pattern) {
 	int count = 0;
-	size_t haystack_len = strlen(text), needle_len = strlen(pattern);
+	size_t haystack_len = src_len, needle_len = strlen(pattern);
 	const char *p, *endp;
 	char cmp;
 
 	if (needle_len == 0)
 		return 0;
 
-	p = text;
+	p = src;
 	endp = p + haystack_len;
 	if (needle_len == 1) {
 		cmp = pattern[0];
@@ -742,6 +805,10 @@ int str_subcount(const char *text, char *pattern) {
 	}
 
 	return count;
+}
+
+EVENTS_INLINE int str_subcount(const char *text, char *pattern) {
+	return mem_subcount((const void *)text, strlen(text), pattern);
 }
 
 static EVENTS_INLINE char *ltrim(char *s) {
@@ -784,6 +851,10 @@ bool str_has_either(const char *src, char *match, char *match2) {
 	}
 
 	return false;
+}
+
+FORCEINLINE int mempos_str(const char *msg, size_t msg_len, char *pattern) {
+	return mempos((const unsigned char *)msg, msg_len, (unsigned char *)pattern, strlen(pattern));
 }
 
 int mempos(const unsigned char *src, size_t src_length,

@@ -1,5 +1,14 @@
 #include "httpie_internal.h"
 
+static const char alpn_proto_list[] = "\x02h2\x08http/1.1\x08http/1.0";
+static const char *alpn_proto_order_http1[] = {alpn_proto_list + 3,
+											   alpn_proto_list + 3 + 8,
+											   NULL};
+static const char *alpn_proto_order_http2[] = {alpn_proto_list,
+											   alpn_proto_list + 3,
+											   alpn_proto_list + 3 + 8,
+											   NULL};
+
 static int _stat_ex(http_t *conn, string_t path, struct file *filep) {
 	struct stat st;
 
@@ -2342,12 +2351,8 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 	return conn;
 }
 
-
-http_t *http_connect_client(string_t host,
-                  int port,
-                  int use_ssl,
-                  char *error_buffer,
-                  size_t error_buffer_size) {
+http_t *http_connect_client(string_t host, int port,
+	int use_ssl, string error_buffer, size_t error_buffer_size) {
 	struct client_options opts;
 	struct error_data error;
 

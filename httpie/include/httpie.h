@@ -129,17 +129,6 @@ extern "C"
 {
 #endif
 
-struct http_server_port {
-	int protocol;    /* 1 = IPv4, 2 = IPv6, 3 = both */
-	int port;        /* port number */
-	int is_ssl;      /* https port: 0 = no, 1 = yes */
-	int is_redirect; /* redirect all requests: 0 = no, 1 = yes */
-	int is_optional; /* optional: 0 = no, 1 = yes */
-	int is_bound;    /* bound: 0 = no, 1 = yes, relevant for optional ports */
-	int _reserved3;
-	int _reserved4;
-};
-
 C_API string_t httpie_version(void);
 
 /* Get the list of ports that `HttPie` is listening on.
@@ -199,7 +188,7 @@ C_API int http_file_body(http_t *conn, string_t path);
 /* Send HTTP error reply. */
 C_API int http_error(http_t *conn, int status, string_t fmt, ...);
 
-/* Send data to the client.
+/* Send data `buf` to the client.
  *
  * Return:
  * - `0` when the connection has been closed
@@ -208,21 +197,22 @@ C_API int http_error(http_t *conn, int status, string_t fmt, ...);
 C_API int http_write(http_t *conn, const_t buf, size_t len);
 
 /* Send "HTTP 200 OK" response header.
- * After calling this function, use mg_write or mg_send_chunk to send the
+ * After calling this function, use `http_write` or `http_chunk` to send the
  * response body.
  *
  * Parameters:
- *   conn: Current connection handle.
- *   mime_type: Set Content-Type for the following content.
- *   content_length: Size of the following content, if content_length >= 0.
- *                   Will set transfer-encoding to chunked, if set to -1.
+ * - conn: Current connection handle.
+ * - mime_type: Set Content-Type for the following content.
+ * - content_length: Size of the following content, if content_length >= 0.
+ * Will set transfer-encoding to chunked, if set to -1.
+ *
  * Return:
- *   < 0   Error */
+ * - `< 0`: Error */
 C_API int http_ok(http_t *conn, string_t mime_type, long long content_length);
 
-/* Send a 30x redirect response.
+/* Send a 30x redirect `target_url` response.
  *
- * Redirect types (status codes):
+ * `redirect code` types (status codes):
  *
  * Status | Perm/Temp | Method              | Version
  *   301  | permanent | POST->GET undefined | HTTP/1.0
@@ -256,53 +246,59 @@ C_API int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len);
 
 /* Initialize a new HTTP response
  * Parameters:
- *   conn: Current connection handle.
- *   status: HTTP status code (e.g., 200 for "OK").
+ * - conn: Current connection handle.
+ * - status: HTTP status code (e.g., 200 for "OK").
  * Return:
- *   0:    ok
- *  -1:    parameter error
- *  -2:    invalid connection type
- *  -3:    invalid connection status
- *  -4:    network error */
+ * -  `0`: ok
+ * - `-1`: parameter error
+ * - `-2`: invalid connection type
+ * - `-3`: invalid connection status
+ * - `-4`: network error */
 C_API int http_response_start(http_t *conn, int status);
 
 /* Add a new HTTP response header line
+ *
  * Parameters:
- *   conn: Current connection handle.
- *   header: Header name.
- *   value: Header value.
- *   value_len: Length of header value, excluding the terminating zero.
- *              Use -1 for "strlen(value)".
+ * - conn: Current connection handle.
+ * - header: Header name.
+ * - value: Header value.
+ * - value_len: Length of header value, excluding the terminating zero.
+ * Use -1 for "strlen(value)".
+ *
  * Return:
- *    0:    ok
- *   -1:    parameter error
- *   -2:    invalid connection type
- *   -3:    invalid connection status
- *   -4:    too many headers
- *   -5:    out of memory */
+ * -  `0`: ok
+ * - `-1`: parameter error
+ * - `-2`: invalid connection type
+ * - `-3`: invalid connection status
+ * - `-4`: too many headers
+ * - `-5`: out of memory */
 C_API int http_response_add(http_t *conn, string_t header, string_t value, int value_len);
 
 /* Send http response
+ *
  * Parameters:
- *   conn: Current connection handle.
+ * - conn: Current connection handle.
+ *
  * Return:
- *   0:    ok
- *  -1:    parameter error
- *  -2:    invalid connection type
- *  -3:    invalid connection status
- *  -4:    network send failed */
+ * -  `0`: ok
+ * - `-1`: parameter error
+ * - `-2`: invalid connection type
+ * - `-3`: invalid connection status
+ * - `-4`: network send failed */
 C_API int http_response_send(http_t *conn);
 
 /* Add a complete header string (key + value).
+ *
  * Parameters:
- *   conn: Current connection handle.
- *   additional_headers: Header line(s) in the form "name: value\r\n".
+ * - conn: Current connection handle.
+ * - additional_headers: Header line(s) in the form "name: value\r\n".
+ *
  * Return:
- *  >=0:   no error, number of header lines added
- *  -1:    parameter error
- *  -2:    invalid connection type
- *  -3:    invalid connection status
- *  -4:    out of memory */
+ * - `>=0`: no error, number of header lines added
+ * - `-1`: parameter error
+ * - `-2`: invalid connection type
+ * - `-3`: invalid connection status
+ * - `-4`: out of memory */
 C_API int http_response_multi(http_t *conn, string_t additional_headers);
 
 /*
@@ -311,14 +307,15 @@ C_API int http_response_multi(http_t *conn, string_t additional_headers);
 C_API string_t http_suggest_connection_header(http_t *conn);
 
 /* Wait for a response from the server
+ *
  *  Parameters:
- *	 conn: connection
- *	 ebuf, ebuf_len: error message placeholder.
- *	 timeout: time to wait for a response in milliseconds (if < 0 then wait forever)
+ * - conn: connection
+ * - ebuf, ebuf_len: error message placeholder.
+ * - timeout: time to wait for a response in milliseconds (if < 0 then wait forever)
  *
  *  Return:
- *	 On success, >= 0
- *	 On error/timeout, < 0 */
+ * - On success, >= 0
+ * - On error/timeout, < 0 */
 C_API int http_get_response(http_t *conn, string ebuf, size_t ebuf_len, int timeout);
 
 /* Close the connection opened by `http_download()` or `http_connect_client()`. */
@@ -326,14 +323,14 @@ C_API void http_close_connection(http_t *conn);
 
 /* Connect to a TCP server as a client (can be used to connect to a HTTP server)
  *
- *   Parameters:
+ *  Parameters:
  * - host: host to connect to, i.e. "www.wikipedia.org" or "192.168.1.1" or "localhost"
  * - port: server port
  * - use_ssl: make a secure connection to server
  * - error_buffer, error_buffer_size: buffer for an error message
  *
  *  Return:
- * - On success, valid mg_connection object.
+ * - On success, valid `http_t` object.
  * - On error, NULL. Se error_buffer for details. */
 C_API http_t *http_connect_client(string_t host, int port,
 	int use_ssl, string error_buffer, size_t error_buffer_size);
@@ -347,7 +344,7 @@ C_API http_t *http_connect_client(string_t host, int port,
  * - request_fmt,...: HTTP request.
  *
  *  Return:
- * - On success, valid pointer to the new connection, suitable for mg_read().
+ * - On success, valid pointer to the new connection, suitable for `http_read()`.
  * - On error, NULL. error_buffer contains error message.
  *
  *  Example:
@@ -413,15 +410,15 @@ C_API int http_modify_passwords_file_ha1(string_t fname, string_t domain, string
  * cookie-based way please refer to the examples/chat in the source tree.
  *
  * Parameter:
- *   passwords_file_name: Path and name of a file storing multiple passwords
- *   realm: HTTP authentication realm (authentication domain) name
- *   user: User name
- *   password:
- *     If password is not NULL, entry modified or added.
- *     If password is NULL, entry is deleted.
+ * - fname: Path and name of a file storing multiple passwords
+ * - domain: HTTP authentication realm (authentication domain) name
+ * - user: User name
+ * - pass: If `password` is not NULL, entry modified or added.
+ * If `password` is NULL, entry is deleted.
  *
  *  Return:
- *    1 on success, 0 on error. */
+ * - `1`: on success
+ * - `0`: on error. */
 C_API int http_modify_passwords_file(string_t fname, string_t domain, string_t user, string_t pass);
 
 /* Sends a list of allowed options a client can use to connect to the server. */
@@ -506,7 +503,7 @@ C_API int http_websocket_client_write(http_t *conn, websocket_type opcode, strin
  * - user_data: user supplied argument
  *
  *  Return:
- * - On success, valid mg_connection object.
+ * - On success, valid `http_t` object.
  * - On error, NULL. Se error_buffer for details. */
 C_API http_t *http_connect_websocket_client(string_t host, int port, int use_ssl,
 	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,

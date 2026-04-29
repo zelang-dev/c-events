@@ -24,7 +24,7 @@ TEST(parse_multipart) {
 	ASSERT_STR("Mozilla/5.0 Gecko/2009042316 Firefox/3.0.10", http_get_header(parser, "User-Agent"));
 	ASSERT_STR("aram", http_get_header(parser, "Host"));
 	ASSERT_STR("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", http_get_header(parser, "Accept"));
-	ASSERT_STR("514", http_get_header(parser, "Content-Length"));
+	ASSERT_STR("541", http_get_header(parser, "Content-Length"));
 	ASSERT_STR("keep-alive", http_get_header(parser, "Connection"));
 	ASSERT_STR("300", http_get_header(parser, "Keep-Alive"));
 	ASSERT_STR("en-us,en;q=0.5", http_get_header(parser, "Accept-Language"));
@@ -36,6 +36,8 @@ TEST(parse_multipart) {
 	ASSERT_STR("HTTP/1.1", http_get_protocol(parser));
 
 	ASSERT_TRUE(http_is_multipart(parser));
+
+	parse_multipart(parser);
 	ASSERT_STR("multipart/form-data; boundary=2a8ae6ad-f4ad-4d9a-a92c-6d217011fe0f",
 		http_get_header(parser, "Content-Type"));
 	ASSERT_STR("2a8ae6ad-f4ad-4d9a-a92c-6d217011fe0f",

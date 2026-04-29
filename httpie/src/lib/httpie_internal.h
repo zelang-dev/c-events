@@ -243,6 +243,23 @@ enum {
 	INI_TYPE_YES_NO_OPTIONAL = 0x9
 };
 
+struct http_server_port {
+	/* 1 = IPv4, 2 = IPv6, 3 = both */
+	int protocol;
+	/* port number */
+	int port;
+	/* https port: 0 = no, 1 = yes */
+	int is_ssl;
+	/* redirect all requests: 0 = no, 1 = yes */
+	int is_redirect;
+	/* optional: 0 = no, 1 = yes */
+	int is_optional;
+	/* bound: 0 = no, 1 = yes, relevant for optional ports */
+	int is_bound;
+	int _reserved3;
+	int _reserved4;
+};
+
 struct h2_header {
 	string_t name;  /* HTTP header name */
 	string_t value; /* HTTP header value */
@@ -553,9 +570,8 @@ typedef struct httpie_s {
 	int websocket_deflate_flush;
 	/* Number of requests handled by this connection */
 	int handled_requests;
-	/* Time (since system start) when the request
-	 * was received */
-	struct timespec req_time;
+	/* Time (since system start) when the request was received */
+	uint64_t req_time;
 	/* Time (wall clock) when connection was established */
 	time_t conn_birth_time;
 	/* Unread data from the last chunk */
@@ -700,11 +716,6 @@ struct dir_scan_data {
 	size_t arr_size;
 };
 
-/* New APIs for enhanced option and error handling.
-   These mg_*2 API functions have the same purpose as their original versions,
-   but provide additional options and/or provide improved error diagnostics.
-
-   Note: Experimental interfaces may change */
 struct error_data {
 	unsigned code;           /* error code (number) */
 	unsigned code_sub;       /* error sub code (number) */
@@ -1006,4 +1017,9 @@ int http_get_system_info(char *buffer, int buflen);
 /* Get context information. It can be printed or stored by the caller.
  * Return the size of available information. */
 int http_get_context_info(const http_ini_t *ctx, char *buffer, int buflen);
+
+int http2_send_response_headers(http_t *conn);
+void http2_must_use_http1(http_t *conn);
+void http2_data_frame_head(http_t *conn, uint32_t frame_size, int is_final);
+void process_new_http2_connection(http_t *conn);
 #endif /* _HTTPIE_INTERNAL_H */

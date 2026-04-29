@@ -30,10 +30,18 @@ TEST(parse_multibad) {
 	ASSERT_STR("line one",
 		http_get_header(parser, "X-Multi-Line"));
 	ASSERT_TRUE(http_is_multipart(parser));
+
+	parse_multipart(parser);
 	ASSERT_STR("multipart/form-data; boundary=----------------------------83ff53821b7c",
 		http_get_header(parser, "Content-Type"));
 	ASSERT_STR("----------------------------83ff53821b7c",
 		http_get_boundary(parser));
+	ASSERT_XEQ(3, http_multi_count(parser));
+	ASSERT_XEQ(51, http_multi_length(parser, "img"));
+	ASSERT_TRUE(http_multi_is_file(parser, "img"));
+	ASSERT_STR("a.png", http_multi_filename(parser, "img"));
+	ASSERT_STR("image/png", http_multi_type(parser, "img"));
+	ASSERT_STR("form-data", http_multi_disposition(parser, "img"));
 
 	unused = chdir("../build");
 

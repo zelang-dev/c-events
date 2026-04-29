@@ -229,6 +229,14 @@ C_API void memsort(void *data, size_t elemcount, size_t elemsize,
 	int (*compfunc)(const void *data1, const void *data2, void *userarg), void *userarg);
 C_API int mempos(const unsigned char *src, size_t src_length,
 	unsigned char *match, size_t match_length);
+C_API int mempos_str(const char *msg, size_t msg_len, char *pattern);
+C_API void **mem_split_ex(const void *src, size_t src_len, const char *delim, int *count);
+C_API int mem_subcount(const void *src, size_t src_len, char *pattern);
+
+#ifdef _WIN32
+C_API void *memmem(const void *haystack, size_t haystack_len,
+	const void *const needle, const size_t needle_len);
+#endif
 
 C_API range_t rangeing(int start, int stop, int steps);
 C_API range_t range(int start, int stop);

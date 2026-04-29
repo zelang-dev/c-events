@@ -16,6 +16,7 @@ set(httpie_files ${httpie_files}
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_start.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/httpie_ws.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_handle_form.c
+	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_http2.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_quickjs.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_response.c
 	${CMAKE_CURRENT_SOURCE_DIR}/src/lib/mod/mod_zlib.c
