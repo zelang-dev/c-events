@@ -159,7 +159,7 @@ TEST(str_decode64) {
 }
 
 TEST(str_is_case) {
-	ASSERT_TRUE(str_is_case("HTTPIE", "httpie"));
+	ASSERT_TRUE(str_is_case("HTTPI", "httpi"));
 	ASSERT_TRUE(str_is_case("HttPie", "hTTpIE"));
 	ASSERT_TRUE(str_is_case("SomE-HeaDer", "some-header"));
 
