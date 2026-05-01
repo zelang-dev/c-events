@@ -59,6 +59,7 @@ typedef int	(*ws_connect_cb)(http_t *conn, void_t cbdata);
 typedef void (*ws_ready_cb)(http_t *conn, void_t cbdata);
 typedef int	(*ws_data_cb)(http_t *conn, int, string buffer, size_t buflen, void_t cbdata);
 typedef void (*ws_close_cb)(http_t *conn, void_t cbdata);
+typedef void (*http_main_cb)(http_ini_t *);
 
 /* Called when `HttPi` has received new HTTP request.
  * If the callback returns one, it must process the request
@@ -237,7 +238,7 @@ C_API int http_url_decode(string_t src, int src_len, string dst, int dst_len, in
 
 /* Return builtin mime type for the given file name.
    For unrecognized extensions, "text/plain" is returned. */
-C_API string_t http_get_builtin_mime_type(string_t path);
+C_API string_t http_builtin_mime_type(string_t path);
 
 /* Send a part of the message body, if chunked transfer encoding is set.
  * Only use this function after sending a complete HTTP request or response

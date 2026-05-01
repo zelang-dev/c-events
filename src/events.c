@@ -168,12 +168,17 @@ EVENTS_INLINE void events_update_polling(events_t *loop, int fd, int events) {
 	events_target(fd)->events = events & EVENTS_READWRITE;
 }
 
+EVENTS_INLINE bool events_is_active(void) {
+	return atomic_load_explicit(&sys_event.num_loops, memory_order_relaxed) > 0;
+}
+
 int events_init(int max_fd) {
 	atomic_thread_fence(memory_order_seq_cst);
-	if (events_shutdown_set || events_startup_set)
+	if (events_startup_set)
 		return 0;
 
 	events_startup_set = true;
+	events_shutdown_set = false;
 
 #if !defined(NO_RPMALLOC)
 	events_set_allocator(rp_malloc, rp_realloc, rp_calloc, rpfree);
@@ -324,6 +329,7 @@ EVENTS_INLINE void events_deinit(void) {
 #ifdef _WIN32
 	WSACleanup();
 #endif
+	events_startup_set = false;
 }
 
 EVENTS_INLINE union usa *events_get_sockaddr(fds_t fd) {

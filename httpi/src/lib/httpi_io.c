@@ -1646,10 +1646,6 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 }
 
 static void close_socket_gracefully(http_t *conn) {
-#if defined(_WIN32)
-	char buf[BUF_LEN];
-	int n;
-#endif
 	struct linger linger;
 	int error_code = 0;
 	int linger_timeout = -2;
@@ -1829,7 +1825,7 @@ int http_stat(http_t *conn, string_t path, struct file *filep) {
 	if (!is_empty(conn) && conn->ctx != NULL && http_is_file_in_memory(conn->ctx, conn, path, filep))
 		return 1;
 
-	if (fs_stat(path, &st) == 0) {
+	if ((events_is_active() ? fs_stat(path, &st) : stat(path, &st)) == 0) {
 		filep->size = (uint64_t)(st.st_size);
 		filep->last_modified = st.st_mtime;
 		filep->is_directory = S_ISDIR(st.st_mode);
@@ -2236,7 +2232,9 @@ int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_s
 		hints.ai_flags = AI_NUMERICHOST;
 	}
 
-	gai_ret = async_getaddrinfo(src, NULL, &hints, &res);
+	gai_ret = events_is_active() && tasks_is_active()
+		? async_getaddrinfo(src, NULL, &hints, &res)
+		: getaddrinfo(src, NULL, &hints, &res);
 	if (gai_ret != 0) {
 		/* gai_strerror could be used to convert gai_ret to a string */
 		/* POSIX return values: see

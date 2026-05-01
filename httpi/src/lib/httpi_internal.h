@@ -979,11 +979,13 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version);
 /* Construct fake connection structure. Used for logging, if connection
  * is not applicable at the moment of logging. */
 http_t *fake_conn(http_t *fc, http_ini_t *ctx);
+/* Use to mask data when writing data over a websocket client connection. */
+void mask_data(string_t _in, size_t in_len, uint32_t masking_key, string out);
 
 /*
  * Parse UTC date-time string, and return the corresponding time_t value.
  * This function is used in the if-modified-since calculations */
-time_t http_parse_date_string(string_t datetime);
+time_t parse_date_str(string_t datetime);
 /* Internal function. Assumes conn is valid */
 void send_authorization_request(http_t *conn, string_t realm);
 /* Return 1 if request is authorised, 0 otherwise. */

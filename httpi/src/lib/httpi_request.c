@@ -1375,7 +1375,7 @@ static void get_mime_type(http_t *conn, string_t path, struct vec *vec) {
 		}
 	}
 
-	vec->ptr = http_get_builtin_mime_type(path);
+	vec->ptr = http_builtin_mime_type(path);
 	vec->len = strlen(vec->ptr);
 }
 
@@ -1951,7 +1951,7 @@ int is_not_modified(http_t *conn, const struct file *filestat) {
 		return str_is_case(etag, inm);
 	}
 	if (ims) {
-		return (filestat->last_modified <= http_parse_date_string(ims));
+		return (filestat->last_modified <= parse_date_str(ims));
 	}
 	return 0;
 }

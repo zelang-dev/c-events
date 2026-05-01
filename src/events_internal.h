@@ -590,7 +590,6 @@ void task_switch(tasks_t *co);
 uint32_t task_push(tasks_t *t, bool has_result);
 void *task_erred(tasks_t *t, int code);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping);
-bool tasks_is_active(void);
 int results_tid(uint32_t rid);
 
 void deque_init(events_deque_t *q, int size_hint);

@@ -215,7 +215,7 @@ static const struct {
 
 static string_t month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-string_t http_get_builtin_mime_type(string_t path) {
+string_t http_builtin_mime_type(string_t path) {
 	string_t ext;
 	size_t i, path_len;
 
@@ -245,7 +245,7 @@ static int get_month_index(string_t s) {
 	return -1;
 }
 
-time_t http_parse_date_string(string_t datetime) {
+time_t parse_date_str(string_t datetime) {
 	char month_str[32] = {0};
 	int second;
 	int minute;
@@ -286,7 +286,7 @@ bool http_is_not_modified(http_ini_t *ctx, http_t *conn, const struct file *file
 
 	http_construct_etag(conn, etag, sizeof(etag), filep);
 	return (inm != NULL && str_is_case(etag, inm))
-		|| (ims != NULL && (filep->last_modified <= http_parse_date_string(ims)));
+		|| (ims != NULL && (filep->last_modified <= parse_date_str(ims)));
 }
 
 int http_get_option_index(string_t name) {
@@ -1068,7 +1068,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 		if (ip_version == 99) {
 			/* Unix domain socket */
 		} else if (ip_version > 4) {
-				/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
+			/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
 			if (ip_version > 6) {
 				if (so.lsa.sa.sa_family == AF_INET6
 					&& setsockopt(so.sock,
@@ -1282,6 +1282,9 @@ int http_set_ports_option(http_ini_t *ctx) {
 			continue;
 		}
 
+		/* Create socket. */
+		/* For a list of protocol numbers (e.g., TCP==6) see:
+		 * https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml */
 		ports_ok = http_set_ports(ctx, vec, ports_ok, ports_total, ip_version, so);
 	}
 

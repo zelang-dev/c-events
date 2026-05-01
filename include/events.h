@@ -214,6 +214,8 @@ C_API events_t *events_create(int max_timeout);
 /* Destroys a loop (defined by each backend). */
 C_API int events_destroy(events_t *loop);
 
+C_API bool events_is_active(void);
+
 /* Initializes events. */
 C_API int events_init(int max_fd);
 
@@ -408,6 +410,7 @@ C_API void task_set_canceled(uint32_t id);
 
 /* Print `task` internal data state, only active in `debug` builds. */
 C_API void tasks_info(tasks_t *t, int pos);
+C_API bool tasks_is_active(void);
 
 /* Return `current` task ~user_data~. */
 C_API void *task_data(void);

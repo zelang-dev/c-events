@@ -566,3 +566,25 @@ int http_server(http_ini_t *ctx) {
 
 	return EXIT_FAILURE;
 }
+
+static FORCEINLINE void *http_main_task(param_t args) {
+	http_main_cb start = (http_main_cb)args[1].func;
+	if (!is_empty(start))
+		start((http_ini_t *)args[0].object);
+	return 0;
+}
+
+void httpi_main(http_ini_t *ctx, http_main_cb start) {
+	events_t *loop = events_init_pool(thrd_cpu_count() / 2);
+	if (is_empty(ctx) || is_empty(loop))
+		exit(EXIT_FAILURE);
+
+	int i;
+	ctx->status = HTTP_STATUS_RUNNING;
+	async_task(http_main_task, 2, ctx, start);
+	for (i = 0; i < ctx->num_listening_sockets; i++)
+		async_ex(Kb(32), http_server_task, 2, ctx->listening_sockets[i], ctx);
+	async_run(loop);
+	events_destroy(loop);
+	events_deinit();
+}

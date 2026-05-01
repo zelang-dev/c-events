@@ -553,20 +553,25 @@ void http_websocket_request(http_ini_t *ctx,
 }
 
 /* Use to mask data when writing data over a websocket client connection. */
-static void mask_data(string_t _in, size_t in_len, uint32_t masking_key, string out) {
+void mask_data(string_t _in, size_t in_len, uint32_t masking_key, string out) {
 	size_t i = 0;
-	if (in_len > 3 && ((ptrdiff_t)_in % 4) == 0) {
+
+	i = 0;
+	if ((in_len > 3) && ((ptrdiff_t)_in % 4) == 0) {
 		/* Convert in 32 bit words, if data is 4 byte aligned */
-		while (i + 3 < in_len) {
-			*(uint32_t *)(void_t )(out + i) = *(const uint32_t *)(const_t)(_in + i) ^ masking_key;
+		while (i < (in_len - 3)) {
+			*(uint32_t *)(void_t)(out + i) =
+				*(uint32_t *)(void_t)(_in + i) ^ masking_key;
 			i += 4;
 		}
 	}
 
 	if (i != in_len) {
-		/* convert 1-3 remaining bytes if ((dataLen % 4) != 0) */
+		/* convert 1-3 remaining bytes if ((dataLen % 4) != 0)*/
 		while (i < in_len) {
-			*(uint8_t *)(void_t )(out + i) = *(const uint8_t *)(const_t)(_in + i) ^ *(((uint8_t *)&masking_key) + (i % 4));
+			*(uint8_t *)(void_t)(out + i) =
+				*(uint8_t *)(void_t)(_in + i)
+				^ *(((uint8_t *)&masking_key) + (i % 4));
 			i++;
 		}
 	}

@@ -8,6 +8,10 @@
 #   define TESTDIR "../httpi/tests/httpi"
 #endif
 
+static string_t const mon_short_names[] = {
+	"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+};
+
 void check_func(int condition, string_t cond_txt, unsigned line);
 
 static int s_total_tests = 0;
@@ -374,7 +378,6 @@ void (*init_lua)(http_t *, void *lua_context);
 void (*upload)(http_t *, string_t file_name);
 
 static struct http_clb_s CALLBACKS;
-static struct init_data init_ini;
 static string_t OPTIONS[] = {
     "document_root",
     ".",
@@ -391,17 +394,13 @@ static string_t OPTIONS[] = {
 
 static void init_CALLBACKS() {
 	memset(&CALLBACKS, 0, sizeof(CALLBACKS));
-	memset(&init_ini, 0, sizeof(init_ini));
 	CALLBACKS.start = begin_request_handler_cb;
 	CALLBACKS.log_message = log_message_cb;
 	CALLBACKS.open_file = open_file_cb;
 	CALLBACKS.upload = upload_cb;
-	init_ini.callbacks = &CALLBACKS;
-	init_ini.configuration_options = OPTIONS;
 };
 
-static char *read_conn(http_t *conn, int *size)
-{
+static char *read_conn(http_t *conn, int *size) {
 	char buf[100], *data = NULL;
 	int len;
 	*size = 0;
@@ -412,13 +411,6 @@ static char *read_conn(http_t *conn, int *size)
 		memcpy(data + *size - len, buf, len);
 	}
 	return data;
-}
-
-static void ut_http_stop(http_ini_t *ctx) {
-	http_stop(ctx);
-
-	os_sleep(31000); /* This is required to ensure the operating system already
-	                    allows to use the port again */
 }
 
 TEST_WITH(http_download, use_ssl) {
@@ -472,7 +464,7 @@ TEST_WITH(http_download, use_ssl) {
 	free_ex(p2);
 	http_close_connection(conn);
 
-	/* Fetch in-memory file, should succeed. */
+	/* Fetch _in-memory file, should succeed. */
 	ASSERT((conn = http_download("localhost", port, use_ssl, ebuf, sizeof(ebuf), "%s", "GET /blah HTTP/1.1\r\n\r\n")) != NULL);
 	ASSERT((p1 = read_conn(conn, &len1)) != NULL);
 	ASSERT(len1 == (int)strlen(inmemory_file_data));
@@ -480,7 +472,7 @@ TEST_WITH(http_download, use_ssl) {
 	free_ex(p1);
 	http_close_connection(conn);
 
-	/* Fetch in-memory data with no Content-Length, should succeed. */
+	/* Fetch _in-memory data with no Content-Length, should succeed. */
 	ASSERT((conn = http_download("localhost", port, use_ssl, ebuf, sizeof(ebuf), "%s", "GET /data/all HTTP/1.1\r\n\r\n")) != NULL);
 	ASSERT(conn->content_length == fetch_data_size);
 	ASSERT((p1 = read_conn(conn, &len1)) != NULL);
@@ -489,7 +481,7 @@ TEST_WITH(http_download, use_ssl) {
 	free_ex(p1);
 	http_close_connection(conn);
 
-	/* Fetch in-memory data with no Content-Length, should succeed. */
+	/* Fetch _in-memory data with no Content-Length, should succeed. */
 	for (i = 0; i <= 1024 * /* 1024 * */ 8; i += (i < 2 ? 1 : i)) {
 		ASSERT((conn = http_download("localhost", port, use_ssl, ebuf, sizeof(ebuf), "GET /data/%i HTTP/1.1\r\n\r\n", i)) != NULL);
 		ASSERT(conn->content_length == i);
@@ -629,7 +621,7 @@ TEST_WITH(http_download, use_ssl) {
 	http_close_connection(conn);
 
 	/* Stop the test server */
-	ut_http_stop(ctx);
+	http_stop(ctx);
 	return 0;
 }
 
@@ -728,7 +720,7 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 	                                   NULL);
 	ASSERT(conn != NULL);
 
-	ut_http_stop(ctx);
+	http_stop(ctx);
 	return 0;
 }
 
@@ -834,7 +826,7 @@ TEST(http_upload) {
     http_close_connection(conn);
 #endif
 
-	ut_http_stop(ctx);
+	http_stop(ctx);
 
 	return 0;
 }
@@ -873,9 +865,112 @@ TEST(http_stat) {
 	static http_ini_t ctx;
 	http_t fc;
 	struct file file = STRUCT_FILE_INITIALIZER;
-	ASSERT(!http_stat(fake_conn(&fc, &ctx), " does not exist ", &file));
+	ASSERT_EQ(http_stat(fake_conn(&fc, &ctx), " does not exist ", &file), 0);
+	ASSERT_EQ(http_stat(fake_conn(&fc, &ctx), "hello.txt", &file), 1);
 	return 0;
 }
+
+TEST(mask_data) {
+	char _in[1024] = {0};
+	char out[1024] = {0};
+	int i;
+
+	uint32_t mask = 0x61626364;
+	/* TODO: adapt test for big endian */
+	ASSERT_EQ((*(unsigned char *)&mask), 0x64u);
+
+	memset(_in, 0, sizeof(_in));
+	memset(out, 99, sizeof(out));
+
+	mask_data(_in, sizeof(out), mask, out);
+	ASSERT_EQ(!memcmp(out, _in, sizeof(out)), 0);
+
+	for (i = 0; i < 1024; i++) {
+		_in[i] = (char)((unsigned char)i);
+	}
+
+	mask_data(_in, 107, mask, out);
+	ASSERT_EQ(!memcmp(out, _in, 107), 0);
+
+	memset(out, 0, sizeof(out));
+	mask_data(_in, 256, 0x01010101, out);
+	for (i = 0; i < 256; i++) {
+		ASSERT((int)((unsigned char)out[i]) ==
+			(int)(((unsigned char)_in[i]) ^ (char)1u));
+	}
+
+	for (i = 256; i < (int)sizeof(out); i++) {
+		ASSERT((int)((unsigned char)out[i]) == (int)0);
+	}
+
+	/* TODO: check this for big endian */
+	mask_data(_in, 5, 0x01020304, out);
+	ASSERT_UEQ((unsigned char)out[0], 0u ^ 4u);
+	ASSERT_UEQ((unsigned char)out[1], 1u ^ 3u);
+	ASSERT_UEQ((unsigned char)out[2], 2u ^ 2u);
+	ASSERT_UEQ((unsigned char)out[3], 3u ^ 1u);
+	ASSERT_UEQ((unsigned char)out[4], 4u ^ 4u);
+
+	return 0;
+}
+
+TEST(parse_date_str) {
+	time_t now = time(0);
+	struct tm *tm = gmtime(&now);
+	char date[64] = {0};
+	unsigned long i;
+
+	ASSERT_UEQ((unsigned long)parse_date_str("1/Jan/1970 00:01:02"),
+		62ul);
+	ASSERT_UEQ((unsigned long)parse_date_str("1 Jan 1970 00:02:03"),
+		123ul);
+	ASSERT_UEQ((unsigned long)parse_date_str("1-Jan-1970 00:03:04"),
+		184ul);
+	ASSERT_UEQ((unsigned long)parse_date_str(
+		"Xyz, 1 Jan 1970 00:04:05"),
+		245ul);
+
+	http_gmt_time_str(date, sizeof(date), &now);
+	ASSERT_UEQ((uintmax_t)parse_date_str(date), (uintmax_t)now);
+	sprintf(date,
+		"%02u %s %04u %02u:%02u:%02u",
+		tm->tm_mday,
+		mon_short_names[tm->tm_mon],
+		tm->tm_year + 1900,
+		tm->tm_hour,
+		tm->tm_min,
+		tm->tm_sec);
+	ASSERT_UEQ((uintmax_t)parse_date_str(date), (uintmax_t)now);
+
+	http_gmt_time_str(date, 1, NULL);
+	ASSERT_STR(date, "");
+	http_gmt_time_str(date, 6, NULL);
+	ASSERT_STR(date,
+		"Thu, "); /* part of "Thu, 01 Jan 1970 00:00:00 GMT" */
+	http_gmt_time_str(date, sizeof(date), NULL);
+	ASSERT_STR(date, "Thu, 01 Jan 1970 00:00:00 GMT");
+
+	for (i = 2ul; i < 0x8000000ul; i += i / 2) {
+		now = (time_t)i;
+
+		http_gmt_time_str(date, sizeof(date), &now);
+		ASSERT((uintmax_t)parse_date_str(date) == (uintmax_t)now);
+
+		tm = gmtime(&now);
+		sprintf(date,
+			"%02u-%s-%04u %02u:%02u:%02u",
+			tm->tm_mday,
+			mon_short_names[tm->tm_mon],
+			tm->tm_year + 1900,
+			tm->tm_hour,
+			tm->tm_min,
+			tm->tm_sec);
+		ASSERT((uintmax_t)parse_date_str(date) == (uintmax_t)now);
+	}
+
+	return 0;
+}
+
 
 TEST(alloc_vprintf) {
 	char buf[BUF_LEN], *p = buf;
@@ -911,14 +1006,14 @@ TEST(request_replies) {
 		ASSERT((conn = http_download("localhost", atoi(HTTP_PORT), 0, ebuf, sizeof(ebuf), "%s", tests[i].request)) != NULL);
 		http_close_connection(conn);
 	}
-	ut_http_stop(ctx);
+	http_stop(ctx);
 
 	ASSERT((ctx = http_start(1024, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
 	for (i = 0; tests[i].request != NULL; i++) {
 		ASSERT((conn = http_download("localhost", atoi(HTTPS_PORT), 1, ebuf, sizeof(ebuf), "%s", tests[i].request)) != NULL);
 		http_close_connection(conn);
 	}
-	ut_http_stop(ctx);
+	http_stop(ctx);
 	return 0;
 }
 
@@ -986,7 +1081,7 @@ TEST(http_route) {
 	delay(10000);
 	http_close_connection(conn);
 
-	ut_http_stop(ctx);
+	http_stop(ctx);
 	return 0;
 }
 
@@ -1023,7 +1118,7 @@ TEST(api_calls) {
 	ASSERT((ctx = http_start(0, &callbacks, (void *)123, (const options_ini_t **)OPTIONS)) != NULL);
 	ASSERT((conn = http_download("localhost", atoi(HTTP_PORT), 0, ebuf, sizeof(ebuf), "%s", request)) != NULL);
 	http_close_connection(conn);
-	ut_http_stop(ctx);
+	http_stop(ctx);
 	return 0;
 }
 
@@ -1144,40 +1239,268 @@ TEST(str_encode64) {
 	return 0;
 }
 
-TEST(parse_port_string) {
-	static string_t valid[] = {
-		"0",
-		"1",
-		"1s",
-		"1r",
-		"1.2.3.4:1",
-		"1.2.3.4:1s",
-		"1.2.3.4:1r",
-		"[::1]:123",
-		"[3ffe:2a00:100:7031::1]:900",
-		NULL,
-	};
-	static string_t invalid[] = {
-	    "99999", "1k", "1.2.3", "1.2.3.4:", "1.2.3.4:2p", NULL};
-	struct server_socket_s so;
-	int ip_family;
-	struct vec vec;
-	int i;
+TEST(http_get_valid_options) {
+	const options_ini_t *config_options = http_get_valid_options();
+	/* Check size of config_options vs. number of options in enum. */
+	ASSERT_NULL(config_options[NUM_OPTIONS].name);
+	ASSERT_EQ((int)INI_TYPE_UNKNOWN,
+		config_options[NUM_OPTIONS].type);
 
-	ip_family = 123;
-	for (i = 0; valid[i] != NULL; i++) {
-		vec.ptr = valid[i];
-		vec.len = strlen(vec.ptr);
-		ASSERT(parse_port_string(&vec, &so, &ip_family) != 0);
-	}
+	/* Check option enums vs. option names. */
+	/* Check if the order in
+	* static struct mg_option config_options[]
+	* is the same as in the option enum
+	* This test allows to reorder config_options and the enum,
+	* and check if the order is still consistent. */
+	ASSERT_STR("max_fd", config_options[MAX_FD].name);
+	ASSERT_STR("cgi_pattern", config_options[CGI_EXTENSIONS].name);
+	ASSERT_STR("cgi_environment", config_options[CGI_ENVIRONMENT].name);
+	ASSERT_STR("put_delete_auth_file",
+		config_options[PUT_DELETE_PASSWORDS_FILE].name);
+	ASSERT_STR("cgi_interpreter", config_options[CGI_INTERPRETER].name);
+	ASSERT_STR("protect_uri", config_options[PROTECT_URI].name);
+	ASSERT_STR("authentication_domain",
+		config_options[AUTHENTICATION_DOMAIN].name);
+	ASSERT_STR("enable_auth_domain_check",
+		config_options[ENABLE_AUTH_DOMAIN_CHECK].name);
+	ASSERT_STR("ssi_pattern", config_options[SSI_EXTENSIONS].name);
+	ASSERT_STR("throttle", config_options[THROTTLE].name);
+	ASSERT_STR("access_log_file", config_options[ACCESS_LOG_FILE].name);
+	ASSERT_STR("enable_directory_listing",
+		config_options[ENABLE_DIRECTORY_LISTING].name);
+	ASSERT_STR("error_log_file", config_options[ERROR_LOG_FILE].name);
+	ASSERT_STR("global_auth_file",
+		config_options[GLOBAL_PASSWORDS_FILE].name);
+	ASSERT_STR("index_files", config_options[INDEX_FILES].name);
+	ASSERT_STR("enable_keep_alive",
+		config_options[ENABLE_KEEP_ALIVE].name);
+	ASSERT_STR("access_control_list",
+		config_options[ACCESS_CONTROL_LIST].name);
+	ASSERT_STR("extra_mime_types", config_options[EXTRA_MIME_TYPES].name);
+	ASSERT_STR("listening_ports", config_options[LISTENING_PORTS].name);
+	ASSERT_STR("document_root", config_options[DOCUMENT_ROOT].name);
+	ASSERT_STR("fallback_document_root",
+		config_options[FALLBACK_DOCUMENT_ROOT].name);
+	ASSERT_STR("ssl_certificate", config_options[SSL_CERTIFICATE].name);
+	ASSERT_STR("ssl_certificate_chain",
+		config_options[SSL_CERTIFICATE_CHAIN].name);
+	ASSERT_STR("num_threads", config_options[NUM_THREADS].name);
+	ASSERT_STR("prespawn_threads", config_options[PRESPAWN_THREADS].name);
+	ASSERT_STR("run_as_user", config_options[RUN_AS_USER].name);
+	ASSERT_STR("url_rewrite_patterns",
+		config_options[URL_REWRITE_PATTERN].name);
+	ASSERT_STR("hide_files_patterns", config_options[HIDE_FILES].name);
+	ASSERT_STR("request_timeout_ms",
+		config_options[REQUEST_TIMEOUT].name);
+	ASSERT_STR("keep_alive_timeout_ms",
+		config_options[KEEP_ALIVE_TIMEOUT].name);
+	ASSERT_STR("linger_timeout_ms", config_options[LINGER_TIMEOUT].name);
+	ASSERT_STR("listen_backlog",
+		config_options[LISTEN_BACKLOG_SIZE].name);
+	ASSERT_STR("ssl_verify_peer",
+		config_options[SSL_DO_VERIFY_PEER].name);
+	ASSERT_STR("ssl_ca_path", config_options[SSL_CA_PATH].name);
+	ASSERT_STR("ssl_ca_file", config_options[SSL_CA_FILE].name);
+	ASSERT_STR("ssl_verify_depth", config_options[SSL_VERIFY_DEPTH].name);
+	ASSERT_STR("ssl_default_verify_paths",
+		config_options[SSL_DEFAULT_VERIFY_PATHS].name);
+	ASSERT_STR("ssl_cipher_list", config_options[SSL_CIPHER_LIST].name);
+	ASSERT_STR("ssl_protocol_version",
+		config_options[SSL_PROTOCOL_VERSION].name);
+	ASSERT_STR("ssl_short_trust", config_options[SSL_SHORT_TRUST].name);
 
-	for (i = 0; invalid[i] != NULL; i++) {
-		vec.ptr = invalid[i];
-		vec.len = strlen(vec.ptr);
-		ASSERT(parse_port_string(&vec, &so, &ip_family) == 0);
-	}
+	ASSERT_STR("websocket_timeout_ms",
+		config_options[WEBSOCKET_TIMEOUT].name);
+	ASSERT_STR("enable_websocket_ping_pong",
+		config_options[ENABLE_WEBSOCKET_PING_PONG].name);
+
+	ASSERT_STR("decode_url", config_options[DECODE_URL].name);
+	ASSERT_STR("decode_query_string",
+		config_options[DECODE_QUERY_STRING].name);
+
+	ASSERT_STR("quickjs_script_pattern",
+		config_options[QUICKJS_SCRIPT_EXTENSIONS].name);
+	ASSERT_STR("websocket_root", config_options[WEBSOCKET_ROOT].name);
+	ASSERT_STR("fallback_websocket_root",
+		config_options[FALLBACK_WEBSOCKET_ROOT].name);
+
+	ASSERT_STR("access_control_allow_origin",
+		config_options[ACCESS_CONTROL_ALLOW_ORIGIN].name);
+	ASSERT_STR("access_control_allow_methods",
+		config_options[ACCESS_CONTROL_ALLOW_METHODS].name);
+	ASSERT_STR("access_control_allow_headers",
+		config_options[ACCESS_CONTROL_ALLOW_HEADERS].name);
+	ASSERT_STR("error_pages", config_options[ERROR_PAGES].name);
+	ASSERT_STR("tcp_nodelay", config_options[CONFIG_TCP_NODELAY].name);
+
+	ASSERT_STR("static_file_max_age",
+		config_options[STATIC_FILE_MAX_AGE].name);
+	ASSERT_STR("strict_transport_security_max_age",
+		config_options[STRICT_HTTPS_MAX_AGE].name);
+	ASSERT_STR("allow_sendfile_call",
+		config_options[ALLOW_SENDFILE_CALL].name);
+
+	ASSERT_STR("additional_header",
+		config_options[ADDITIONAL_HEADER].name);
+	ASSERT_STR("max_request_size", config_options[MAX_REQUEST_SIZE].name);
+	ASSERT_STR("allow_index_script_resource",
+		config_options[ALLOW_INDEX_SCRIPT_SUB_RES].name);
 
 	return 0;
+}
+
+TEST(http_get_uri_type) {
+	/* is_valid_uri is superseded by http_get_uri_type */
+	ASSERT_EQ(2, http_get_uri_type("/api"));
+	ASSERT_EQ(2, http_get_uri_type("/api/"));
+	ASSERT_EQ(2,
+		http_get_uri_type("/some/long/path%20with%20space/file.xyz"));
+	ASSERT_EQ(0, http_get_uri_type("api"));
+	ASSERT_EQ(1, http_get_uri_type("*"));
+	ASSERT_EQ(0, http_get_uri_type("*xy"));
+	ASSERT_EQ(3, http_get_uri_type("http://somewhere/"));
+	ASSERT_EQ(3, http_get_uri_type("https://somewhere/some/file.html"));
+	ASSERT_EQ(4, http_get_uri_type("http://somewhere:8080/"));
+	ASSERT_EQ(4, http_get_uri_type("https://somewhere:8080/some/file.html"));
+
+	return 0;
+}
+
+TEST(http_builtin_mime_type) {
+	ASSERT_STR(http_builtin_mime_type("x.txt"), "text/plain");
+	ASSERT_STR(http_builtin_mime_type("x.html"), "text/html");
+	ASSERT_STR(http_builtin_mime_type("x.HTML"), "text/html");
+	ASSERT_STR(http_builtin_mime_type("x.hTmL"), "text/html");
+	ASSERT_STR(http_builtin_mime_type("/abc/def/ghi.htm"), "text/html");
+	ASSERT_STR(http_builtin_mime_type("x.unknown_extention_xyz"),
+		"text/plain");
+
+	return 0;
+}
+
+
+TEST(parse_port_string) {
+	/* Adapted from unit_test.c */
+	/* Copyright (c) 2013-2020 the Civetweb developers */
+	/* Copyright (c) 2004-2013 Sergey Lyubka */
+	struct t_test_parse_port_string {
+		const char *port_string;
+		int valid;
+		int ip_family;
+		uint16_t port_num;
+	};
+
+	static struct t_test_parse_port_string testdata[] =
+	{{"0", 1, 4, 0},
+	  {"1", 1, 4, 1},
+	  {"65535", 1, 4, 65535},
+	  {"65536", 0, 0, 0},
+
+	  {"1s", 1, 4, 1},
+	  {"1r", 1, 4, 1},
+	  {"1k", 0, 0, 0},
+
+	  {"1.2.3", 0, 0, 0},
+	  {"1.2.3.", 0, 0, 0},
+	  {"1.2.3.4", 0, 0, 0},
+	  {"1.2.3.4:", 0, 0, 0},
+
+	  {"1.2.3.4:0", 1, 4, 0},
+	  {"1.2.3.4:1", 1, 4, 1},
+	  {"1.2.3.4:65535", 1, 4, 65535},
+	  {"1.2.3.4:65536", 0, 0, 0},
+
+	  {"1.2.3.4:1s", 1, 4, 1},
+	  {"1.2.3.4:1r", 1, 4, 1},
+	  {"1.2.3.4:1k", 0, 0, 0},
+
+	  /* IPv6 config */
+	  {"[::1]:123", 1, 6, 123},
+	  {"[::]:80", 1, 6, 80},
+	  {"[3ffe:2a00:100:7031::1]:900", 1, 6, 900},
+
+	  /* IPv4 + IPv6 config */
+	  {"+80", 1, 4 + 6, 80},
+
+	  {NULL, 0, 0, 0}};
+
+	http_socket so;
+	struct vec vec;
+	int ip_family;
+	int i, ret;
+
+	for (i = 0; testdata[i].port_string != NULL; i++) {
+		vec.ptr = testdata[i].port_string;
+		vec.len = strlen(vec.ptr);
+
+		ip_family = 123;
+		ret = parse_port_string(&vec, &so, &ip_family);
+
+		if ((ret != testdata[i].valid)
+			|| (ip_family != testdata[i].ip_family)) {
+			cerr("Port string [%s]: "
+				"expected valid=%i, family=%i; \n"
+				"got valid=%i, family=%i\n",
+				testdata[i].port_string,
+				testdata[i].valid,
+				testdata[i].ip_family,
+				ret,
+				ip_family);
+		}
+
+		if (ip_family == 4)
+			ASSERT((int)so.lsa.sin.sin_family == (int)AF_INET);
+
+		if (ip_family == 6)
+			ASSERT((int)so.lsa.sin.sin_family == (int)AF_INET6);
+
+		/* Test valid strings only */
+		if (ret)
+			ASSERT(htons(so.lsa.sin.sin_port) == testdata[i].port_num);
+	}
+
+	/* special case: localhost can be ipv4 or ipv6 */
+	vec.ptr = "localhost:123";
+	vec.len = strlen(vec.ptr);
+	ret = parse_port_string(&vec, &so, &ip_family);
+	if (ret != 1)
+		cerr("IP of localhost seems to be unknown on this system (%i)\n",
+			(int)ret);
+
+	if ((ip_family != 4) && (ip_family != 6))
+		cerr("IP family for localhost must be 4 or 6 but is %i\n",
+			(int)ip_family);
+
+	ASSERT_EQ((int)htons(so.lsa.sin.sin_port), (int)123);
+	return 0;
+}
+
+TEST(main_main) {
+	int i, unused, result = 0;
+
+	/* create test data */
+	fetch_data = (char *)malloc(fetch_data_size);
+	for (i = 0; i < fetch_data_size; i++) {
+		fetch_data[i] = 'a' + i % 10;
+	}
+
+	/* tests with network access */
+	init_CALLBACKS();
+	EXEC_TEST_WITH(http_download, 0);
+	EXEC_TEST_WITH(http_download, 1);
+
+	EXEC_TEST_WITH(http_connect_websocket_client, 0);
+	EXEC_TEST_WITH(http_connect_websocket_client, 1);
+
+	EXEC_TEST(http_upload);
+	EXEC_TEST(request_replies);
+	EXEC_TEST(api_calls);
+	EXEC_TEST(http_route);
+
+	/* test completed */
+	free(fetch_data);
+
+	return result;
 }
 
 TEST(list) {
@@ -1220,48 +1543,30 @@ TEST(list) {
 	EXEC_TEST(http_md5);
 	EXEC_TEST(alloc_vprintf);
 	EXEC_TEST(str_encode64);
+	EXEC_TEST(mask_data);
+	EXEC_TEST(parse_date_str);
+	EXEC_TEST(http_get_valid_options);
+	EXEC_TEST(http_builtin_mime_type);
+	EXEC_TEST(http_get_uri_type);
+	EXEC_TEST(http_stat);
 
 	unused = chdir("../build");
 #if defined(_WIN32) || defined(_WIN64)
 	unused = chdir("Debug");
 #endif
-	return result;
 
 	/* start stop server */
-	ctx = http_start(0, NULL, NULL, NULL);
-	REQUIRE(ctx != NULL);
-	os_sleep(10000);
-	ut_http_stop(ctx);
-
-	/* create test data */
-	fetch_data = (char *)malloc(fetch_data_size);
-	for (i = 0; i < fetch_data_size; i++) {
-		fetch_data[i] = 'a' + i % 10;
-	}
-
-	/* tests with network access */
-	init_CALLBACKS();
+	ASSERT_NOTNULL((ctx = http_start(0, NULL, NULL, NULL)));
 	EXEC_TEST(parse_port_string);
-	EXEC_TEST_WITH(http_download, 0);
-	EXEC_TEST_WITH(http_download, 1);
+	http_stop(ctx);
+	return result;
 
-	EXEC_TEST_WITH(http_connect_websocket_client, 0);
-	EXEC_TEST_WITH(http_connect_websocket_client, 1);
-
-	EXEC_TEST(http_upload);
-	EXEC_TEST(http_stat);
-	EXEC_TEST(request_replies);
-	EXEC_TEST(api_calls);
-	EXEC_TEST(http_route);
-
-	/* test completed */
-	free(fetch_data);
+	EXEC_TEST(main_main);
 
 	unused = chdir("../build");
 #if defined(_WIN32) || defined(_WIN64)
 	unused = chdir("Debug");
 #endif
-	return result;
 }
 
 int main(int argc, char **argv) {
