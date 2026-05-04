@@ -840,8 +840,7 @@ bool str_has_either(const char *src, char *match, char *match2) {
 	for (c = 0; c <= src_length - match_length; c++) {
 		position = e = c;
 		for (d = 0; d < match_length; d++)
-			if ((unsigned char *)match[d] == (const unsigned char *)src[e]
-				|| (unsigned char *)match2[d] == (const unsigned char *)src[e])
+			if (match[d] == src[e] || match2[d] == src[e])
 				e++;
 			else
 				break;

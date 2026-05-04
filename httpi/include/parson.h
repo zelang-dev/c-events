@@ -42,6 +42,14 @@ extern "C"
 
 #include <stddef.h>   /* size_t */
 
+#ifndef max
+# define max(a, b) (((a) > (b)) ? (a) : (b))
+#endif
+
+#ifndef min
+# define min(a, b) (((a) < (b)) ? (a) : (b))
+#endif
+
 /* Types and enums */
 typedef struct json_object_t JSON_Object;
 typedef struct json_array_t  JSON_Array;

@@ -92,19 +92,6 @@ struct form_data_s {
 	string encoding;
 };
 
-enum http_dbg {
-	/* No error messages are generated at all */
-	DEBUG_NONE = 0x00,
-	/* Messages for errors impacting multiple connections in a severe way are generated */
-	DEBUG_CRASH = 0x10,
-	/* Messages for errors impacting single connections in a severe way are generated (default)	*/
-	DEBUG_ERROR = 0x20,
-	/* Messages for errors impacting single connections in a minor way are generated */
-	DEBUG_WARNING = 0x30,
-	/* All error, warning and informational messages are generated */
-	DEBUG_INFO = 0x40
-};
-
 /*
  * enum HTTP_STATUS_...
  *
@@ -712,29 +699,6 @@ struct dir_scan_data {
 	struct de *entries;
 	size_t num_entries;
 	size_t arr_size;
-};
-
-struct error_data {
-	unsigned code;           /* error code (number) */
-	unsigned code_sub;       /* error sub code (number) */
-	string text;              /* buffer for error text */
-	size_t text_buffer_size; /* size of buffer of "text" */
-};
-
-struct init_data {
-	/* callback function pointer */
-	const struct http_clb_s *callbacks;
-	/* data */
-	void_t user_data;
-	string_t *configuration_options;
-};
-
-struct client_options {
-	string_t host;
-	int port;
-	string_t client_cert;
-	string_t server_cert;
-	string_t host_name;
 };
 
 bool http_fopen(http_ini_t *ctx, const http_t *conn,

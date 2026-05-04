@@ -309,7 +309,7 @@ FORCEINLINE const options_ini_t *http_get_valid_options(void) {
 	return config_options;
 }
 
-int http_server_ports(http_ini_t *ctx, int size, struct http_server_port *ports) {
+int http_server_ports(http_ini_t *ctx, int size, http_server_port_t *ports) {
 	int i, cnt = 0;
 
 	if (size <= 0) {
@@ -428,7 +428,7 @@ bool http_set_uid_option_ex(http_ini_t *ctx) {
 	else if (setgroups(0, NULL))
 		http_log(DEBUG_CRASH, NULL, "%s: setgroups(): %s", __func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 	else if (setuid(pw->pw_uid) == -1)
-		http_log(DEBUG_CRASH, NULL, "%s: setuid(%s): %s", __func__, uid, httplib_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+		http_log(DEBUG_CRASH, NULL, "%s: setuid(%s): %s", __func__, uid, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 	else
 		return true;
 
@@ -987,10 +987,10 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 					opt = &so->is_optional;
 					break;
 				case 'r':
-					opt = &so->has_redir;
+					opt = (unsigned char *)&so->has_redir;
 					break;
 				case 's':
-					opt = &so->has_ssl;
+					opt = (unsigned char *)&so->has_ssl;
 					break;
 				default: /* empty */
 					break;

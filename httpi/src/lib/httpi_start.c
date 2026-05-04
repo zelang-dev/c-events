@@ -94,7 +94,7 @@ static void httpi_cleanup(void_t ptr) {
 	}
 }
 
-static FORCEINLINE void http_handler(int client) {
+static void http_handler(int client) {
 	guard {
 		http_t *conn = (http_t *)events_get_target_data(client);
 		defer(httpi_cleanup, conn);
@@ -219,7 +219,7 @@ void http_stop(http_ini_t *ctx) {
 	events_destroy(event_loop());
 }
 
-static void http_free_ini(http_ini_t *ctx) {
+void http_free_ini(http_ini_t *ctx) {
 	int i;
 	struct http_cb_info *tmp_rh;
 

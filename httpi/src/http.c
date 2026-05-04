@@ -678,7 +678,7 @@ void http_free(http_t *this) {
 }
 
 http_t *http_for(string hostname, double protocol) {
-	http_t *this = fence(calloc(1, sizeof(http_t)), http_free);
+	http_t *this = fence(calloc(1, sizeof(http_t)), (func_t)http_free);
 	if (!is_empty(this)) {
 		this->names = nullptr;
 		this->cookies = nullptr;

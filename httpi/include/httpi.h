@@ -12,10 +12,6 @@
 #include <quickjs.h>
 #include <quickjs-libc.h>
 
-#undef in
-#include <zlib.h>
-#define in ,
-
 #ifndef HTTPI_THREAD
 #	if defined(_WIN32)
 #		define HTTPI_THREAD			unsigned __stdcall
@@ -27,10 +23,15 @@
 #		define HTTPI_THREAD_TYPE		void *
 #		define HTTPI_THREAD_CALLING_CONV
 #		define HTTPI_THREAD_RETNULL		NULL
+# 		define ZLIB_INSECURE 1
+#		include <pwd.h>
 #	endif  /* _WIN32 */
 #endif  /* HTTPI_THREAD */
 
-#define _POSIX_THREAD_SAFE_FUNCTIONS 1
+#undef in
+#include <zlib.h>
+#define in ,
+
 #define ERROR_STRING_LEN ARRAY_SIZE
 
 /* HTTP server context */
@@ -39,6 +40,43 @@ typedef struct ini_option options_ini_t;
 typedef struct http2_s http2_t;
 typedef struct h2_header h2_header_t;
 typedef struct form_data_handler_s form_data_handler_t;
+typedef struct http_server_port http_server_port_t;
+
+enum http_dbg {
+	/* No error messages are generated at all */
+	DEBUG_NONE = 0x00,
+	/* Messages for errors impacting multiple connections in a severe way are generated */
+	DEBUG_CRASH = 0x10,
+	/* Messages for errors impacting single connections in a severe way are generated (default)	*/
+	DEBUG_ERROR = 0x20,
+	/* Messages for errors impacting single connections in a minor way are generated */
+	DEBUG_WARNING = 0x30,
+	/* All error, warning and informational messages are generated */
+	DEBUG_INFO = 0x40
+};
+
+struct error_data {
+	unsigned code;           /* error code (number) */
+	unsigned code_sub;       /* error sub code (number) */
+	string text;              /* buffer for error text */
+	size_t text_buffer_size; /* size of buffer of "text" */
+};
+
+struct init_data {
+	/* callback function pointer */
+	const struct http_clb_s *callbacks;
+	/* data */
+	void_t user_data;
+	string_t *configuration_options;
+};
+
+struct client_options {
+	string_t host;
+	int port;
+	string_t client_cert;
+	string_t server_cert;
+	string_t host_name;
+};
 
 #if !defined(HTTP2_DYN_TABLE_SIZE)
 #	define HTTP2_DYN_TABLE_SIZE (256)
@@ -135,9 +173,9 @@ C_API string_t httpi_version(void);
 /* Get the list of ports that `HttPi` is listening on.
    The parameter `size` is the size of the ports array in elements.
    The caller is responsibility to allocate the required memory.
-   This function returns the number of `struct http_server_port` elements
+   This function returns the number of `http_server_port_t ` elements
    filled in, or <0 in case of an error. */
-C_API int http_server_ports(http_ini_t *ctx, int size, struct http_server_port *ports);
+C_API int http_server_ports(http_ini_t *ctx, int size, http_server_port_t *ports);
 
 /* Send contents of the entire file together with HTTP headers.
  *
