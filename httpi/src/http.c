@@ -247,7 +247,7 @@ string url_encode(char const *s, size_t len) {
 	end = (unsigned char *)s + len;
 	start = calloc(1, 3 * len);
 	if (is_empty(start))
-		panic("calloc() failed");
+		return null;
 
 	to = (unsigned char *)start;
 
@@ -366,10 +366,15 @@ void parse_multipart(http_t *this) {
 		bool found;
 
 		snprintf(scrape, ARRAY_SIZE, "--%s", this->boundary);
-		if (!this->content_length)
-			this->content_length = atoi(http_get_header(this, "Content-Length"));
+		if (!this->content_length) {
+			if (!is_empty(value = http_get_header(this, "Content-Length")))
+				this->content_length = atoi(value);
+		}
 
 		boundary = (string *)mem_split_ex(this->body, this->content_length, this->boundary, &count);
+		if (is_empty(boundary))
+			return;
+
 		$append(this->garbage, boundary);
 		if (--count >= 1 && str_case_equal(boundary[count], "--", 2)) {
 			if (!is_empty(this->dispositions)) {
