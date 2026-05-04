@@ -304,37 +304,40 @@ static void open_auth_file(http_t *conn,string_t path,struct file *filep) {
 				&truncated,
 				name,
 				sizeof(name),
-				"%s/%s",
+				"%s%s%s",
 				path,
+				SYS_DIRSEP,
 				PASSWORDS_FILE_NAME);
 
 			if (truncated || !http_fopen(conn->ctx, conn, name, "rb", filep)) {
 				/* Don't use http_log here, but only a trace, since
 				 * this is a typical case. It will occur for every directory
 				 * without a password file. */
-				debug_info("fopen(%s): %s", name, strerror(os_geterror()));
+				debug_info("fopen(%s): %s"CLR_LN, name, strerror(os_geterror()));
 			}
 		} else {
 			/* Try to find .htpasswd in requested directory. */
 			for (p = path, e = p + strlen(p) - 1; e > p; e--) {
-				if (e[0] == '/') {
+				if (e[0] == SYS_DIRSEP_C) {
 					break;
 				}
 			}
+
 			http_snprintf(conn,
 				&truncated,
 				name,
 				sizeof(name),
-				"%.*s/%s",
+				"%.*s%s%s",
 				(int)(e - p),
 				p,
+				SYS_DIRSEP,
 				PASSWORDS_FILE_NAME);
 
 			if (truncated || !http_fopen(conn->ctx, conn, name, "rb", filep)) {
 				/* Don't use http_log here, but only a trace, since
 				 * this is a typical case. It will occur for every directory
 				 * without a password file. */
-				debug_info("fopen(%s): %s", name, strerror(os_geterror()));
+				debug_info("fopen(%s): %s"CLR_LN, name, strerror(os_geterror()));
 			}
 		}
 	}
@@ -568,10 +571,10 @@ void send_authorization_request(http_t *conn, string_t realm) {
 		realm = conn->domain->config[AUTHENTICATION_DOMAIN];
 	}
 
-	atomic_lock(conn->ctx->nonce_mutex);
+	atomic_lock(&conn->ctx->nonce_mutex);
 	nonce += conn->domain->nonce_count;
 	++conn->domain->nonce_count;
-	atomic_unlock(conn->ctx->nonce_mutex);
+	atomic_unlock(&conn->ctx->nonce_mutex);
 
 	nonce ^= conn->domain->auth_nonce_mask;
 	conn->req.must_close = 1;
@@ -624,7 +627,7 @@ int is_authorized_for_put(http_t *conn) {
 		}
 	}
 
-	debug_info("file write authorization: %i", ret);
+	debug_info("file write authorization: %i"CLR_LN, ret);
 	return ret;
 }
 

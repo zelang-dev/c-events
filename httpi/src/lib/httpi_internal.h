@@ -441,7 +441,7 @@ enum {
 	FORM_FIELD_HANDLE_ABORT = 0x10
 };
 
-/* This structure needs to be passed to http_start(),
+/* This structure needs to be passed to http_setup(),
  * to let `HttPi` know which callbacks to invoke. */
 struct http_clb_s {
 	request_cb start;
@@ -576,7 +576,7 @@ typedef struct httpi_s {
 	time_t conn_birth_time;
 	/* Unread data from the last chunk */
 	size_t chunk_remainder;
-	/* User data pointer passed to `http_start()` */
+	/* User data pointer passed to `http_setup()` */
 	void_t user_data;
 	/* Connection-specific user data */
 	void_t conn_data;
@@ -608,8 +608,6 @@ struct http_s {
 	http_status status;
 	/* The status code */
 	http_status code;
-	/* Connected file descriptor/socket */
-	fds_t fd;
 	/* Connected client */
 	http_socket	client;
 	/* Is Multipart `form_data` in header response? */
@@ -916,14 +914,13 @@ string_t http_get_rel_url_at_current_server(string_t uri, http_t *conn);
 void http_gmt_time_str(char *buf, size_t buf_len, time_t *t);
 
 /* Sets callback handlers to uri's. */
-void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_type, bool is_delete_request,
-	route_cb handler,
-	ws_connect_cb connect_handler,
-	ws_ready_cb ready_handler,
-	ws_data_cb data_handler,
-	ws_close_cb close_handler,
-	auth_cb auth_handler,
-	void_t cbdata);
+void http_set_handler(http_ini_t *ctx,
+	string_t uri, enum route_type_t handler_type,
+	bool is_delete_request, route_cb handler,
+	struct ws_subprotocols_s *subprotocols,
+	ws_connect_cb connect_handler, ws_ready_cb ready_handler,
+	ws_data_cb data_handler, ws_close_cb close_handler,
+	auth_cb auth_handler, void_t cbdata);
 
 http_t *http_connect_client_impl(const struct client_options *client_options,
 	int use_ssl, struct error_data *error);

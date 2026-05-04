@@ -221,6 +221,7 @@ C_API int events_init(int max_fd);
 
 /* Deinitialize events. */
 C_API void events_deinit(void);
+C_API void events_ctr_c_unwind(void);
 
 /* Registers a descriptor, with event, timeout, and callback argument to event loop. */
 C_API int events_add(events_t *loop, fds_t sfd, int events, int timeout_in_secs, events_cb callback, void *);

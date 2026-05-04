@@ -1090,7 +1090,7 @@ void deferred_unwind(array_t garbage) {
 	}
 }
 
-static void events_ctr_c_unwind(void) {
+void events_ctr_c_unwind(void) {
 	if (is_empty(atexit_ctr_c_task) || !is_ptr_usable(atexit_ctr_c_task))
 		return;
 
@@ -1283,6 +1283,9 @@ static void *task_wait_system(void *v) {
 
 		now = events_nsec();
 		active_info();
+		if (__thrd()->loop == null)
+			return 0;
+
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
 			l = __thrd()->sleep_queue;
 			dequeue(l, t);

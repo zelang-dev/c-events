@@ -428,7 +428,7 @@ TEST_WITH(http_download, use_ssl) {
 		port = atoi(HTTP_PORT);
 	}
 
-	ctx = http_start(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS);
+	ctx = http_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS);
 
 	ASSERT(ctx != NULL);
 
@@ -645,7 +645,7 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 		port = atoi(HTTPS_PORT);
 	else
 		port = atoi(HTTP_PORT);
-	ASSERT((ctx = http_start(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
+	ASSERT((ctx = http_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
 
 	/* Try to connect to our own server */
 	/* Invalid port test */
@@ -750,7 +750,7 @@ TEST(http_upload) {
 
 	init.callbacks = &CALLBACKS;
 	init.configuration_options = OPTIONS;
-	ASSERT((ctx = http_start(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
+	ASSERT((ctx = http_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
 
 	/* Upload one file */
 	ASSERT((file_data = read_file("unit_test.c", &file_len)) != NULL);
@@ -1001,14 +1001,14 @@ TEST(request_replies) {
 	    {NULL, NULL},
 	};
 
-	ASSERT((ctx = http_start(1024, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
+	ASSERT((ctx = http_setup(1024, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
 	for (i = 0; tests[i].request != NULL; i++) {
 		ASSERT((conn = http_download("localhost", atoi(HTTP_PORT), 0, ebuf, sizeof(ebuf), "%s", tests[i].request)) != NULL);
 		http_close_connection(conn);
 	}
 	http_stop(ctx);
 
-	ASSERT((ctx = http_start(1024, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
+	ASSERT((ctx = http_setup(1024, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
 	for (i = 0; tests[i].request != NULL; i++) {
 		ASSERT((conn = http_download("localhost", atoi(HTTPS_PORT), 1, ebuf, sizeof(ebuf), "%s", tests[i].request)) != NULL);
 		http_close_connection(conn);
@@ -1048,7 +1048,7 @@ TEST(http_route) {
 	int i;
 	string_t request = "GET /U7 HTTP/1.0\r\n\r\n";
 
-	ctx = http_start(0, NULL, NULL, (const options_ini_t **)OPTIONS);
+	ctx = http_setup(0, NULL, NULL, (const options_ini_t **)OPTIONS);
 	ASSERT(ctx != NULL);
 
 	for (i = 0; i < 1000; i++) {
@@ -1115,7 +1115,7 @@ TEST(api_calls) {
 
 	memset(&callbacks, 0, sizeof(callbacks));
 	callbacks.start = api_callback;
-	ASSERT((ctx = http_start(0, &callbacks, (void *)123, (const options_ini_t **)OPTIONS)) != NULL);
+	ASSERT((ctx = http_setup(0, &callbacks, (void *)123, (const options_ini_t **)OPTIONS)) != NULL);
 	ASSERT((conn = http_download("localhost", atoi(HTTP_PORT), 0, ebuf, sizeof(ebuf), "%s", request)) != NULL);
 	http_close_connection(conn);
 	http_stop(ctx);
@@ -1248,7 +1248,7 @@ TEST(http_get_valid_options) {
 
 	/* Check option enums vs. option names. */
 	/* Check if the order in
-	* static struct mg_option config_options[]
+	* static `options_ini_t` config_options[]
 	* is the same as in the option enum
 	* This test allows to reorder config_options and the enum,
 	* and check if the order is still consistent. */
@@ -1475,6 +1475,212 @@ TEST(parse_port_string) {
 	return 0;
 }
 
+static void minimal_http_https_client_impl(const char *server,
+	uint16_t port,
+	int use_ssl,
+	const char *uri,
+	const char *expected) {
+	/* Client var */
+	http_t *client;
+	char client_err_buf[256];
+	char client_data_buf[4096];
+	int64_t data_read;
+	int r;
+
+	client = http_connect_client(
+		server, port, use_ssl, client_err_buf, sizeof(client_err_buf));
+
+	if ((client == NULL) || (0 != strcmp(client_err_buf, ""))) {
+		cerr("%s connection to server [%s] port [%u] failed: [%s]",
+			use_ssl ? "HTTPS" : "HTTP",
+			server,
+			port,
+			client_err_buf);
+		abort();
+	}
+
+	http_printf(client, "GET %s HTTP/1.0\r\n\r\n", uri);
+	r = http_get_response(client, client_err_buf, sizeof(client_err_buf), 10);
+	if ((r < 0) || (0 != strcmp(client_err_buf, ""))) {
+		cerr(
+			"%s connection to server [%s] port [%u] did not respond: [%s]"CLR_LN,
+			use_ssl ? "HTTPS" : "HTTP",
+			server,
+			port,
+			client_err_buf);
+		abort();
+	}
+
+	ASSERT(client != NULL);
+
+	/* Check for status code 200 OK or 30? moved */
+	if ((client->code != 200)
+		&& (client->code / 10 != 30)) {
+		cerr("Request to %s://%s:%u/%s: Status %u"CLR_LN,
+			use_ssl ? "HTTPS" : "HTTP",
+			server,
+			port,
+			uri,
+			client->code);
+		abort();
+	}
+
+	data_read = 0;
+	while (data_read < client->content_length) {
+		r = http_read(client,
+			client_data_buf + data_read,
+			sizeof(client_data_buf) - (size_t)data_read);
+		if (r > 0) {
+			data_read += r;
+			ASSERT((data_read < sizeof(client_data_buf)));
+		}
+	}
+
+	/* Nothing left to read */
+	r = http_read(client, client_data_buf, sizeof(client_data_buf));
+	ASSERT_EQ_ABORT(r, 0);
+
+	if (expected) {
+		ASSERT_STR_ABORT(client_data_buf, expected);
+	}
+
+	http_close_connection(client);
+}
+
+static void minimal_http_client_check(const char *server,
+	uint16_t port,
+	const char *uri,
+	const char *expected) {
+	minimal_http_https_client_impl(server, port, 0, uri, expected);
+}
+
+static void minimal_https_client_check(const char *server,
+	uint16_t port,
+	const char *uri,
+	const char *expected) {
+	minimal_http_https_client_impl(server, port, 1, uri, expected);
+}
+
+static int minimal_test_request_handler(http_t *conn, void *cbdata) {
+	const char *msg = (const char *)cbdata;
+	unsigned long len = (unsigned long)strlen(msg) + 1;
+
+	ASSERT(conn != NULL);
+	ASSERT(len > 0);
+
+	ASSERT_STR(conn->method, "GET");
+	ASSERT_EQ(conn->req.local_uri[0], '/');
+	ASSERT_EQ(conn->path[0], '/');
+	ASSERT_EQ(conn->req.http_version[0], '1');
+	ASSERT_EQ(conn->req.http_version[1], '.');
+	ASSERT_EQ(conn->req.http_version[3], 0);
+	ASSERT_TRUE(conn->num_headers >= 0);
+
+	if (conn->req.query_string != NULL) {
+		msg = conn->req.query_string;
+		len = (unsigned long)strlen(msg) + 1;
+	}
+
+	http_printf(conn,
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Length: %lu\r\n"
+		"Content-Type: text/plain\r\n"
+		"Connection: close\r\n\r\n",
+		len);
+
+	http_write(conn, msg, len);
+	return 200;
+}
+
+const char *lastMessage;
+static int test_log_message(const http_t *conn, const char *message) {
+	(void)conn;
+	trace;
+	printf("LOG_MESSAGE: %s\n", message);
+	lastMessage = message;
+
+	return 0; /* Return 0 means "not yet handled" */
+}
+
+static http_ini_t *test_http_setup(const http_clb_t *callbacks,
+	void *user_data,
+	const char **configuration_options,
+	unsigned line) {
+	http_ini_t *ctx;
+	http_clb_t cb;
+
+	if (callbacks) {
+		memcpy(&cb, callbacks, sizeof(cb));
+	} else {
+		memset(&cb, 0, sizeof(cb));
+	}
+
+	if (cb.log_message == NULL) {
+		cb.log_message = test_log_message;
+	}
+
+	ctx = http_setup(4096, &cb, user_data, (const options_ini_t **)configuration_options);
+	if (!ctx) {
+		/* http_setup is not supposed to fail anywhere, except for
+		 * special tests (for them, line is 0). */
+		cerr(
+			"http_setup failed in line %u\n: \nlast message %s"CLR_LN,
+			line,
+			(lastMessage ? lastMessage : "<NULL>"));
+	}
+
+	return ctx;
+}
+
+void main_main(http_ini_t *ctx) {
+	/* Add some handler */
+	http_route(ctx,
+		"/hello",
+		minimal_test_request_handler,
+		(void *)"Hello world");
+	http_route(ctx,
+		"/8",
+		minimal_test_request_handler,
+		(void *)"Number eight");
+
+	/* Run the server for 5 seconds */
+	delay(seconds(5));
+
+	/* Call a test client */
+	minimal_http_client_check("127.0.0.1", 8080, "/hello", "Hello world");
+
+	/* Run the server for 1 second */
+	delay(seconds(1));
+
+	/* Call a test client */
+	minimal_http_client_check("127.0.0.1", 8080, "/8?Alternative=Response", "Alternative=Response");
+
+	/* Run the server for 1 second */
+	delay(seconds(1));
+
+	/* Call a test client */
+	//minimal_http_client_check("localhost", 8080, "/8", "Number eight");
+
+	//trace;
+	http_stop(ctx);
+}
+
+TEST(httpi_start) {
+	/* This test should ensure the minimum server example in
+	 * docs/Embedding.md is still running. */
+
+	/* Server context handle */
+	http_ini_t *ctx;
+
+	/* Initialize the library */
+	/* Start the server */
+	ASSERT_NOTNULL((ctx = test_http_setup(NULL, 0, NULL, __LINE__)));
+	ASSERT_EQ(test_parse_port_string(), 0);
+	httpi_start(ctx, main_main);
+	/* Stop the server */
+	return 0;
+}
+
 TEST(main_main) {
 	int i, unused, result = 0;
 
@@ -1539,9 +1745,11 @@ TEST(list) {
 	EXEC_TEST(parse_http);
 	EXEC_TEST(http_next_option);
 	EXEC_TEST(set_throttle);
+	//EXEC_TEST(http_url_encode);
 	EXEC_TEST(http_url_decode);
 	EXEC_TEST(http_md5);
 	EXEC_TEST(alloc_vprintf);
+	//EXEC_TEST(str_decode64);
 	EXEC_TEST(str_encode64);
 	EXEC_TEST(mask_data);
 	EXEC_TEST(parse_date_str);
@@ -1550,15 +1758,14 @@ TEST(list) {
 	EXEC_TEST(http_get_uri_type);
 	EXEC_TEST(http_stat);
 
+	/* start stop server */
+	EXEC_TEST(httpi_start);
+
 	unused = chdir("../build");
 #if defined(_WIN32) || defined(_WIN64)
 	unused = chdir("Debug");
 #endif
 
-	/* start stop server */
-	ASSERT_NOTNULL((ctx = http_start(0, NULL, NULL, NULL)));
-	EXEC_TEST(parse_port_string);
-	http_stop(ctx);
 	return result;
 
 	EXEC_TEST(main_main);

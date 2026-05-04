@@ -520,7 +520,7 @@ static int http_error_send(http_t *conn, int status, string_t fmt, va_list args)
 		http_vsnprintf(NULL, errmsg_buf, sizeof(errmsg_buf), fmt, ap);
 		va_end(ap);
 		/* In a debug build, print all html errors */
-		debug_info("Error %i - [%s]", status, errmsg_buf);
+		debug_info("Error %i - [%s]"CLR_LN, status, errmsg_buf);
 	}
 
 	/* If there is a http_error callback, call it.
@@ -538,7 +538,7 @@ static int http_error_send(http_t *conn, int status, string_t fmt, va_list args)
 	if (!handled_by_callback) {
 		/* Check for recursion */
 		if (conn->req.in_error_handler) {
-			debug_info("Recursion when handling error %u - fall back to default", status);
+			debug_info("Recursion when handling error %u - fall back to default"CLR_LN, status);
 		} else {
 			/* Send user defined error pages, if defined */
 			error_handler = conn->domain->config[ERROR_PAGES];
@@ -611,11 +611,11 @@ static int http_error_send(http_t *conn, int status, string_t fmt, va_list args)
 						path_buf[len + i - 1] = 0;
 
 						if (http_stat(conn, path_buf, &error_page_file)) {
-							debug_info("Check error page %s - found", path_buf);
+							debug_info("Check error page %s - found"CLR_LN, path_buf);
 							page_handler_found = 1;
 							break;
 						}
-						debug_info("Check error page %s - not found", path_buf);
+						debug_info("Check error page %s - not found"CLR_LN, path_buf);
 
 						/* Continue with the next file extension from the
 						 * configuration (if there is a next one). */
@@ -655,7 +655,7 @@ static int http_error_send(http_t *conn, int status, string_t fmt, va_list args)
 
 		} else {
 			/* No body allowed. Close the connection. */
-			debug_info("Error %i", status);
+			debug_info("Error %i"CLR_LN, status);
 		}
 	}
 	return 0;
@@ -921,7 +921,7 @@ static int _read_inner(http_t *conn, void *buf, size_t len) {
 		}
 
 		/* We have returned all buffered data. Read new data from the remote socket. */
-		if ((n = tls_reader(socket2fd(conn->fd), (char *)buf, len64)) >= 0) {
+		if ((n = tls_reader(socket2fd(conn->client.sock), (char *)buf, len64)) >= 0) {
 			conn->req.consumed_content += n;
 			nread += n;
 		} else {
@@ -1134,7 +1134,8 @@ int http_write(http_t *conn, const_t buf, size_t len) {
 	if (len > INT_MAX) {
 		return -1;
 	}
-	int timeout;
+
+	int timeout = 0;
 	/* Mark connection as "data sent" */
 	conn->req.state = 10;
 	if (conn->req.proto == PROTOCOL_HTTP2) {
@@ -1150,7 +1151,6 @@ int http_write(http_t *conn, const_t buf, size_t len) {
 			/ 1000.0;
 	}
 
-	events_tcp_timeout(conn->client.sock, timeout);
 	int total = tls_writer(socket2fd(conn->client.sock), (string)buf, len);
 	if (total > 0) {
 		conn->req.num_bytes_sent += total;
@@ -1445,8 +1445,6 @@ static int get_http_header_len(string_t buf, int buflen) {
 
 int read_message(http_t *conn, char *buf, int bufsiz, int *nread) {
 	int request_len, n = 0;
-	struct timespec last_action_time;
-	double request_timeout;
 
 	if (!conn) {
 		return 0;
@@ -1465,7 +1463,7 @@ int read_message(http_t *conn, char *buf, int bufsiz, int *nread) {
 			return -2;
 		}
 
-		n = tls_reader(socket2fd(conn->fd), buf + *nread, bufsiz - *nread);
+		n = tls_reader(socket2fd(conn->client.sock), buf + *nread, bufsiz - *nread);
 		if (n < 0) {
 			/* Receive error */
 			return -1;
@@ -1621,7 +1619,7 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 		if (conn->action == HTTP_RESPONSE) {
 			/* TODO: we should also consider HEAD method */
 			if (conn->code == 304) {
-				conn->req.content_len = 0;
+				conn->content_length = 0;
 			}
 		}
 	} else {
@@ -1632,13 +1630,15 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 				&& (conn->code <= 199))
 				|| (conn->code == 204)
 				|| (conn->code == 304)) {
-				conn->req.content_len = 0;
+				conn->content_length = 0;
 			} else {
-				conn->req.content_len = -1; /* unknown content length */
+				conn->content_length = -1; /* unknown content length */
+				if (conn->code >= 400)
+					return 0;
 			}
 		} else {
 			/* There is no exception, see RFC7230. */
-			conn->req.content_len = 0;
+			conn->content_length = 0;
 		}
 	}
 
@@ -1697,6 +1697,9 @@ static void close_socket_gracefully(http_t *conn) {
 }
 
 static void close_connection(http_t *conn) {
+	if (!is_ptr_usable(conn) || !is_ptr_usable(conn->ctx) || conn->client.sock == INVALID_SOCKET)
+		return;
+
 	atomic_lock(&conn->ctx->nonce_mutex);
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
@@ -2324,7 +2327,7 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 			return NULL;
 		}
 	} else {
-		if (sock = async_connect((string)client_options->host, client_options->port, 1) < 0) {
+		if ((int)(sock = async_connect((string)client_options->host, client_options->port, 1)) < 0) {
 			/* "error" will be set by connect_socket. */
 			/* free all memory and return NULL; */
 			free(conn);
@@ -2412,54 +2415,85 @@ http_t *http_download(string_t host, int port,
 	return conn;
 }
 
-void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_type, bool is_delete_request,
-	route_cb handler,
-	ws_connect_cb connect_handler,
-	ws_ready_cb ready_handler,
-	ws_data_cb data_handler,
-	ws_close_cb close_handler,
-	auth_cb auth_handler,
-	void_t cbdata) {
-	struct http_cb_info *tmp_rh;
-	struct http_cb_info **lastref;
-	size_t urilen;
+void http_set_handler(http_ini_t *ctx,
+	string_t uri, enum route_type_t handler_type,
+	bool is_delete_request, route_cb handler,
+	struct ws_subprotocols_s *subprotocols,
+	ws_connect_cb connect_handler, ws_ready_cb ready_handler,
+	ws_data_cb data_handler, ws_close_cb close_handler,
+	auth_cb auth_handler, void_t cbdata) {
+	struct http_cb_info *tmp_rh, **lastref;
+	size_t urilen = strlen(uri);
+	struct ini_domain_s *dom_ctx = &ctx->host;
 
-	if (uri == NULL)
-		return;
-
-	urilen = strlen(uri);
 	if (handler_type == WEBSOCKET_HANDLER) {
-		if (handler != NULL) return;
-		if (!is_delete_request && connect_handler == NULL && ready_handler == NULL && data_handler == NULL && close_handler == NULL) return;
-		if (auth_handler != NULL) return;
+		if (handler != NULL) {
+			return;
+		}
+		if (!is_delete_request && (connect_handler == NULL)
+			&& (ready_handler == NULL) && (data_handler == NULL)
+			&& (close_handler == NULL)) {
+			return;
+		}
+		if (auth_handler != NULL) {
+			return;
+		}
 	} else if (handler_type == REQUEST_HANDLER) {
-		if (connect_handler != NULL || ready_handler != NULL || data_handler != NULL || close_handler != NULL) return;
-		if (!is_delete_request && handler == NULL) return;
-		if (auth_handler != NULL) return;
-	} else { /* AUTH_HANDLER */
-		if (handler != NULL) return;
-		if (connect_handler != NULL || ready_handler != NULL || data_handler != NULL || close_handler != NULL) return;
-		if (!is_delete_request && auth_handler == NULL) return;
+		if ((connect_handler != NULL) || (ready_handler != NULL)
+			|| (data_handler != NULL) || (close_handler != NULL)) {
+			return;
+		}
+		if (!is_delete_request && (handler == NULL)) {
+			return;
+		}
+		if (auth_handler != NULL) {
+			return;
+		}
+	} else if (handler_type == AUTH_HANDLER) {
+		if (handler != NULL) {
+			return;
+		}
+		if ((connect_handler != NULL) || (ready_handler != NULL)
+			|| (data_handler != NULL) || (close_handler != NULL)) {
+			return;
+		}
+		if (!is_delete_request && (auth_handler == NULL)) {
+			return;
+		}
+	} else {
+		/* Unknown handler type. */
+		return;
 	}
 
-	if (ctx == NULL)
+	if (!ctx || !dom_ctx) {
+		/* no context available */
 		return;
+	}
+
 	atomic_lock(&ctx->host.nonce_mutex);
 
-	/*
-	 * first try to find an existing handler
-	 */
-	lastref = &ctx->handlers;
-	for (tmp_rh = ctx->handlers; tmp_rh != NULL; tmp_rh = tmp_rh->next) {
-		if (tmp_rh->handler_type == handler_type) {
-			if (urilen == tmp_rh->uri_len && !strcmp(tmp_rh->uri, uri)) {
+	/* first try to find an existing handler */
+	do {
+		lastref = &(dom_ctx->handlers);
+		for (tmp_rh = dom_ctx->handlers; tmp_rh != NULL;
+			tmp_rh = tmp_rh->next) {
+			if (tmp_rh->handler_type == handler_type
+				&& (urilen == tmp_rh->uri_len) && !strcmp(tmp_rh->uri, uri)) {
 				if (!is_delete_request) {
-					/*
-					 * update existing handler
-					 */
+					/* update existing handler */
 					if (handler_type == REQUEST_HANDLER) {
+						/* Wait for end of use before updating */
+						if (tmp_rh->refcount) {
+							atomic_unlock(&ctx->host.nonce_mutex);
+							yield();
+							atomic_lock(&ctx->host.nonce_mutex);
+							/* tmp_rh might have been freed, search again. */
+							break;
+						}
+						/* Ok, the handler is no more use -> Update it */
 						tmp_rh->handler = handler;
 					} else if (handler_type == WEBSOCKET_HANDLER) {
+						tmp_rh->subprotocols = subprotocols;
 						tmp_rh->connect_handler = connect_handler;
 						tmp_rh->ready_handler = ready_handler;
 						tmp_rh->data_handler = data_handler;
@@ -2467,34 +2501,40 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 					} else { /* AUTH_HANDLER */
 						tmp_rh->auth_handler = auth_handler;
 					}
-
 					tmp_rh->cbdata = cbdata;
 				} else {
-					/*
-					 * remove existing handler
-					 */
+					/* remove existing handler */
+					if (handler_type == REQUEST_HANDLER) {
+						/* Wait for end of use before removing */
+						if (tmp_rh->refcount) {
+							tmp_rh->removing = 1;
+							atomic_unlock(&ctx->host.nonce_mutex);
+							yield();
+							atomic_lock(&ctx->host.nonce_mutex);
+							/* tmp_rh might have been freed, search again. */
+							break;
+						}
+						/* Ok, the handler is no more used */
+					}
 					*lastref = tmp_rh->next;
-					tmp_rh->uri = free_ex(tmp_rh->uri);
-					tmp_rh = free_ex(tmp_rh);
+					free(tmp_rh->uri);
+					free(tmp_rh);
 				}
-
 				atomic_unlock(&ctx->host.nonce_mutex);
 				return;
 			}
+			lastref = &(tmp_rh->next);
 		}
-		lastref = &tmp_rh->next;
-	}
+	} while (tmp_rh != NULL);
 
 	if (is_delete_request) {
-		/*
-		 * no handler to set, this was a remove request to a non-existing
-		 * handler
-		 */
+		/* no handler to set, this was a remove request to a non-existing
+		 * handler */
 		atomic_unlock(&ctx->host.nonce_mutex);
 		return;
 	}
 
-	tmp_rh = calloc(sizeof(struct http_cb_info), 1);
+	tmp_rh = (struct http_cb_info *)calloc(1, sizeof(struct http_cb_info));
 	if (tmp_rh == NULL) {
 		atomic_unlock(&ctx->host.nonce_mutex);
 		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
@@ -2511,8 +2551,11 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 
 	tmp_rh->uri_len = urilen;
 	if (handler_type == REQUEST_HANDLER) {
+		tmp_rh->refcount = 0;
+		tmp_rh->removing = 0;
 		tmp_rh->handler = handler;
 	} else if (handler_type == WEBSOCKET_HANDLER) {
+		tmp_rh->subprotocols = subprotocols;
 		tmp_rh->connect_handler = connect_handler;
 		tmp_rh->ready_handler = ready_handler;
 		tmp_rh->data_handler = data_handler;
@@ -2530,7 +2573,7 @@ void http_set_handler(http_ini_t *ctx, string_t uri, enum route_type_t handler_t
 
 FORCEINLINE void http_route(http_ini_t *ctx, string_t uri, route_cb handler, void_t cbdata) {
 	http_set_handler(ctx, uri, REQUEST_HANDLER, (handler == NULL), handler,
-		NULL, NULL, NULL, NULL, NULL, cbdata);
+		NULL, NULL, NULL, NULL, NULL, NULL, cbdata);
 }
 
 FORCEINLINE void http_websocket_route(http_ini_t *ctx, string_t uri,
@@ -2542,6 +2585,20 @@ FORCEINLINE void http_websocket_route(http_ini_t *ctx, string_t uri,
 	bool is_delete_request = (connect_handler == NULL) && (ready_handler == NULL)
 		&& (data_handler == NULL) && (close_handler == NULL);
 
-	http_set_handler(ctx, uri, WEBSOCKET_HANDLER, is_delete_request, NULL,
+	http_set_handler(ctx, uri, WEBSOCKET_HANDLER, is_delete_request, NULL, NULL,
+		connect_handler, ready_handler, data_handler, close_handler, NULL, cbdata);
+}
+
+FORCEINLINE void http_websocket_route_subprotocol(http_ini_t *ctx, string_t uri,
+	struct ws_subprotocols_s *subprotocols,
+	ws_connect_cb connect_handler,
+	ws_ready_cb ready_handler,
+	ws_data_cb data_handler,
+	ws_close_cb close_handler,
+	void_t cbdata) {
+	bool is_delete_request = (connect_handler == NULL) && (ready_handler == NULL)
+		&& (data_handler == NULL) && (close_handler == NULL);
+
+	http_set_handler(ctx, uri, WEBSOCKET_HANDLER, is_delete_request, NULL, subprotocols,
 		connect_handler, ready_handler, data_handler, close_handler, NULL, cbdata);
 }

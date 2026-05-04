@@ -604,11 +604,8 @@ static int http_check_acl(http_ini_t *ctx, const union usa *sa) {
 bool http_set_acl_option(http_ini_t *ctx) {
 	union usa sa;
 	memset(&sa, 0, sizeof(sa));
-#if defined(USE_IPV6)
-	sa.sin6.sin6_family = AF_INET6;
-#else
+	//sa.sin6.sin6_family = AF_INET6;
 	sa.sin.sin_family = AF_INET;
-#endif
 	return http_check_acl(ctx, &sa) != -1;
 }
 
@@ -636,6 +633,7 @@ bool http_init_options(http_ini_t *ctx, string_t *options) {
 		}
 
 		ctx->host.config[idx] = str_dup_ex(value);
+		debug_info("[%s] -> [%s]"CLR_LN, name, value);
 	}
 
 	/* Set default value if needed */
@@ -812,7 +810,7 @@ int http_switch_domain(http_t *conn) {
 				if ((strlen(sslhost) != host.len)
 					|| !str_case_equal(host.ptr, sslhost, host.len)) {
 					/* Mismatch between SNI domain and HTTP domain */
-					debug_info("Host mismatch: SNI: %s, HTTPS: %.*s",
+					debug_info("Host mismatch: SNI: %s, HTTPS: %.*s"CLR_LN,
 						sslhost, (int)host.len, host.ptr);
 					return 0;
 				}
@@ -825,7 +823,7 @@ int http_switch_domain(http_t *conn) {
 				if ((domNameLen == host.len)
 					&& str_case_equal(host.ptr, domName, host.len)) {
 					/* Found matching domain */
-					debug_info("HTTP domain %s found",
+					debug_info("HTTP domain %s found"CLR_LN,
 						dom->config[AUTHENTICATION_DOMAIN]);
 					conn->domain = dom;
 					break;
@@ -836,10 +834,9 @@ int http_switch_domain(http_t *conn) {
 				atomic_unlock(&conn->ctx->nonce_mutex);
 			}
 		}
-		debug_info("HTTP%s Host: %.*s", conn->client.has_ssl ? "S" : "", (int)host.len, host.ptr);
+		debug_info("HTTP%s Host: %.*s"CLR_LN, conn->client.has_ssl ? "S" : "", (int)host.len, host.ptr);
 	} else {
-		debug_info("HTTP%s Host is not set", conn->client.has_ssl ? "S" : "");
-		return 0;
+		debug_info("HTTP%s Host is not set"CLR_LN, conn->client.has_ssl ? "S" : "");
 	}
 
 	return 1;
@@ -1333,12 +1330,12 @@ enum uri_type_t http_get_uri_type(string_t uri) {
 		if (uri[i] == '%') {
 			if (uri[i + 1] == '0' && (uri[i + 2] == 'd' || uri[i + 2] == 'D')) {
 				/* Found %0d (CR) */
-				debug_info("CRLF injection attempt detected: %s\r\n", uri);
+				debug_info("CRLF injection attempt detected: %s"CLR_LN, uri);
 				return URI_TYPE_UNKNOWN;
 			}
 			if (uri[i + 1] == '0' && (uri[i + 2] == 'a' || uri[i + 2] == 'A')) {
 				/* Found %0a (LF) */
-				debug_info("CRLF injection attempt detected: %s\r\n", uri);
+				debug_info("CRLF injection attempt detected: %s"CLR_LN, uri);
 				return URI_TYPE_UNKNOWN;
 			}
 		}

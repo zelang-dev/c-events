@@ -654,6 +654,9 @@ EVENTS_INLINE int async_getentropy(void *buf, size_t buflen) {
 }
 
 static EVENTS_INLINE void *_os_fprintf(param_t args) {
+	if (str_is_empty(args[0].const_char_ptr))
+		return null;
+
 	FILE *fi;
 	if ((fi = fopen(args[0].const_char_ptr, args[1].const_char_ptr)) != NULL) {
 		flockfile(fi);
@@ -675,6 +678,9 @@ EVENTS_INLINE int async_fprintf(const char *path, const char *mode, const char *
 }
 
 static EVENTS_INLINE void *_os_fwriter(param_t args) {
+	if (str_is_empty(args[0].const_char_ptr))
+		return null;
+
 	FILE *fi;
 	if ((fi = fopen(args[0].const_char_ptr, args[1].const_char_ptr)) != NULL) {
 		flockfile(fi);
@@ -706,6 +712,9 @@ EVENTS_INLINE size_t fs_fwrite(void *buf, size_t items_size, size_t items_count,
 }
 
 static EVENTS_INLINE void *_os_fopen(param_t args) {
+	if (str_is_empty(args[0].const_char_ptr))
+		return null;
+
 	return fopen(args[0].const_char_ptr, args[1].const_char_ptr);
 }
 

@@ -5,6 +5,7 @@
 static http_ini_t *http_atexit_ctrl_c = null;
 
 static void http_ctrl_c_exit(void) {
+	events_ctr_c_unwind();
 	if (is_empty(http_atexit_ctrl_c) || !is_ptr_usable(http_atexit_ctrl_c))
 		return;
 
@@ -72,14 +73,35 @@ static int http_check_acl(http_ini_t *phys_ctx, const union usa *sa) {
 	return -1;
 }
 
+static void httpi_cleanup(void_t ptr) {
+	http_t *conn = (http_t *)ptr;
+	//recover_cb recover = (recover_cb)conn;
+	string_t err = guard_message();
+	if (!is_empty(conn)) {
+		if (!is_empty(conn->req.buf)) {
+			free(conn->req.buf);
+			conn->req.buf = null;
+		}
+
+		http_free(conn);
+	}
+
+	if (!str_is_empty(err)) {
+		cerr("Exception: %s"CLR_LN, err);
+		//if (recover && guard_caught(err)) {
+		//	recover(err);
+		//}
+	}
+}
+
 static FORCEINLINE void http_handler(int client) {
 	guard {
 		http_t *conn = (http_t *)events_get_target_data(client);
-		defer(http_free, conn);
+		defer(httpi_cleanup, conn);
 		/* Request buffers are not pre-allocated. They are private to the
 		 * request and do not contain any state information that might be
 		 * of interest to anyone observing a server status.  */
-		conn->req.buf = (string)fence(calloc(1, conn->ctx->max_request_size + 1), rpfree);
+		conn->req.buf = calloc(1, conn->ctx->max_request_size + 1);
 		if (conn->req.buf == NULL) {
 			http_log(DEBUG_CRASH, conn, "Out of memory: Cannot allocate buffer for task #%i", task_id());
 		} else {
@@ -88,8 +110,6 @@ static FORCEINLINE void http_handler(int client) {
 			conn->req.user_data = conn->ctx->user_data;
 			conn->action = HTTP_REQUEST;
 			http_process_connection(conn->ctx, conn);
-			if (!conn->client.has_ssl)
-				shutdown(fd2socket(client), SHUT_RDWR);
 		}
 	} guarded;
 }
@@ -112,10 +132,8 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		so.sock = tls_accept(listener->sock, null, null);
 		so.rsa.sa = events_get_sockaddr(so.sock)->sa;
 	} else {
-		async_wait(listener->sock, 'r');
-		so.sock = accept(listener->sock, &so.rsa.sa, &len);
-		if (so.sock == INVALID_SOCKET)
-			return nullptr;
+		async_wait(socket2fd(listener->sock), 'r');
+		so.sock = accept(socket2fd(listener->sock), &so.rsa.sa, &len);
 	}
 
 	if (so.sock == INVALID_SOCKET)
@@ -174,7 +192,6 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 			conn->code = STATUS_OK;
 			conn->status = STATUS_NO_CONTENT;
 			conn->hostname = nullptr;
-			conn->fd = so.sock;
 			conn->client = so;
 			conn->version = 1.1;
 			conn->req.conn_birth_time = conn_birth_time;
@@ -196,13 +213,10 @@ void http_stop(http_ini_t *ctx) {
 	if (is_empty(ctx))
 		return;
 
-	if (ctx->status == HTTP_STATUS_RUNNING)
-		ctx->status = HTTP_STATUS_TERMINATED;
-
-	thrd_pool_shutdown();
-	/* Wait until everything has stopped. */
-	os_sleep(thrd_cpu_count() * 2);
+	http_atexit_ctrl_c = null;
+	ctx->status = HTTP_STATUS_TERMINATED;
 	http_free_ini(ctx);
+	events_destroy(event_loop());
 }
 
 static void http_free_ini(http_ini_t *ctx) {
@@ -253,7 +267,6 @@ http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...) {
 	return nullptr;
 }
 
-FORCEINLINE struct init_data http_ini(struct init_data init, void_t user_data) {}
 FORCEINLINE http_clb_t http_callbacks(request_cb begin, log_msg_cb message,
 	log_access_cb log, file_open_cb file, http_error_cb error, init_context_cb init) {
 	http_clb_t callbacks = {0};
@@ -365,7 +378,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 			free(new_dom->config[idx]);
 		}
 		new_dom->config[idx] = str_dup_ex(value);
-		debug_info("[%s] -> [%s]", name, value);
+		debug_info("[%s] -> [%s]"CLR_LN, name, value);
 	}
 
 	/* Authentication domain is mandatory */
@@ -469,7 +482,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 	return idx;
 }
 
-http_ini_t *http_start(int max_fd, http_clb_t *callbacks,
+http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 	void_t user_data, const options_ini_t **options) {
 	uint64_t nonce = 0;
 	int i;
@@ -542,10 +555,11 @@ static void http_server_task(param_t args) {
 	const http_socket *listener = (const http_socket *)args[0].object;
 	http_ini_t *ctx = (http_ini_t *)args[1].object;
 	http_t *conn = null;
+	data_gc(args);
 	while (!is_empty(ctx) && ctx->status == HTTP_STATUS_RUNNING) {
 		if (!is_empty(conn = http_accept(listener, ctx))) {
 			conn->ctx = ctx;
-			accept_handler(http_handler, socket2fd(conn->fd));
+			accept_handler(http_handler, socket2fd(conn->client.sock));
 		}
 	}
 }
@@ -571,10 +585,12 @@ static FORCEINLINE void *http_main_task(param_t args) {
 	http_main_cb start = (http_main_cb)args[1].func;
 	if (!is_empty(start))
 		start((http_ini_t *)args[0].object);
+
+	yield();
 	return 0;
 }
 
-void httpi_main(http_ini_t *ctx, http_main_cb start) {
+void httpi_start(http_ini_t *ctx, http_main_cb start) {
 	events_t *loop = events_init_pool(thrd_cpu_count() / 2);
 	if (is_empty(ctx) || is_empty(loop))
 		exit(EXIT_FAILURE);
@@ -584,6 +600,9 @@ void httpi_main(http_ini_t *ctx, http_main_cb start) {
 	async_task(http_main_task, 2, ctx, start);
 	for (i = 0; i < ctx->num_listening_sockets; i++)
 		async_ex(Kb(32), http_server_task, 2, ctx->listening_sockets[i], ctx);
+
+	http_atexit_ctrl_c = ctx;
+	exception_ctrl_c_func = http_ctrl_c_exit;
 	async_run(loop);
 	events_destroy(loop);
 	events_deinit();

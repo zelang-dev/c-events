@@ -44,7 +44,7 @@ typedef struct form_data_handler_s form_data_handler_t;
 #	define HTTP2_DYN_TABLE_SIZE (256)
 #endif
 
-/* This structure needs to be passed to http_start(),
+/* This structure needs to be passed to http_setup(),
  * to let `HttPi` know which callbacks to invoke. */
 typedef struct http_clb_s http_clb_t;
 
@@ -441,8 +441,16 @@ C_API const options_ini_t *http_get_valid_options(void);
 C_API bool http_init_options(http_ini_t *ctx, string_t *options);
 
 /* The main `setup` entry point for the `HttPi` server. */
-C_API http_ini_t *http_start(int max_fd, http_clb_t *callbacks,
+C_API http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 	void_t user_data, const options_ini_t **options);
+
+/* Create/execute the `main task` ~coroutine~ `entry/start` point for `HttPi` server.
+ *
+ * - This will also create additional `tasks` base on number of
+ * ~Server~ sockets created for `accept/listen` handling.
+ * - All `accepted` connections, will create a coroutine `task` handled in
+ * separate ~thread pool~ aka `Green Thread` for immediately execution. */
+void httpi_start(http_ini_t *ctx, http_main_cb start);
 
 /* Add an additional domain to an already running web server. */
 C_API int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error);
