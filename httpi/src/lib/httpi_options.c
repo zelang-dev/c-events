@@ -95,8 +95,6 @@ static const options_ini_t config_options[] = {
 	{NULL, INI_TYPE_UNKNOWN, NULL}
 };
 
-#define ARRAY_SIZE_EX(array) (sizeof(array) / sizeof(array[0]))
-
 static const struct {
 	string_t extension;
 	size_t ext_len;
@@ -237,7 +235,7 @@ static int get_month_index(string_t s) {
 
 	size_t i;
 
-	for (i = 0; i < ARRAY_SIZE_EX(month_names); i++) {
+	for (i = 0; i < get_array_size(month_names); i++) {
 
 		if (!strcmp(s, month_names[i])) return (int)i;
 	}
@@ -1132,7 +1130,6 @@ int http_set_ports_option(http_ini_t *ctx) {
 	}
 
 	return ports_ok;
-
 }
 
 static const struct {

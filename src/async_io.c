@@ -788,7 +788,7 @@ EVENTS_INLINE size_t fs_fwrite(void *buf, size_t items_size, size_t items_count,
 }
 
 static EVENTS_INLINE void *_os_fopen(param_t args) {
-	if (str_is_empty(args[0].const_char_ptr))
+	if (str_is_empty(args[0].const_char_ptr) || str_is_empty(args[1].const_char_ptr))
 		return null;
 
 	return fopen(args[0].const_char_ptr, args[1].const_char_ptr);

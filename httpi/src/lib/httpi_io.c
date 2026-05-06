@@ -1379,7 +1379,8 @@ void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
 	/*
 	 * Check if the message is severe enough to display. This is controlled
 	 * with a context specific debug level. */
-	if (debug_level > conn->ctx->debug_level) return;
+	if (!is_empty(conn) && debug_level > conn->ctx->debug_level)
+		return;
 
 	/*
 	 * Gather all the information from the parameters of this function and
@@ -1392,13 +1393,14 @@ void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
 	/*
 	 * We now try to open the error log file. If this succeeds the error is
 	 * appended to the file. */
-	if (is_empty(conn) || is_empty(conn->ctx->error_log_file)) {
+	if (is_empty(conn)
+		|| (!is_empty(conn) && is_empty(conn->ctx->error_log_file))) {
 		cerr("[%010lu]%s: %s"CLR_LN, (unsigned long)timestamp, log_level_str(debug_level), buf);
 		return;
 	}
 
 	snprintf(clientbuf, sizeof(clientbuf), "[%010lu]%s[client %s] %s %s: ",
-		(unsigned long)timestamp, log_level_str(debug_level), "conn->remote_addr", conn->method, conn->uri);
+		(unsigned long)timestamp, log_level_str(debug_level), conn->req.remote_addr, conn->method, conn->uri);
 	string_t data = str_cat_ex(4, clientbuf, " ", buf, "\n");
 	if (!is_empty(data)) {
 		async_fprintf((string_t)conn->ctx->error_log_file, "a+", data);
