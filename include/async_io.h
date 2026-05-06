@@ -314,6 +314,7 @@ If ~address~ is NULL, will bind to the given `port` on all available interfaces.
 
 - Returns a `fd` to use with `async_accept()`. */
 C_API fds_t async_bind(char *address, int port, int backlog, int protocol);
+C_API fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol);
 
 /** Sleep `current` task, until next `client` connection comes in from `fd` ~async_listener()~.
 

@@ -37,6 +37,13 @@ typedef unsigned long __sigset_t;
 #  include <libutil.h>
 # endif
 
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(__i386__)) && !defined(_WIN32)
+#	define USE_ASSEMBLY 1
+# 	undef USE_UCONTEXT
+# 	undef USE_SJLJ
+# 	undef USE_FIBER
+#endif
+
 #include <limits.h>
 #include <errno.h>
 #include <stdio.h>
@@ -182,6 +189,7 @@ C_API volatile sig_atomic_t events_got_signal;
 
 C_API bool events_is_destroy(void);
 C_API bool events_is_shutdown(void);
+C_API void events_task_unwind(tasks_t *);
 
 /* Setup custom internal memory allocation handling. */
 C_API int events_set_allocator(malloc_cb, realloc_cb, calloc_cb, free_cb);

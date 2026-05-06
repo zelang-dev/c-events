@@ -195,7 +195,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				memcpy(data, buf + header_len, len);
 				error = 0;
 				while ((uint64_t)len < data_len && !task_is_canceled()) {
-					n = tls_reader(socket2fd(conn->client.sock), (string)(data + len), (int)(data_len - len));
+					n = tls_reader(socket2fd(conn->client->sock), (string)(data + len), (int)(data_len - len));
 					if (n <= 0) {
 						error = 1;
 						break;
@@ -364,7 +364,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 		} else {
 			/* Read from the socket into the next available location in the
 			 * message queue. */
-			n = tls_reader(socket2fd(conn->client.sock), conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
+			n = tls_reader(socket2fd(conn->client->sock), conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
 			if (n <= -2) {
 				/* Error, no bytes read */
 				http_log(DEBUG_WARNING, null, "PULL from %s:%u failed",

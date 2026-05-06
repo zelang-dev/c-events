@@ -1,13 +1,12 @@
 #include "events_internal.h"
 
+static void(fastcall *coro_swap)(tasks_t *, tasks_t *) = 0;
 #ifdef USE_ASSEMBLY /* USE_ASSEMBLY */
 #ifdef MPROTECT
 alignas(4096)
 #else
 section(text)
 #endif
-
-void(fastcall *coro_swap)(tasks_t *, tasks_t *) = 0;
 
 #if ((defined(__clang__) || defined(__GNUC__)) && defined(__i386__)) || (defined(_MSC_VER) && defined(_M_IX86))
 /* ABI: fastcall */

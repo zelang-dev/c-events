@@ -147,8 +147,7 @@ int http_response_send(http_t *conn) {
 int http_get_response(http_t *conn, string ebuf, size_t ebuf_len, int timeout) {
 	int err, ret;
 	char txt[32]; /* will not overflow */
-	char *save_timeout;
-	char *new_timeout;
+	string save_timeout, new_timeout;
 
 	if (ebuf_len > 0) {
 		ebuf[0] = '\0';
@@ -171,7 +170,7 @@ int http_get_response(http_t *conn, string ebuf, size_t ebuf_len, int timeout) {
 	save_timeout = conn->domain->config[REQUEST_TIMEOUT];
 
 	if (timeout >= 0) {
-		events_tcp_timeout(conn->client.sock, timeout);
+		events_tcp_timeout(conn->client->sock, timeout);
 		http_snprintf(conn, NULL, txt, sizeof(txt), "%i", timeout);
 		new_timeout = txt;
 	} else {

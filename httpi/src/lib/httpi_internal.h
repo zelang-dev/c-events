@@ -67,22 +67,6 @@ struct cookie_s {
 	char value[Kb(2)];
 };
 
-struct response_s {
-	data_types type;
-	/* The current response status */
-	http_status status;
-	/* The protocol version */
-	double version;
-	/* The current response body */
-	string body;
-	/* The unchanged data from server */
-	string raw;
-	/* The protocol */
-	string protocol;
-	/* The current headers */
-	hash_http_t *headers;
-};
-
 struct form_data_s {
 	size_t bodysize;
 	string body;
@@ -278,7 +262,6 @@ struct http_cb_info {
 	char *uri;
 	size_t uri_len;
 
-
 	/* Handler for http/https or authorization requests. */
 	route_cb handler;
 
@@ -323,6 +306,7 @@ struct server_socket_s {
 	union usa lsa;
 	/* Remote socket address */
 	union usa rsa;
+	tasks_t *task;
 };
 
 struct file {
@@ -441,23 +425,22 @@ struct http_clb_s {
 };
 
 struct ini_domain_s {
-	 /* tls context */
-	tls_s *tls_ctx;
-	/* `HttPi` configuration parameters */
-	char *config[NUM_OPTIONS];
 	int64_t ssl_cert_last_mtime;
-
 	/* Server nonce */
 	/* Mask for all nonce values */
 	uint64_t auth_nonce_mask;
 	/* Used nonces, used for authentication */
 	unsigned long nonce_count;
-	/* Protects nonce_count */
-	atomic_spinlock nonce_mutex;
-
+	 /* tls context */
+	tls_s *tls_ctx;
 	/* Linked list of domains */
 	struct ini_domain_s *next;
-	struct http_cb_info *handlers; /* linked list of uri handlers */
+	 /* linked list of uri handlers */
+	struct http_cb_info *handlers;
+	/* `HttPi` configuration parameters */
+	char *config[NUM_OPTIONS];
+	/* Protects nonce_count */
+	atomic_spinlock nonce_mutex;
 };
 
 struct twebdav_lock {
@@ -473,11 +456,10 @@ struct http_ini_s {
 	/* HTTP_INI_SERVER, HTTP_INI_CLIENT, or HTTP_INI_WEBSOCKET */
 	enum http_type_t http_type;
 	enum http_dbg debug_level;
-	unsigned int num_listening_sockets;
+	int enable_keep_alive;
 	/* Memory related */
 	/* The max request size */
 	unsigned int max_request_size;
-	int enable_keep_alive;
 	/* The thread worker task IDs */
 	uint32_t worker_taskid;
 	string error_log_file;
@@ -490,20 +472,18 @@ struct http_ini_s {
 	void *user_data;
 	/* User-defined callback function */
 	http_clb_t callbacks;
-	http_socket *listening_sockets;
+	/* Array of `http_socket` listening sockets */
+	array_t server_sockets;
 	/* linked list of uri handlers */
 	struct http_cb_info *handlers;
-
 	/* Part 2 - Logical domain:
 	 * This holds hostname, TLS certificate, document root, ...
 	 * set for a domain hosted at the server.
 	 * There may be multiple domains hosted at one physical server.
 	 * The default domain "host" is the first element of a list of domains. */
 	struct ini_domain_s host;
-
 	/* WebDAV lock structures */
 	struct twebdav_lock webdav_lock[NUM_WEBDAV_LOCKS];
-
 	/* Server nonce */
 	/* Protects ssl_ctx, handlers,
 	 * ssl_cert_last_mtime, nonce_count, and
@@ -591,14 +571,13 @@ struct http_s {
 	/* This parser ~instance~ state,
 	either `RESPONSE` or `REQUEST` behaviour. */
 	http_parser_type action;
-	/* The current response status */
+	/* The response status */
 	http_status status;
 	/* The status code */
 	http_status code;
-	/* Connected client */
-	http_socket	client;
-	/* Is Multipart `form_data` in header response? */
+	/* Is Multipart `form_data` in header request? */
 	int is_multipart;
+	/* header has `4` = `\r\n\r\n`, or `2` = `\n\n` in request? */
 	int is_valid;
 	/* Number of HTTP headers */
 	int num_headers;
@@ -612,7 +591,7 @@ struct http_s {
 	/* The unchanged data from server */
 	string raw;
 	string hostname;
-	/* The current request body */
+	/* The current body */
 	string body;
 	string uri;
 	/* The requested uri */
@@ -628,6 +607,8 @@ struct http_s {
 	/* Parser, `request/response` staging allocations,
 	WILL be freed at exit, and before `parse_http` execution. */
 	array_t garbage;
+	/* Connected client */
+	http_socket	*client;
 	/* The current headers
 	and `response` headers to send */
 	hash_http_t *headers;
@@ -705,7 +686,7 @@ bool http_fopen(http_ini_t *ctx, const http_t *conn,
 	string_t path, string_t mode, struct file *filep);
 
 /* Used to process new incoming connections to the server. */
-http_t *http_accept(const http_socket *listener, http_ini_t *ctx);
+http_t *http_accept(http_socket *listener, http_ini_t *ctx);
 
 /*
  * Closed a file associated with a filep structure.

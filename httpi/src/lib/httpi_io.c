@@ -921,7 +921,7 @@ static int _read_inner(http_t *conn, void *buf, size_t len) {
 		}
 
 		/* We have returned all buffered data. Read new data from the remote socket. */
-		if ((n = tls_reader(socket2fd(conn->client.sock), (char *)buf, len64)) >= 0) {
+		if ((n = tls_reader(socket2fd(conn->client->sock), (char *)buf, len64)) >= 0) {
 			conn->req.consumed_content += n;
 			nread += n;
 		} else {
@@ -1151,7 +1151,7 @@ int http_write(http_t *conn, const_t buf, size_t len) {
 			/ 1000.0;
 	}
 
-	int total = tls_writer(socket2fd(conn->client.sock), (string)buf, len);
+	int total = tls_writer(socket2fd(conn->client->sock), (string)buf, len);
 	if (total > 0) {
 		conn->req.num_bytes_sent += total;
 	}
@@ -1463,7 +1463,7 @@ int read_message(http_t *conn, char *buf, int bufsiz, int *nread) {
 			return -2;
 		}
 
-		n = tls_reader(socket2fd(conn->client.sock), buf + *nread, bufsiz - *nread);
+		n = tls_reader(socket2fd(conn->client->sock), buf + *nread, bufsiz - *nread);
 		if (n < 0) {
 			/* Receive error */
 			return -1;
@@ -1660,7 +1660,7 @@ static void close_socket_gracefully(http_t *conn) {
 	 * prevent ephemeral port exhaust problem under high QPS. */
 	linger.l_onoff = 1;
 	linger.l_linger = 1;
-	getsockopt(conn->client.sock, SOL_SOCKET, SO_ERROR, (char *)&error_code, &opt_len);
+	getsockopt(conn->client->sock, SOL_SOCKET, SO_ERROR, (char *)&error_code, &opt_len);
 	if (error_code == ECONNRESET) {
 		/* Socket already closed by client/peer, close socket without linger */
 	} else {
@@ -1669,7 +1669,7 @@ static void close_socket_gracefully(http_t *conn) {
 			linger.l_linger = (linger_timeout + 999) / 1000;
 		}
 
-		if (setsockopt(conn->client.sock, SOL_SOCKET, SO_LINGER, (char *)&linger, sizeof(linger)) != 0) {
+		if (setsockopt(conn->client->sock, SOL_SOCKET, SO_LINGER, (char *)&linger, sizeof(linger)) != 0) {
 			http_log(DEBUG_ERROR, conn,
 				"%s: getsockopt(SOL_SOCKET SO_ERROR) failed: %s",
 				__func__,
@@ -1678,8 +1678,8 @@ static void close_socket_gracefully(http_t *conn) {
 	}
 
 	/* Send FIN to the client */
-	if (!conn->client.has_ssl)
-		shutdown(conn->client.sock, SHUT_WR);
+	if (!conn->client->has_ssl)
+		shutdown(conn->client->sock, SHUT_WR);
 
 #if defined(_WIN32)
 	/* Read and discard pending incoming data. If we do not do that and
@@ -1692,22 +1692,26 @@ static void close_socket_gracefully(http_t *conn) {
 #endif
 
 	/* Now we know that our FIN is ACK-ed, safe to close */
-	tls_closer(conn->client.sock);
-	conn->client.sock = INVALID_SOCKET;
+	tls_closer(conn->client->sock);
+	conn->client->sock = INVALID_SOCKET;
 }
 
 static void close_connection(http_t *conn) {
-	if (!is_ptr_usable(conn) || !is_ptr_usable(conn->ctx) || conn->client.sock == INVALID_SOCKET)
+	if (!is_ptr_usable(conn) || !is_ptr_usable(conn->ctx)
+		|| is_empty(conn->client) || conn->client->sock == INVALID_SOCKET)
 		return;
 
-	atomic_lock(&conn->ctx->nonce_mutex);
+	//atomic_lock(&conn->ctx->nonce_mutex);
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
-	if (conn->client.sock != INVALID_SOCKET) {
+	if (conn->client->sock != INVALID_SOCKET) {
 		close_socket_gracefully(conn);
-		conn->client.sock = INVALID_SOCKET;
+		conn->client->sock = INVALID_SOCKET;
 	}
-	atomic_unlock(&conn->ctx->nonce_mutex);
+
+	free(conn->client);
+	conn->client = null;
+	//atomic_unlock(&conn->ctx->nonce_mutex);
 }
 
 void http_close_connection(http_t *conn) {
@@ -2002,7 +2006,7 @@ static void http_log_access(http_t *conn) {
 		}
 
 		ri = &conn->req;
-		sockaddr_to_str(src_addr, sizeof(src_addr), &conn->client.rsa);
+		sockaddr_to_str(src_addr, sizeof(src_addr), &conn->client->rsa);
 		referer = header_val(conn, "Referer");
 		user_agent = header_val(conn, "User-Agent");
 		http_snprintf(conn,
@@ -2335,12 +2339,27 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 		}
 	}
 
-	sa = *events_get_sockaddr(sock);
-	len = sizeof(conn->client.rsa.sin);
-	psa = (struct sockaddr *)&(conn->client.rsa.sin);
-	conn->client.sock = sock;
-	conn->client.lsa = sa;
+	if (is_empty(conn->client = (http_socket *)calloc(1, sizeof(http_socket)))) {
+		if (error != NULL) {
+			error->code = ENOMEM;
+			error->code_sub = (unsigned)alloc_size;
+			http_snprintf(NULL,
+				NULL, /* No truncation check for ebuf */
+				error->text,
+				error->text_buffer_size,
+				"calloc(): %s",
+				strerror(os_geterror()));
+		}
+		tls_closer(socket2fd(sock));
+		free(conn);
+		return NULL;
+	}
 
+	sa = *events_get_sockaddr(sock);
+	conn->client->sock = sock;
+	conn->client->lsa = sa;
+	len = sizeof(conn->client->rsa.sin);
+	psa = (struct sockaddr *)&(conn->client->rsa.sin);
 	if (getsockname(sock, psa, &len) != 0) {
 		http_log(DEBUG_ERROR, conn,
 			"%s: getsockname() failed: %s",
@@ -2348,7 +2367,7 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 			strerror(os_geterror()));
 	}
 
-	conn->client.has_ssl = use_ssl ? 1 : 0;
+	conn->client->has_ssl = use_ssl ? true : false;
 	return conn;
 }
 

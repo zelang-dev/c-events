@@ -1088,7 +1088,7 @@ TEST(http_route) {
 static int api_callback(http_t *conn) {
 	char post_data[100] = "";
 
-	ASSERT(conn->client.protocol == 123);
+	ASSERT(conn->client->protocol == 123);
 	ASSERT(conn->num_headers == 2);
 	ASSERT(strcmp(http_get_header(conn, "host"), "blah.com") == 0);
 	ASSERT(http_read(conn, post_data, sizeof(post_data)) == 3);
@@ -1424,7 +1424,7 @@ TEST(parse_port_string) {
 
 	  {NULL, 0, 0, 0}};
 
-	http_socket so;
+	http_socket *so = calloc(1, sizeof(http_socket));
 	struct vec vec;
 	int ip_family;
 	int i, ret;
@@ -1434,7 +1434,7 @@ TEST(parse_port_string) {
 		vec.len = strlen(vec.ptr);
 
 		ip_family = 123;
-		ret = parse_port_string(&vec, &so, &ip_family);
+		ret = parse_port_string(&vec, so, &ip_family);
 
 		if ((ret != testdata[i].valid)
 			|| (ip_family != testdata[i].ip_family)) {
@@ -1449,20 +1449,20 @@ TEST(parse_port_string) {
 		}
 
 		if (ip_family == 4)
-			ASSERT((int)so.lsa.sin.sin_family == (int)AF_INET);
+			ASSERT((int)so->lsa.sin.sin_family == (int)AF_INET);
 
 		if (ip_family == 6)
-			ASSERT((int)so.lsa.sin.sin_family == (int)AF_INET6);
+			ASSERT((int)so->lsa.sin.sin_family == (int)AF_INET6);
 
 		/* Test valid strings only */
 		if (ret)
-			ASSERT(htons(so.lsa.sin.sin_port) == testdata[i].port_num);
+			ASSERT(htons(so->lsa.sin.sin_port) == testdata[i].port_num);
 	}
 
 	/* special case: localhost can be ipv4 or ipv6 */
 	vec.ptr = "localhost:123";
 	vec.len = strlen(vec.ptr);
-	ret = parse_port_string(&vec, &so, &ip_family);
+	ret = parse_port_string(&vec, so, &ip_family);
 	if (ret != 1)
 		cerr("IP of localhost seems to be unknown on this system (%i)\n",
 			(int)ret);
@@ -1471,7 +1471,8 @@ TEST(parse_port_string) {
 		cerr("IP family for localhost must be 4 or 6 but is %i\n",
 			(int)ip_family);
 
-	ASSERT_EQ((int)htons(so.lsa.sin.sin_port), (int)123);
+	ASSERT_EQ((int)htons(so->lsa.sin.sin_port), (int)123);
+	free(so);
 	return 0;
 }
 
@@ -1499,8 +1500,9 @@ static void minimal_http_https_client_impl(const char *server,
 		abort();
 	}
 
+	defer(http_close_connection, client);
 	http_printf(client, "GET %s HTTP/1.0\r\n\r\n", uri);
-	r = http_get_response(client, client_err_buf, sizeof(client_err_buf), 10);
+	r = http_get_response(client, client_err_buf, sizeof(client_err_buf), 1000);
 	if ((r < 0) || (0 != strcmp(client_err_buf, ""))) {
 		cerr(
 			"%s connection to server [%s] port [%u] did not respond: [%s]"CLR_LN,
@@ -1544,7 +1546,7 @@ static void minimal_http_https_client_impl(const char *server,
 		ASSERT_STR_ABORT(client_data_buf, expected);
 	}
 
-	http_close_connection(client);
+	//http_close_connection(client);
 }
 
 static void minimal_http_client_check(const char *server,
@@ -1619,7 +1621,7 @@ static http_ini_t *test_http_setup(const http_clb_t *callbacks,
 		cb.log_message = test_log_message;
 	}
 
-	ctx = http_setup(4096, &cb, user_data, (const options_ini_t **)configuration_options);
+	ctx = http_setup(1024, &cb, user_data, (const options_ini_t **)configuration_options);
 	if (!ctx) {
 		/* http_setup is not supposed to fail anywhere, except for
 		 * special tests (for them, line is 0). */
@@ -1658,10 +1660,10 @@ void main_main(http_ini_t *ctx) {
 	/* Run the server for 1 second */
 	delay(seconds(1));
 
+	trace;
 	/* Call a test client */
-	//minimal_http_client_check("localhost", 8080, "/8", "Number eight");
+	minimal_http_client_check("localhost", 8080, "/8", "Number eight");
 
-	//trace;
 	http_stop(ctx);
 }
 

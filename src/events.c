@@ -32,7 +32,6 @@ static array_t events_fsevents_tasks = null;
 static int events_execute(events_t * loop, int max_wait);
 static tasks_t *atexit_ctr_c_task = null;
 sys_events_t sys_event = {0};
-C_API void(fastcall * coro_swap)(tasks_t *, tasks_t *);
 
 typedef struct {
 	malloc_cb local_malloc;
@@ -111,6 +110,7 @@ static void *task_wait_system(void *v);
 static void enqueue_tasks(tasks_t *t);
 
 #include "deque.c"
+#include "asm.c"
 
 EVENTS_INLINE bool events_is_shutdown(void) {
 	return events_shutdown_set;
@@ -122,6 +122,21 @@ void events_set_destroy(void) {
 
 EVENTS_INLINE bool events_is_destroy(void) {
 	return __thrd()->loop == NULL;
+}
+
+void events_task_unwind(tasks_t *co) {
+	if (co->magic_number == TASK_MAGIC_NUMBER) {
+		if (is_data(co->user_data))
+			$delete(co->user_data);
+
+		co->magic_number = TASK_ERRED;
+		co->garbage = NULL;
+		co->user_data = NULL;
+#if defined(_WIN32) && defined(USE_FIBER)
+		DeleteFiber(co->type->fiber);
+#endif
+		events_free(co);
+	}
 }
 
 EVENTS_INLINE int events_set_allocator(malloc_cb local_malloc, realloc_cb local_realloc, calloc_cb local_calloc,
@@ -1043,8 +1058,7 @@ static EVENTS_INLINE tasks_t *task_dequeue(tasklist_t *l) {
 	return t;
 }
 
-/* Delete specified coroutine. */
-static void task_delete(tasks_t *co) {
+void task_delete(tasks_t *co) {
 	if (!co) {
 		cerr("attempt to delete an invalid task");
 	} else if (!(co->status == TASK_NORMAL

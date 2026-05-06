@@ -7,6 +7,81 @@
 #	endif
 #endif
 
+fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol) {
+	fds_t fd;
+	int len, err, proto, off = 0, on = 1;
+	char ipbuf[22] = {0};
+	char *ip = ipbuf;
+	union usa usa;
+	struct sockaddr_un u_sa = {0};
+	usa.sa = *sa;
+	socklen_t sn;
+	uds_t uds = (protocol == -1) || sa->sa_family == AF_UNIX
+		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
+		: null;
+	bool is_unix = !is_empty(uds);
+
+	proto = protocol ? SOCK_STREAM : SOCK_DGRAM;
+	if ((fd = socket(sa->sa_family, proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
+		errno = os_geterror();
+		if (is_unix)
+			events_free(uds);
+		return DATA_INVALID;
+	}
+
+	// set reuse flag for tcp
+	if (!is_unix && protocol && getsockopt(fd, SOL_SOCKET, SO_TYPE, (void *)&on, &sn) >= 0) {
+		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) != 0) {
+			/* Set reuse option, but don't abort on errors. */
+			cerr("Cannot set socket option SO_REUSEADDR"CLR_LN);
+		}
+	}
+
+	if (is_unix) {
+		uds->addr = &events_get_sockaddr(fd)->sun;
+		strncpy(uds->addr->sun_path, address, sizeof(uds->addr->sun_path) - 1);
+		uds->addr->sun_family = AF_UNIX;
+		uds->socket = fd;
+		uds->type = DATA_UNIX;
+		err = bind(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
+	} else {
+		sn = sa->sa_family == AF_INET6 ? sizeof(usa.sin6) : sizeof(usa.sin);
+		err = bind(fd, (struct sockaddr *)sa, sn);
+		events_get_sockaddr(fd)->sa = *sa;
+		if (!err && sa->sa_family == AF_INET6) {
+			trace;
+			/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
+			/* Set IPv6 only option, but don't abort on errors. */
+			if (protocol > 6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&off, sizeof(off)) != 0) {
+				cerr("cannot set socket option IPV6_V6ONLY=off");
+			} else if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&on, sizeof(on)) != 0) {
+				cerr("cannot set socket option IPV6_V6ONLY=on");
+			}
+		}
+	}
+
+	if (err < 0) {
+		errno = os_geterror();
+		close(fd);
+		if (is_unix)
+			events_free(uds);
+		return -1;
+	}
+
+	if (proto == SOCK_STREAM) {
+		if (listen(fd, backlog) != 0) {
+			cerr("Cannot listen to %s: %d (%s)", address, os_geterror(), strerror(errno));
+			close(fd);
+			fd = INVALID_SOCKET;
+			return fd;
+		}
+	}
+
+	events_set_nonblocking(fd);
+	events_target(socket2fd(fd))->uds = uds;
+	return fd;
+}
+
 fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	fds_t fd;
 	int err, proto, n = !protocol ? str_subcount(address, ".") : 0;
@@ -87,6 +162,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 fds_t async_accept(fds_t fd, char *server, int *port) {
 	fds_t cfd;
 	int one;
+	union usa usa;
 	struct sockaddr_in sa = {0};
 	struct sockaddr_un u_sa = {0};
 	uchar *ip;
@@ -94,21 +170,19 @@ fds_t async_accept(fds_t fd, char *server, int *port) {
 	bool is_unix = socket_is_uds(socket2fd(fd));
 
 	async_wait(fd, 'r');
-	len = is_unix ? sizeof(u_sa) : sizeof(sa);
-	if ((cfd = accept(fd, (is_unix ? (struct sockaddr *)&u_sa : (struct sockaddr *)&sa), &len)) < 0) {
+	len = is_unix ? sizeof(usa.sun) : sizeof(usa.sa);
+	if ((cfd = accept(fd, (is_unix ? (struct sockaddr *)&usa.sun : (struct sockaddr *)&usa.sa), &len)) < 0) {
 		errno = os_geterror();
 		return -1;
 	}
 
-	if (is_unix)
-		events_get_sockaddr(cfd)->sun = u_sa;
-	else
-		events_get_sockaddr(cfd)->sin = sa;
-
+	events_get_sockaddr(cfd)->storage = usa.storage;
 	if (!is_unix && server) {
+		sa = usa.sin;
 		ip = (uchar *)&sa.sin_addr;
 		snprintf(server, 16, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 	} else if (is_unix && server) {
+		u_sa = usa.sun;
 		snprintf(server, 108, "%s", u_sa.sun_path);
 	}
 
@@ -116,7 +190,9 @@ fds_t async_accept(fds_t fd, char *server, int *port) {
 		*port = ntohs(sa.sin_port);
 	events_set_nonblocking(cfd);
 	one = 1;
-	if (!is_unix)
+	if (is_unix)
+		events_get_sockaddr(cfd)->sa.sa_family = AF_UNIX;
+	else
 		setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (char *)&one, sizeof one);
 
 	return cfd;

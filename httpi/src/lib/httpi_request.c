@@ -633,8 +633,8 @@ static string_t get_proto_name(http_t *conn) {
 	const httpi_t *ri = &conn->req;
 
 	string_t proto = ((conn->req.proto == PROTOCOL_WEBSOCKET)
-		? (conn->client.has_ssl ? "wss" : "ws")
-		: (conn->client.has_ssl ? "https" : "http"));
+		? (conn->client->has_ssl ? "wss" : "ws")
+		: (conn->client->has_ssl ? "https" : "http"));
 
 	return proto;
 
@@ -688,7 +688,7 @@ static int construct_local_link(http_t *conn,
 			}
 		}
 		uri_encoded[j] = '\0';
-		if (conn->client.lsa.sa.sa_family == AF_UNIX) {
+		if (conn->client->lsa.sa.sa_family == AF_UNIX) {
 			/* TODO: Define and document a link for UNIX domain sockets. */
 			/* There seems to be no official standard for this.
 			 * Common uses seem to be "httpunix://", "http.unix://" or
@@ -718,14 +718,14 @@ static int construct_local_link(http_t *conn,
 				|| (0 == strcmp(define_proto, "wss"))) {
 				default_port = 443;
 			}
-		} else if (conn->client.has_ssl) {
+		} else if (conn->client->has_ssl) {
 			/* If we did not get a protocol name, use TLS as default if it is
 			 * already used. */
 			default_port = 443;
 		}
 
 		{
-			int is_ipv6 = (conn->client.lsa.sa.sa_family == AF_INET6);
+			int is_ipv6 = (conn->client->lsa.sa.sa_family == AF_INET6);
 			int auth_domain_check_enabled =
 				conn->domain->config[ENABLE_AUTH_DOMAIN_CHECK]
 				&& (str_is_case(
@@ -746,7 +746,7 @@ static int construct_local_link(http_t *conn,
 			if (!auth_domain_check_enabled || !server_domain) {
 				sockaddr_to_str(server_ip,
 					sizeof(server_ip),
-					&conn->client.lsa);
+					&conn->client->lsa);
 				server_domain = server_ip;
 			}
 
@@ -1311,11 +1311,13 @@ static void redirect_to_https_port(http_t *conn, int port) {
 
 
 static int get_first_ssl_listener_index(const http_ini_t *ctx) {
-	unsigned int i;
 	int idx = -1;
-	if (ctx) {
-		for (i = 0; ((idx == -1) && (i < ctx->num_listening_sockets)); i++) {
-			idx = ctx->listening_sockets[i].has_ssl ? ((int)(i)) : -1;
+	if (!is_empty(ctx) && $size(ctx->server_sockets) > 0) {
+		foreach(sockets in ctx->server_sockets) {
+			http_socket *socket = (http_socket *)sockets.object;
+			idx = socket->has_ssl ? ((int)(isockets)) : -1;
+			if (idx != -1)
+				break;
 		}
 	}
 
@@ -1979,7 +1981,7 @@ void handle_not_modified_static_file_request(http_t *conn, struct file *filep) {
 
 void discard_unread_request_data(http_t *conn) {
 	char buf[BUF_LEN];
-	while (tls_reader(socket2fd(conn->client.sock), buf, sizeof(buf)) > 0)
+	while (tls_reader(socket2fd(conn->client->sock), buf, sizeof(buf)) > 0)
 		;
 }
 
@@ -2312,11 +2314,11 @@ void http_handle_request(http_t *conn) {
 	}
 
 	/* 1.2. do a https redirect, if required. Do not decode URIs yet. */
-	if (!conn->client.has_ssl && conn->client.has_redir) {
+	if (!conn->client->has_ssl && conn->client->has_redir) {
 		ssl_index = get_first_ssl_listener_index((const http_ini_t *)conn->ctx);
 		if (ssl_index >= 0) {
-			int port = (int)ntohs(USA_IN_PORT_UNSAFE(
-				&(conn->ctx->listening_sockets[ssl_index].lsa)));
+			http_socket *so = (http_socket *)conn->ctx->server_sockets[ssl_index].object;
+			int port = (int)ntohs(USA_IN_PORT_UNSAFE(&so->lsa));
 			redirect_to_https_port(conn, port);
 		} else {
 			/* A http to https forward port has been specified,
@@ -2361,7 +2363,7 @@ void http_handle_request(http_t *conn) {
 	debug_info("REQUEST: %s %s"CLR_LN, conn->method, ri->local_uri);
 
 	/* 2. if this ip has limited speed, set it for this connection */
-	//conn->throttle = set_throttle(conn->domain->config[THROTTLE], &conn->client.rsa, ri->local_uri);
+	//conn->throttle = set_throttle(conn->domain->config[THROTTLE], &conn->client->rsa, ri->local_uri);
 
 	/* 3. call a "handle everything" callback, if registered */
 	if (conn->ctx->callbacks.start != NULL) {

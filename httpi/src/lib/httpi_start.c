@@ -3,12 +3,14 @@
 #define IP_ADDR_STR_LEN (50)
 
 static http_ini_t *http_atexit_ctrl_c = null;
+static bool http_atexit_ctrl_c_flag = false;
 
 static void http_ctrl_c_exit(void) {
 	events_ctr_c_unwind();
 	if (is_empty(http_atexit_ctrl_c) || !is_ptr_usable(http_atexit_ctrl_c))
 		return;
 
+	http_atexit_ctrl_c_flag = true;
 	http_ini_t *ctx = http_atexit_ctrl_c;
 	http_atexit_ctrl_c = null;
 	http_stop(ctx);
@@ -78,10 +80,11 @@ static void httpi_cleanup(void_t ptr) {
 	//recover_cb recover = (recover_cb)conn;
 	string_t err = guard_message();
 	if (!is_empty(conn)) {
-		if (!is_empty(conn->req.buf)) {
-			free(conn->req.buf);
-			conn->req.buf = null;
-		}
+		if (!is_empty(conn->req.buf))
+			conn->req.buf = free_ex(conn->req.buf);
+
+		if (!is_empty(conn->client))
+			conn->client = free_ex(conn->client);
 
 		http_free(conn);
 	}
@@ -115,46 +118,61 @@ static void http_handler(int client) {
 }
 
 /* Process new incoming connections to the server. */
-http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
-	http_socket so;
+http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
+	http_socket *so;
 	http_t *conn = nullptr;
 	time_t conn_birth_time;
 	char src_addr[IP_ADDR_STR_LEN];
 	char error_string[ERROR_STRING_LEN];
-	socklen_t len = sizeof(so.rsa);
+	fds_t sock;
+	union usa *usa;
+	socklen_t len;
 	int on = 1;
 
 	if (is_empty(listener) || is_empty(ctx))
 		return nullptr;
 
-	memset(&so, 0, sizeof(so));
 	if (listener->has_ssl) {
-		so.sock = tls_accept(listener->sock, null, null);
-		so.rsa.sa = events_get_sockaddr(so.sock)->sa;
+		sock = tls_accept(listener->sock, null, null);
 	} else {
-		async_wait(socket2fd(listener->sock), 'r');
-		so.sock = accept(socket2fd(listener->sock), &so.rsa.sa, &len);
+		cout("\nhttp accept waiting on: %d"CLR_LN, socket2fd(listener->sock));
+		sock = async_accept(socket2fd(listener->sock), null, null);
 	}
 
-	if (so.sock == INVALID_SOCKET)
+	if (sock == INVALID_SOCKET) {
 		return nullptr;
+	}
 
+	usa = events_get_sockaddr(sock);
+	if (is_empty(so = (http_socket *)calloc(1, sizeof(http_socket)))) {
+		http_log(DEBUG_INFO, nullptr, "%s: Out of memory", __func__);
+		tls_closer(sock);
+		sock = INVALID_SOCKET;
+		return nullptr;
+	}
+
+	so->sock = sock;
+	so->rsa.storage = usa->storage;
+	memset(&so->lsa.sa, 0, sizeof(so->lsa.sa));
+	len = sizeof(so->lsa.sa);
 	conn_birth_time = time(null);
-	if (!http_check_acl(ctx, (const union usa *)&so.rsa)) {
-		sockaddr_to_str(src_addr, sizeof(src_addr), &so.rsa);
+	if (!http_check_acl(ctx, (const union usa *)&so->rsa)) {
+		sockaddr_to_str(src_addr, sizeof(src_addr), &so->rsa);
 		http_log(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
 			__func__, src_addr);
-		tls_closer(so.sock);
-		so.sock = INVALID_SOCKET;
+		tls_closer(sock);
+		sock = INVALID_SOCKET;
+		free(so);
 	} else {
 		/* Put so socket structure into the queue */
-		so.has_ssl = listener->has_ssl;
-		so.has_redir = listener->has_redir;
-		if (getsockname(so.sock, &so.lsa.sa, &len) != 0) {
+		so->has_ssl = listener->has_ssl;
+		so->has_redir = listener->has_redir;
+		if (getsockname(so->sock, &so->lsa.sa, &len) != 0) {
 			http_log(DEBUG_ERROR, nullptr, "%s: getsockname() failed: %s",
 				__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 		}
 
+		on = 1;
 		/*
 		 * Set TCP keep-alive. This is needed because if HTTP-level keep-alive
 		 * is enabled, and client resets the connection, server won't get
@@ -162,25 +180,15 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 		 * TCP keep-alive, next keep-alive handshake will figure out that
 		 * the client is down and will close the server end.
 		 * Thanks to Igor Klopov who suggested the patch. */
-		if ((so.lsa.sa.sa_family == AF_INET)
-			|| (so.lsa.sa.sa_family == AF_INET6)) {
-			if (setsockopt(so.sock, SOL_SOCKET, SO_KEEPALIVE, (string_t)&on, sizeof(on)) != 0) {
+		if ((so->lsa.sa.sa_family == AF_INET)
+			|| (so->lsa.sa.sa_family == AF_INET6)) {
+			if (setsockopt(so->sock, SOL_SOCKET, SO_KEEPALIVE, (string_t)&on, sizeof(on)) != 0) {
 				http_log(DEBUG_ERROR, nullptr, "%s: setsockopt(SOL_SOCKET SO_KEEPALIVE) failed: %s",
 					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 			}
 		}
 
-		on = 1;
-		if ((so.lsa.sa.sa_family == AF_INET)
-			|| (so.lsa.sa.sa_family == AF_INET6)) {
-			if (setsockopt(so.sock, IPPROTO_TCP, TCP_NODELAY, (string_t)&on, sizeof(on)) != 0) {
-				http_log(DEBUG_ERROR, nullptr, "%s: setsockopt(IPPROTO_TCP TCP_NODELAY) failed: %s",
-					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
-			}
-		}
-
-		so.in_use = 0;
-		events_set_nonblocking(so.sock);
+		so->in_use = 0;
 		conn = calloc(1, sizeof(http_t));
 		if (!is_empty(conn)) {
 			conn->names = nullptr;
@@ -195,14 +203,16 @@ http_t *http_accept(const http_socket *listener, http_ini_t *ctx) {
 			conn->client = so;
 			conn->version = 1.1;
 			conn->req.conn_birth_time = conn_birth_time;
-			conn->req.remote_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client.rsa));
-			conn->req.server_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client.lsa));
-			sockaddr_to_str(conn->req.remote_addr, sizeof(conn->req.remote_addr), &conn->client.rsa);
+			conn->req.remote_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client->rsa));
+			conn->req.server_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client->lsa));
+			sockaddr_to_str(conn->req.remote_addr, sizeof(conn->req.remote_addr), &conn->client->rsa);
 			conn->type = (data_types)DATA_HTTPINFO;
-			events_set_target_data(so.sock, (void *)conn);
+			events_set_target_data(so->sock, (void *)conn);
 		} else {
-			events_set_target_data(so.sock, null);
-			tls_closer(socket2fd(so.sock));
+			events_set_target_data(so->sock, null);
+			tls_closer(socket2fd(so->sock));
+			so->sock = INVALID_SOCKET;
+			free(so);
 		}
 	}
 
@@ -217,6 +227,34 @@ void http_stop(http_ini_t *ctx) {
 	ctx->status = HTTP_STATUS_TERMINATED;
 	http_free_ini(ctx);
 	events_destroy(event_loop());
+}
+
+void http_close_listening_sockets(http_ini_t *ctx) {
+	if (is_empty(ctx) || !is_data(ctx->server_sockets))
+		return;
+
+	if ($size(ctx->server_sockets) > 0) {
+		foreach(sockets in ctx->server_sockets) {
+			http_socket *socket = (http_socket *)sockets.object;
+			events_del(socket->sock);
+			if (!http_atexit_ctrl_c_flag)
+				yield();
+
+			tls_closer(socket2fd(socket->sock));
+			/* For unix domain sockets, the socket name represents a file that has
+			 * to be deleted. */
+			/* See https://stackoverflow.com/questions/15716302/so-reuseaddr-and-af-unix */
+			if ((socket->lsa.sin.sin_family == AF_UNIX)
+				&& (socket->sock != INVALID_SOCKET))
+				(void)remove(socket->lsa.sun.sun_path);
+			socket->sock = INVALID_SOCKET;
+			events_task_unwind(socket->task);
+			free(socket);
+		}
+	}
+
+	$delete(ctx->server_sockets);
+	ctx->server_sockets = null;
 }
 
 void http_free_ini(http_ini_t *ctx) {
@@ -243,7 +281,8 @@ void http_free_ini(http_ini_t *ctx) {
 	}
 
 	/* deallocate system name string */
-	ctx->systemName = free_ex(ctx->systemName);
+	if (!is_empty(ctx->systemName))
+		ctx->systemName = free_ex(ctx->systemName);
 
 	/* Deallocate context itself */
 	free(ctx);
@@ -415,11 +454,12 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 	http_get_random(&nonce1);
 	new_dom->auth_nonce_mask = nonce1 ^ (nonce2 << 31);
 
-	for (i = 0; i < ctx->num_listening_sockets; i++) {
-		if (ctx->listening_sockets[i].has_ssl) {
+	foreach(sockets in ctx->server_sockets) {
+		http_socket *socket = (http_socket *)sockets.object;
+		if (socket->has_ssl) {
 			char domain_cert[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
 			char domain_pkey[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
-			tls_config_t *config = tls_get_config(ctx->listening_sockets[i].sock);
+			tls_config_t *config = tls_get_config(socket2fd(socket->sock));
 			snprintf(domain_cert, sizeof(domain_cert), "%s%s.crt", default_cert_path(null), new_dom->config[AUTHENTICATION_DOMAIN]);
 			snprintf(domain_pkey, sizeof(domain_pkey), "%s%s.key", default_cert_path(null), new_dom->config[AUTHENTICATION_DOMAIN]);
 			if (!tls_config_add_keypair_file(config, domain_cert, domain_pkey)) {
@@ -497,6 +537,12 @@ http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 	if (is_empty(ctx))
 		return nullptr;
 
+	ctx->server_sockets = array();
+	if (is_empty(ctx->server_sockets)) {
+		free(ctx);
+		return nullptr;
+	}
+
 	if (http_init_options(ctx, (string_t *)options))
 		return nullptr;
 
@@ -552,14 +598,15 @@ http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 }
 
 static void http_server_task(param_t args) {
-	const http_socket *listener = (const http_socket *)args[0].object;
+	http_socket *listener = (http_socket *)args[0].object;
 	http_ini_t *ctx = (http_ini_t *)args[1].object;
 	http_t *conn = null;
-	data_gc(args);
+	listener->task = active_task();
+	task_data_set(listener->task, (void_t)args);
 	while (!is_empty(ctx) && ctx->status == HTTP_STATUS_RUNNING) {
-		if (!is_empty(conn = http_accept(listener, ctx))) {
+		if (!is_empty(conn = http_accept((http_socket *)listener, ctx))) {
 			conn->ctx = ctx;
-			accept_handler(http_handler, socket2fd(conn->client.sock));
+			accept_handler(http_handler, socket2fd(conn->client->sock));
 		}
 	}
 }
@@ -569,8 +616,9 @@ int http_server(http_ini_t *ctx) {
 	events_t *loop = events_init_pool(2);
 	if (!is_empty(ctx) && !is_empty(loop)) {
 		ctx->status = HTTP_STATUS_RUNNING;
-		for (i = 0; i < ctx->num_listening_sockets; i++)
-			async_ex(Kb(32), http_server_task, 2, ctx->listening_sockets[i], ctx);
+		foreach(socket in ctx->server_sockets) {
+			async_ex(Kb(32), http_server_task, 2, socket.object, ctx);
+		}
 
 		http_atexit_ctrl_c = ctx;
 		exception_ctrl_c_func = http_ctrl_c_exit;
@@ -583,10 +631,10 @@ int http_server(http_ini_t *ctx) {
 
 static FORCEINLINE void *http_main_task(param_t args) {
 	http_main_cb start = (http_main_cb)args[1].func;
+	yield();
 	if (!is_empty(start))
 		start((http_ini_t *)args[0].object);
 
-	yield();
 	return 0;
 }
 
@@ -598,8 +646,9 @@ void httpi_start(http_ini_t *ctx, http_main_cb start) {
 	int i;
 	ctx->status = HTTP_STATUS_RUNNING;
 	async_task(http_main_task, 2, ctx, start);
-	for (i = 0; i < ctx->num_listening_sockets; i++)
-		async_ex(Kb(32), http_server_task, 2, ctx->listening_sockets[i], ctx);
+	foreach(socket in ctx->server_sockets) {
+		async_ex(Kb(32), http_server_task, 2, socket.object, ctx);
+	}
 
 	http_atexit_ctrl_c = ctx;
 	exception_ctrl_c_func = http_ctrl_c_exit;

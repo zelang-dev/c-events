@@ -312,34 +312,29 @@ FORCEINLINE const options_ini_t *http_get_valid_options(void) {
 int http_server_ports(http_ini_t *ctx, int size, http_server_port_t *ports) {
 	int i, cnt = 0;
 
-	if (size <= 0) {
-		return -1;
-	}
+	if (size <= 0 || is_empty(ctx) || !($size(ctx->server_sockets) > 0))
+		return DATA_INVALID;
 
 	memset(ports, 0, sizeof(*ports) * (size_t)size);
-	if (!ctx) {
-		return -1;
-	}
-
-	if (!ctx->listening_sockets) {
-		return -1;
-	}
-
-	for (i = 0; (i < size) && (i < (int)ctx->num_listening_sockets); i++) {
-		ports[cnt].port =ntohs(USA_IN_PORT_UNSAFE(&(ctx->listening_sockets[i].lsa)));
-		ports[cnt].is_ssl = ctx->listening_sockets[i].has_ssl;
-		ports[cnt].is_redirect = ctx->listening_sockets[i].has_redir;
-		ports[cnt].is_optional = ctx->listening_sockets[i].is_optional;
-		ports[cnt].is_bound = ctx->listening_sockets[i].sock != INVALID_SOCKET;
-		if (ctx->listening_sockets[i].lsa.sa.sa_family == AF_INET) {
+	foreach(sockets in ctx->server_sockets) {
+		http_socket *socket = (http_socket *)sockets.object;
+		ports[cnt].port = ntohs(USA_IN_PORT_UNSAFE(&(socket->lsa)));
+		ports[cnt].is_ssl = socket->has_ssl;
+		ports[cnt].is_redirect = socket->has_redir;
+		ports[cnt].is_optional = socket->is_optional;
+		ports[cnt].is_bound = socket->sock != INVALID_SOCKET;
+		if (socket->lsa.sa.sa_family == AF_INET) {
 			/* IPv4 */
 			ports[cnt].protocol = 1;
 			cnt++;
-		} else if (ctx->listening_sockets[i].lsa.sa.sa_family == AF_INET6) {
+		} else if (socket->lsa.sa.sa_family == AF_INET6) {
 			/* IPv6 */
 			ports[cnt].protocol = 3;
 			cnt++;
 		}
+
+		if (isockets == size)
+			break;
 	}
 
 	return cnt;
@@ -801,7 +796,7 @@ int http_switch_domain(http_t *conn) {
 
 	get_host_from_request(&host, conn);
 	if (host.ptr) {
-		if (conn->client.has_ssl) {
+		if (conn->client->has_ssl) {
 			/* This is a HTTPS connection, maybe we have a hostname
 			 * from SNI (set in ssl_servername_callback). */
 			string_t sslhost = conn->domain->config[AUTHENTICATION_DOMAIN];
@@ -834,9 +829,9 @@ int http_switch_domain(http_t *conn) {
 				atomic_unlock(&conn->ctx->nonce_mutex);
 			}
 		}
-		debug_info("HTTP%s Host: %.*s"CLR_LN, conn->client.has_ssl ? "S" : "", (int)host.len, host.ptr);
+		debug_info("HTTP%s Host: %.*s"CLR_LN, conn->client->has_ssl ? "S" : "", (int)host.len, host.ptr);
 	} else {
-		debug_info("HTTP%s Host is not set"CLR_LN, conn->client.has_ssl ? "S" : "");
+		debug_info("HTTP%s Host is not set"CLR_LN, conn->client->has_ssl ? "S" : "");
 	}
 
 	return 1;
@@ -1023,13 +1018,13 @@ void http_set_close_on_exec(fds_t sock) {
 }
 
 static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
-	int portsOk, int portsTotal, int ip_version, http_socket so) {
-	http_socket *ptr;
-	int off, on = 0;
+	int portsOk, int portsTotal, int ip_version, http_socket *so) {
+	int ip_family, off = 0, on = 0;
 	union usa usa;
 	socklen_t len;
 	string_t opt_txt;
 	long opt_listen_backlog;
+	char address[MAXHOSTNAMELEN] = {0};
 
 	opt_txt = phys_ctx->host.config[LISTEN_BACKLOG_SIZE];
 	opt_listen_backlog = strtol(opt_txt, NULL, 10);
@@ -1038,225 +1033,69 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			"%s value \"%s\" is invalid",
 			config_options[LISTEN_BACKLOG_SIZE].name,
 			opt_txt);
+
+		free(so);
 		return portsOk;
 	}
 
-	if (so.has_ssl) {
-		if ((so.sock = tls_bind(vec.ptr, opt_listen_backlog)) < 0) {
+	ip_family = ip_version == 99
+		? -1
+		: (ip_version >= 6
+			? ip_version
+			: (ip_version == 4 ? 1 : 0));
+	if (so->has_ssl) {
+		snprintf(address, sizeof(address), "%s", vec.ptr);
+		if ((so->sock = tls_bind(address, opt_listen_backlog)) < 0) {
 			http_log(DEBUG_CRASH, NULL, "cannot create secure socket (entry %i)", portsTotal);
+			free(so);
 			return portsOk;
 		}
-
-		so.lsa = *events_get_sockaddr(so.sock);
 	} else {
-		/* Create socket. */
-		/* For a list of protocol numbers (e.g., TCP==6) see:
-		* https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml */
-		if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM,
-			(ip_version == 99) ? (/* LOCAL */ 0) : (/* TCP */ 6))) == INVALID_SOCKET) {
-			http_log(DEBUG_CRASH, NULL, "cannot create socket (entry %i)", portsTotal);
-			if (so.is_optional) {
+		snprintf(address, sizeof(address), "%s", vec.ptr);
+		if ((so->sock = async_socket(&so->lsa.sa, address, opt_listen_backlog, ip_family)) == INVALID_SOCKET) {
+			http_log(DEBUG_CRASH, NULL, "cannot create socket or listen (entry %i)", portsTotal);
+			if (so->is_optional) {
 				portsOk++; /* it's okay if we couldn't create a socket,
 						this port is optional anyway */
 			}
+			free(so);
 			return portsOk;
 		}
-
-		if (ip_version == 99) {
-			/* Unix domain socket */
-		} else if (ip_version > 4) {
-			/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
-			if (ip_version > 6) {
-				if (so.lsa.sa.sa_family == AF_INET6
-					&& setsockopt(so.sock,
-						IPPROTO_IPV6,
-						IPV6_V6ONLY,
-						(void *)&off,
-						sizeof(off))
-					!= 0) {
-					/* Set IPv6 only option, but don't abort on errors. */
-					http_log(DEBUG_CRASH, NULL,
-						"cannot set socket option "
-						"IPV6_V6ONLY=off (entry %i)",
-						portsTotal);
-				}
-			} else {
-				if (so.lsa.sa.sa_family == AF_INET6
-					&& setsockopt(so.sock,
-						IPPROTO_IPV6,
-						IPV6_V6ONLY,
-						(void *)&on,
-						sizeof(on))
-					!= 0) {
-					/* Set IPv6 only option, but don't abort on errors. */
-					http_log(DEBUG_CRASH, NULL,
-						"cannot set socket option "
-						"IPV6_V6ONLY=on (entry %i)",
-						portsTotal);
-				}
-			}
-		}
-
-		if (so.lsa.sa.sa_family == AF_INET) {
-			len = sizeof(so.lsa.sin);
-			if (bind(so.sock, &so.lsa.sa, len) != 0) {
-				http_log(DEBUG_CRASH, NULL,
-					"cannot bind to %.*s: %d (%s)",
-					(int)vec.len,
-					vec.ptr,
-					os_geterror(),
-					strerror(errno));
-				close(so.sock);
-				so.sock = INVALID_SOCKET;
-				if (so.is_optional) {
-					portsOk++; /* it's okay if we couldn't bind, this port is
-								  optional anyway */
-				}
-				return portsOk;
-			}
-		} else if (so.lsa.sa.sa_family == AF_INET6) {
-			len = sizeof(so.lsa.sin6);
-			if (bind(so.sock, &so.lsa.sa, len) != 0) {
-				http_log(DEBUG_CRASH, NULL,
-					"cannot bind to IPv6 %.*s: %d (%s)",
-					(int)vec.len,
-					vec.ptr,
-					os_geterror(),
-					strerror(errno));
-				close(so.sock);
-				so.sock = INVALID_SOCKET;
-				if (so.is_optional) {
-					portsOk++; /* it's okay if we couldn't bind, this port is
-								  optional anyway */
-				}
-				return portsOk;
-			}
-		} else if (so.lsa.sa.sa_family == AF_UNIX) {
-			len = sizeof(so.lsa.sun);
-			if (bind(so.sock, &so.lsa.sa, len) != 0) {
-				http_log(DEBUG_CRASH, NULL,
-					"cannot bind to unix socket %s: %d (%s)",
-					so.lsa.sun.sun_path,
-					os_geterror(),
-					strerror(errno));
-				close(so.sock);
-				so.sock = INVALID_SOCKET;
-				if (so.is_optional) {
-					portsOk++; /* it's okay if we couldn't bind, this port is
-								  optional anyway */
-				}
-				return portsOk;
-			}
-		} else {
-			http_log(DEBUG_CRASH, NULL, "cannot bind: address family not supported (entry %i)", portsTotal);
-			close(so.sock);
-			so.sock = INVALID_SOCKET;
-			return portsOk;
-		}
-
-		if ((so.lsa.sa.sa_family == AF_INET) || (so.lsa.sa.sa_family == AF_INET6)) {
-			if (getsockopt(so.sock, SOL_SOCKET, SO_TYPE, (void *)&on, &on) >= 0) {
-				on = 1;
-				if (setsockopt(so.sock, SOL_SOCKET, SO_REUSEADDR, (string_t)&on, sizeof(on)) != 0) {
-					/* Set reuse option, but don't abort on errors. */
-					http_log(DEBUG_CRASH, NULL,
-						"cannot set socket option SO_REUSEADDR (entry %i)", portsTotal);
-				}
-			}
-		}
-
-		if (listen(so.sock, (int)opt_listen_backlog) != 0) {
-			http_log(DEBUG_CRASH, NULL,
-				"cannot listen to %.*s: %d (%s)",
-				(int)vec.len,
-				vec.ptr,
-				os_geterror(),
-				strerror(errno));
-			close(so.sock);
-			so.sock = INVALID_SOCKET;
-			return portsOk;
-		}
-
-		events_set_nonblocking(so.sock);
 	}
 
-	if ((getsockname(so.sock, &(usa.sa), &len) != 0)
-		|| (usa.sa.sa_family != so.lsa.sa.sa_family)) {
+	so->lsa.sa = events_get_sockaddr(so->sock)->sa;
+	memset(&usa.sa, 0, sizeof(usa.sa));
+	len = sizeof(usa.sa);
+	if ((getsockname(so->sock, &(usa.sa), &len) != 0) || (usa.sa.sa_family != so->lsa.sa.sa_family)) {
 		int err = os_geterror();
-		http_log(DEBUG_CRASH, NULL,
-			"call to getsockname failed %.*s: %d (%s)",
-			(int)vec.len,
-			vec.ptr,
-			err,
-			strerror(errno));
-		tls_closer(so.sock);
-		so.sock = INVALID_SOCKET;
+		http_log(DEBUG_CRASH, NULL, "call to getsockname failed %s: %d (%s)"CLR_LN,
+			address, err, strerror(err));
+		tls_closer(so->sock);
+		so->sock = INVALID_SOCKET;
+		free(so);
 		return portsOk;
 	}
 
 	/* Update lsa port in case of random free ports */
-	if (so.lsa.sa.sa_family == AF_INET6) {
-		so.lsa.sin6.sin6_port = usa.sin6.sin6_port;
+	if (so->lsa.sa.sa_family == AF_INET6) {
+		so->lsa.sin6.sin6_port = usa.sin6.sin6_port;
 	} else {
-		so.lsa.sin.sin_port = usa.sin.sin_port;
+		so->lsa.sin.sin_port = usa.sin.sin_port;
 	}
 
-	if ((ptr = (http_socket *)
-		realloc(phys_ctx->listening_sockets,
-			(phys_ctx->num_listening_sockets + 1) * sizeof(phys_ctx->listening_sockets[0])))
-		== NULL) {
-		http_log(DEBUG_CRASH, NULL, "%s", "Out of memory");
-		tls_closer(so.sock);
-		so.sock = INVALID_SOCKET;
-		return portsOk;
-	}
-
-	phys_ctx->listening_sockets = ptr;
-	phys_ctx->listening_sockets[phys_ctx->num_listening_sockets] = so;
-	phys_ctx->num_listening_sockets++;
+	$append(phys_ctx->server_sockets, so);
 	portsOk++;
-
 	return portsOk;
-}
-
-void http_close_listening_sockets(http_ini_t *ctx) {
-	if (is_empty(ctx))
-		return;
-
-	if (!is_empty(ctx->listening_sockets)) {
-		unsigned int i;
-		for (i = 0; i < ctx->num_listening_sockets; i++) {
-			tls_closer(ctx->listening_sockets[i].sock);
-			/* For unix domain sockets, the socket name represents a file that has
-			 * to be deleted. */
-			/* See
-			 * https://stackoverflow.com/questions/15716302/so-reuseaddr-and-af-unix
-			 */
-			if ((ctx->listening_sockets[i].lsa.sin.sin_family == AF_UNIX)
-				&& (ctx->listening_sockets[i].sock != INVALID_SOCKET)) {
-				(void)remove(ctx->listening_sockets[i].lsa.sun.sun_path);
-			}
-			ctx->listening_sockets[i].sock = INVALID_SOCKET;
-		}
-		free(ctx->listening_sockets);
-		ctx->listening_sockets = NULL;
-	}
 }
 
 int http_set_ports_option(http_ini_t *ctx) {
 	string_t list;
 	char error_string[ERROR_STRING_LEN];
-	int on;
-	int off;
 	struct vec vec;
-	http_socket so;
-	http_socket *ptr;
-	struct pollfd *pfd;
+	http_socket *so;
 	union usa usa;
 	socklen_t len;
-	int ip_version;
-	int ports_total;
-	int ports_ok;
+	int on, off, ip_version, ports_total, ports_ok;
 
 	if (ctx == NULL) return 0;
 
@@ -1265,23 +1104,25 @@ int http_set_ports_option(http_ini_t *ctx) {
 	ports_total = 0;
 	ports_ok = 0;
 
-	memset(&so, 0, sizeof(so));
-	memset(&usa, 0, sizeof(usa));
-
-	len = sizeof(usa);
 	list = ctx->host.config[LISTENING_PORTS];
 	while ((list = http_next_option(list, &vec, NULL)) != NULL) {
 		ports_total++;
-		if (!parse_port_string(&vec, &so, &ip_version)) {
+		if (is_empty(so = calloc(1, sizeof(http_socket)))) {
+			http_log(DEBUG_CRASH, NULL, "%s", "Out of memory");
+			break;
+		}
+
+		if (!parse_port_string(&vec, so, &ip_version)) {
 			http_log(DEBUG_CRASH, NULL, "%s: %.*s: invalid port spec (entry %i). Expecting list of: %s",
 				__func__, (int)vec.len, vec.ptr,
 				ports_total, "[IP_ADDRESS:]PORT[s|r]");
+			free(so);
 			continue;
 		}
 
 		/* Create socket. */
 		/* For a list of protocol numbers (e.g., TCP==6) see:
-		 * https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml */
+		* https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml */
 		ports_ok = http_set_ports(ctx, vec, ports_ok, ports_total, ip_version, so);
 	}
 
@@ -1429,7 +1270,7 @@ string_t http_get_rel_url_at_current_server(string_t uri, http_t *conn) {
 
 	/* Check if the request is directed to a different server. */
 	/* First check if the port is the same. */
-	if (ntohs(USA_IN_PORT_UNSAFE(&conn->client.lsa)) != port) {
+	if (ntohs(USA_IN_PORT_UNSAFE(&conn->client->lsa)) != port) {
 		/* Request is directed to a different port */
 		return 0;
 	}
