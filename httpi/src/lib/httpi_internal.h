@@ -460,6 +460,7 @@ struct http_ini_s {
 	/* Memory related */
 	/* The max request size */
 	unsigned int max_request_size;
+	unsigned int request_timeout;
 	/* The thread worker task IDs */
 	uint32_t worker_taskid;
 	string error_log_file;

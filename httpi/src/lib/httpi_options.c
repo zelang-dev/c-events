@@ -604,7 +604,7 @@ bool http_set_acl_option(http_ini_t *ctx) {
 
 bool http_init_options(http_ini_t *ctx, string_t *options) {
 	string_t name, value, default_value;
-	int itmp, i, idx;
+	int ireq, i, idx;
 
 	/* Store options */
 	while (options && (name = *options++) != NULL) {
@@ -638,13 +638,15 @@ bool http_init_options(http_ini_t *ctx, string_t *options) {
 	}
 
 	/* Request size option */
-	itmp = atoi(ctx->host.config[MAX_REQUEST_SIZE]);
-	if (itmp < 1024) {
+	ireq = atoi(ctx->host.config[MAX_REQUEST_SIZE]);
+	if (ireq < 1024) {
 		http_abort_start(ctx, "%s too small", config_options[MAX_REQUEST_SIZE].name);
 		return true;
 	}
 
-	ctx->max_request_size = (unsigned)itmp;
+	ctx->max_request_size = (unsigned)ireq;
+	ireq = atoi(ctx->host.config[REQUEST_TIMEOUT]);
+	ctx->request_timeout = (unsigned)ireq;
 	return false;
 }
 

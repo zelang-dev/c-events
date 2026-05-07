@@ -14,6 +14,7 @@ static void http_ctrl_c_exit(void) {
 	http_ini_t *ctx = http_atexit_ctrl_c;
 	http_atexit_ctrl_c = null;
 	http_stop(ctx);
+	events_destroy(event_loop());
 }
 
 /*
@@ -132,10 +133,10 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	if (is_empty(listener) || is_empty(ctx))
 		return nullptr;
 
+	debug_info("\nhttp_accept waiting on: #%d socket"CLR_LN, socket2fd(listener->sock));
 	if (listener->has_ssl) {
 		sock = tls_accept(listener->sock, null, null);
 	} else {
-		cout("\nhttp accept waiting on: %d"CLR_LN, socket2fd(listener->sock));
 		sock = async_accept(socket2fd(listener->sock), null, null);
 	}
 
@@ -165,6 +166,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		free(so);
 	} else {
 		/* Put so socket structure into the queue */
+		http_set_close_on_exec(so->sock);
 		so->has_ssl = listener->has_ssl;
 		so->has_redir = listener->has_redir;
 		if (getsockname(so->sock, &so->lsa.sa, &len) != 0) {
@@ -187,6 +189,9 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
 			}
 		}
+
+		if (ctx->request_timeout > 0)
+			events_tcp_timeout(so->sock, ctx->request_timeout);
 
 		so->in_use = 0;
 		conn = calloc(1, sizeof(http_t));
@@ -226,7 +231,6 @@ void http_stop(http_ini_t *ctx) {
 	http_atexit_ctrl_c = null;
 	ctx->status = HTTP_STATUS_TERMINATED;
 	http_free_ini(ctx);
-	events_destroy(event_loop());
 }
 
 void http_close_listening_sockets(http_ini_t *ctx) {
@@ -248,7 +252,9 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 				&& (socket->sock != INVALID_SOCKET))
 				(void)remove(socket->lsa.sun.sun_path);
 			socket->sock = INVALID_SOCKET;
-			events_task_unwind(socket->task);
+			if (http_atexit_ctrl_c_flag)
+				events_task_unwind(socket->task);
+
 			free(socket);
 		}
 	}
@@ -609,6 +615,7 @@ static void http_server_task(param_t args) {
 			accept_handler(http_handler, socket2fd(conn->client->sock));
 		}
 	}
+	trace;
 }
 
 int http_server(http_ini_t *ctx) {

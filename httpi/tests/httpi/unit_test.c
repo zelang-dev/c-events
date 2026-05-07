@@ -1657,10 +1657,9 @@ void main_main(http_ini_t *ctx) {
 	/* Call a test client */
 	minimal_http_client_check("127.0.0.1", 8080, "/8?Alternative=Response", "Alternative=Response");
 
-	/* Run the server for 1 second */
-	delay(seconds(1));
+	/* Run the server for 15 second */
+	delay(seconds(15));
 
-	trace;
 	/* Call a test client */
 	minimal_http_client_check("localhost", 8080, "/8", "Number eight");
 

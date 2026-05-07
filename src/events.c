@@ -1070,6 +1070,7 @@ void task_delete(tasks_t *co) {
 		if (co->magic_number == TASK_MAGIC_NUMBER) {
 			co->magic_number = TASK_ERRED;
 			co->garbage = NULL;
+			co->user_data = NULL;
 #if defined(_WIN32) && defined(USE_FIBER)
 			DeleteFiber(co->type->fiber);
 #endif
@@ -1726,6 +1727,7 @@ uint32_t task_push(tasks_t *t, bool has_result) {
 		bool is_group = false;
 		t->cid = (uint32_t)atomic_fetch_add(&sys_event.id_generate, 1) + 1;
 		t->rid = (has_result) ? tasks_create_result()->id : NO_RESULT;
+		t->taken = false;
 
 		/* keep track of tasks in waitgroup */
 		if (c->group_active && c->task_group != NULL && !c->group_finish) {
@@ -1773,7 +1775,7 @@ EVENTS_INLINE void accept_handler(client_cb connected, int client) {
 		launch((launch_func_t)accept_client_handler, 2, client, connected);
 	} else {
 		param_t params = arrays(2, client, connected);
-		tasks_t *t = create_task(Kb(32), (data_func_t)accept_client_handler, params, true, false);
+		tasks_t *t = create_task(Kb(32), (data_func_t)accept_client_handler, params, true, true);
 		if (!is_empty(t)) {
 			task_push(t, false);
 			events_deque_t *q = sys_event.local[t->tid];
@@ -2408,6 +2410,7 @@ static void __tasks_pool_main(param_t args) {
 	events_t *loop = args[1].object;
 	__thrd()->started = true;
 	task_name("tasks_pool_main #%d", (int)__thrd()->thrd_id);
+	__thrd()->task_count++;
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
 		active_info();
