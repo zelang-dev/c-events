@@ -1277,6 +1277,7 @@ static void *task_wait_system(void *v) {
 	tasks_t *t;
 	tasklist_t *l;
 	size_t now;
+	events_t *loop;
 	(void)v;
 
 	task_system();
@@ -1297,8 +1298,13 @@ static void *task_wait_system(void *v) {
 #endif
 
 		now = events_nsec();
+		loop = __thrd()->loop;
 		active_info();
-		if (__thrd()->loop == null)
+		if (loop == null || (!loop->active_descriptors
+			&& !loop->active_io
+			&& !loop->active_timers
+			&& __thrd()->sleep_count == 0
+			&& __thrd()->task_count == 1))
 			return 0;
 
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
@@ -2290,6 +2296,15 @@ EVENTS_INLINE void suspend(void) {
 	task_yielding(__thrd()->current_handle);
 }
 
+EVENTS_INLINE void resume(tasks_t *co) {
+	tasks_t *t = __thrd()->running;
+	tasklist_t *l = __thrd()->run_queue;
+	t->ready = true;
+	co->ready = true;
+	enqueue(l, t);
+	task_switch(co);
+}
+
 EVENTS_INLINE void yield(void) {
 	tasks_t *t = __thrd()->running;
 	tasklist_t *l = __thrd()->run_queue;
@@ -2423,6 +2438,7 @@ static void __tasks_pool_main(param_t args) {
 			break;
 	}
 
+	__thrd()->task_count--;
 	__thrd()->loop = NULL;
 }
 

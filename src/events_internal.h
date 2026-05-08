@@ -331,21 +331,21 @@ struct events_loop_s {
 /* Base events coroutine context. */
 struct coro_events_s {
 #if defined(_WIN32) && defined(_M_IX86) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ) && !defined(USE_FIBER)
-	void *rip, **rsp, **rbp, **rbx, **r12, **r13, **r14, **r15;
+	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15;
 	void *xmm[20]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
 	void *fiber_storage;
 	void *dealloc_stack;
 #elif (defined(__x86_64__) || defined(_M_X64)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ) && !defined(USE_FIBER)
 #ifdef _WIN32
-	void *rip, **rsp, **rbp, **rbx, **r12, **r13, **r14, **r15, **rdi, **rsi;
+	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15, *rdi, *rsi;
 	void *xmm[20]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
 	void *fiber_storage;
 	void *dealloc_stack;
 #else
-	void *rip, **rsp, **rbp, **rbx, **r12, **r13, **r14, **r15;
+	void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15;
 #endif
 #elif (defined(__i386) || defined(__i386__)) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
-	void *eip, **esp, **ebp, **ebx, **esi, **edi;
+	void *eip, *esp, *ebp, *ebx, *esi, *edi;
 #elif defined(__riscv) && !defined(USE_UCONTEXT) && !defined(USE_SJLJ)
 	void *s[12]; /* s0-s11 */
 	void *ra;

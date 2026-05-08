@@ -1657,12 +1657,13 @@ void main_main(http_ini_t *ctx) {
 	/* Call a test client */
 	minimal_http_client_check("127.0.0.1", 8080, "/8?Alternative=Response", "Alternative=Response");
 
-	/* Run the server for 15 second */
-	delay(seconds(15));
+	/* Run the server for 1 second */
+	delay(seconds(1));
 
 	/* Call a test client */
 	minimal_http_client_check("localhost", 8080, "/8", "Number eight");
 
+	/* Stop the server */
 	http_stop(ctx);
 }
 
@@ -1678,7 +1679,6 @@ TEST(httpi_start) {
 	ASSERT_NOTNULL((ctx = test_http_setup(NULL, 0, NULL, __LINE__)));
 	ASSERT_EQ(test_parse_port_string(), 0);
 	httpi_start(ctx, main_main);
-	/* Stop the server */
 	return 0;
 }
 

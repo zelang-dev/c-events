@@ -347,6 +347,7 @@ C_API uint32_t gen_id(void);
 /* Return ~handle~ to current `task`. */
 C_API tasks_t *active_task(void);
 
+/* Print `current` task internal data state, only active in debug builds. */
 C_API void active_info(void);
 
 C_API void yield_active_info(void);
@@ -362,6 +363,7 @@ C_API void launch(launch_func_t fn, uint32_t num_of_args, ...);
 
 /* Suspends the execution of current `task`, and switch to the ~scheduler~. */
 C_API void suspend(void);
+C_API void resume(tasks_t *);
 
 /* Explicitly give up the CPU for at least ms milliseconds.
 Other tasks continue to run during this time.

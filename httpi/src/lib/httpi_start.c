@@ -241,9 +241,6 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 		foreach(sockets in ctx->server_sockets) {
 			http_socket *socket = (http_socket *)sockets.object;
 			events_del(socket->sock);
-			if (!http_atexit_ctrl_c_flag)
-				yield();
-
 			tls_closer(socket2fd(socket->sock));
 			/* For unix domain sockets, the socket name represents a file that has
 			 * to be deleted. */
@@ -251,9 +248,12 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 			if ((socket->lsa.sin.sin_family == AF_UNIX)
 				&& (socket->sock != INVALID_SOCKET))
 				(void)remove(socket->lsa.sun.sun_path);
+
 			socket->sock = INVALID_SOCKET;
 			if (http_atexit_ctrl_c_flag)
 				events_task_unwind(socket->task);
+			else
+				resume(socket->task);
 
 			free(socket);
 		}
@@ -609,13 +609,13 @@ static void http_server_task(param_t args) {
 	http_t *conn = null;
 	listener->task = active_task();
 	task_data_set(listener->task, (void_t)args);
+	yield();
 	while (!is_empty(ctx) && ctx->status == HTTP_STATUS_RUNNING) {
 		if (!is_empty(conn = http_accept((http_socket *)listener, ctx))) {
 			conn->ctx = ctx;
 			accept_handler(http_handler, socket2fd(conn->client->sock));
 		}
 	}
-	trace;
 }
 
 int http_server(http_ini_t *ctx) {
