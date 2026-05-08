@@ -126,7 +126,7 @@ EVENTS_INLINE bool events_is_destroy(void) {
 
 void events_task_unwind(tasks_t *co) {
 	if (co->magic_number == TASK_MAGIC_NUMBER) {
-		if (is_data(co->user_data))
+		if (!is_empty(co->user_data))
 			$delete(co->user_data);
 
 		co->magic_number = TASK_ERRED;
@@ -1040,7 +1040,7 @@ static void __thrd_init(bool is_main, uint32_t thread_id) {
 	__thrd()->main_handle = NULL;
 	__thrd()->loop = NULL;
 	__thrd()->pool = NULL;
-	__thrd()->sleep_handle = create_task(Kb(18), (data_func_t)task_wait_system, null, false, false);
+	__thrd()->sleep_handle = create_task(Kb(18), (data_func_t)task_wait_system, null, false, true);
 	__thrd()->sleep_activated = (int)task_push(__thrd()->sleep_handle, true) > 0;
 }
 
@@ -1301,10 +1301,8 @@ static void *task_wait_system(void *v) {
 		loop = __thrd()->loop;
 		active_info();
 		if (loop == null || (!loop->active_descriptors
-			&& !loop->active_io
-			&& !loop->active_timers
-			&& __thrd()->sleep_count == 0
-			&& __thrd()->task_count == 1))
+			&& !loop->active_io && !loop->active_timers
+			&& !__thrd()->sleep_count && __thrd()->task_count == 1))
 			return 0;
 
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
@@ -1927,6 +1925,10 @@ int deferred(func_t func, void *data, bool is_ptr) {
 	return index;
 }
 
+EVENTS_INLINE tasks_t *active_scheduler_task(void) {
+	return __thrd()->running;
+}
+
 EVENTS_INLINE tasks_t *active_task(void) {
 	if (!__thrd()->active_handle) {
 		__thrd()->active_handle = __thrd()->active_buffer;
@@ -2425,21 +2427,17 @@ static void __tasks_pool_main(param_t args) {
 	events_t *loop = args[1].object;
 	__thrd()->started = true;
 	task_name("tasks_pool_main #%d", (int)__thrd()->thrd_id);
-	__thrd()->task_count++;
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
 		active_info();
 		task_take(queue);
 		if (queue->tasks != NULL)
 			__thrd_waitfor(queue);
-		else if (__thrd()->task_count > 1)
+		else if (__thrd()->task_count > 1 || __thrd()->loop != NULL)
 			yield();
 		else
 			break;
 	}
-
-	__thrd()->task_count--;
-	__thrd()->loop = NULL;
 }
 
 static int __tasks_pool_wrapper(void *arg) {
@@ -2452,41 +2450,32 @@ static int __tasks_pool_wrapper(void *arg) {
 	while (!atomic_flag_load_explicit(&queue->started, memory_order_relaxed))
 		;
 
-	__thrd()->loop = loop;
-	param_t params = arrays(2, queue, loop);
-	tasks_t *t = create_task(Kb(32), (data_func_t)__tasks_pool_main, params, false, true);
-	(void)task_push(t, false);
-	__thrd()->pool = work->queue->pool;
-	do {
-		if (!__thrd()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
-			|| tasks_schedulering(true) == TASK_ERRED)
-			break;
-	} while (__thrd()->loop != NULL);
+	if (!atomic_flag_load(&queue->shutdown)) {
+		__thrd()->loop = loop;
+		async_ex(Kb(32), __tasks_pool_main, 2, queue, loop);
+		__thrd()->pool = work->queue->pool;
+		do {
+			if (!__thrd()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
+				|| tasks_schedulering(true) == TASK_ERRED)
+				break;
+		} while (__thrd()->loop != NULL);
+	}
 
-	scope_unwind(scope_local());
+	if (__thrd()->started)
+		scope_unwind(scope_local());
+
 	$delete(queue->jobs);
 	events_destroy(loop);
 	__thrd()->pool = NULL;
 
 	if (__thrd()->sleep_handle != NULL
 		&& __thrd()->sleep_handle->magic_number == TASK_MAGIC_NUMBER) {
+		__thrd()->sleep_handle->magic_number = DATA_INVALID;
 #if defined(_WIN32) && defined(USE_FIBER)
 		DeleteFiber(__thrd()->sleep_handle->type->fiber);
 #endif
 		events_free(__thrd()->sleep_handle);
 		__thrd()->sleep_handle = NULL;
-	}
-
-	if (!__thrd()->started) {
-		$delete(params);
-		if (t->magic_number == TASK_MAGIC_NUMBER) {
-			t->magic_number = TASK_ERRED;
-			t->garbage = NULL;
-#if defined(_WIN32) && defined(USE_FIBER)
-			DeleteFiber(t->type->fiber);
-#endif
-			events_free(t);
-		}
 	}
 
 	events_free(work);

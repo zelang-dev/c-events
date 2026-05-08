@@ -563,7 +563,8 @@ static int http_get_request_handler(http_t *conn,
 	return 0; /* none found */
 }
 
-int http_url_decode(string_t src, int src_len, string dst, int dst_len, int is_form_url_encoded) {
+int http_url_decode(string_t src, int src_len, string dst,
+	int dst_len, int is_form_url_encoded) {
 	int i, j, a, b;
 
 #define HEXTOI(x) (isdigit(x) ? (x - '0') : (x - 'W'))
@@ -2347,7 +2348,7 @@ void http_handle_request(http_t *conn) {
 	 * ri->local_uri_raw still points to memory allocated in
 	 * worker_thread_run(). ri->local_uri is private to the request so we
 	 * don't have to use preallocated memory here. */
-	tmp = str_dup_ex(ri->local_uri);
+	tmp = str_dup(ri->local_uri);
 	if (!tmp) {
 		/* Out of memory. We cannot do anything reasonable here. */
 		return;

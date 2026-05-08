@@ -1545,10 +1545,12 @@ char *str_itoa(int64_t x) {
 #endif
 }
 
-EVENTS_INLINE void str_free(void *ptr) {
+EVENTS_INLINE void *str_free(void *ptr) {
 	if (!is_empty(ptr) && is_ptr_usable(ptr)) {
 		events_free(ptr);
 	}
+
+	return null;
 }
 
 static const unsigned char base64_table[65] =

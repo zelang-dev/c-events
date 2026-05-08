@@ -346,6 +346,7 @@ C_API uint32_t gen_id(void);
 
 /* Return ~handle~ to current `task`. */
 C_API tasks_t *active_task(void);
+C_API tasks_t *active_scheduler_task(void);
 
 /* Print `current` task internal data state, only active in debug builds. */
 C_API void active_info(void);

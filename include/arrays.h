@@ -299,7 +299,7 @@ C_API char *str_cat_argv(int argc, char **argv, int start, char *delim);
 C_API bool str_is_base64(const char *src);
 C_API char *str_decode64(const char *src, char *dst, size_t dst_len);
 C_API char *str_encode64(const char *src, char *dst, size_t dst_len);
-C_API void str_free(void *);
+C_API void *str_free(void *);
 
 /*
 Pad a string to a certain length with another string, returns the `padded` string.

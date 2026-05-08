@@ -1699,21 +1699,17 @@ static void close_socket_gracefully(http_t *conn) {
 }
 
 static void close_connection(http_t *conn) {
-	if (!is_ptr_usable(conn) || !is_ptr_usable(conn->ctx)
-		|| is_empty(conn->client) || conn->client->sock == INVALID_SOCKET)
+	if (is_empty(conn) || is_empty(conn->client) || conn->client->sock == INVALID_SOCKET)
 		return;
 
-	//atomic_lock(&conn->ctx->nonce_mutex);
+	atomic_lock(&conn->ctx->nonce_mutex);
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
 	if (conn->client->sock != INVALID_SOCKET) {
 		close_socket_gracefully(conn);
 		conn->client->sock = INVALID_SOCKET;
 	}
-
-	free(conn->client);
-	conn->client = null;
-	//atomic_unlock(&conn->ctx->nonce_mutex);
+	atomic_unlock(&conn->ctx->nonce_mutex);
 }
 
 void http_close_connection(http_t *conn) {
@@ -1739,6 +1735,8 @@ void http_close_connection(http_t *conn) {
 	close_connection(conn);
 	if (conn->ctx->http_type == HTTP_INI_WEBSOCKET
 		|| conn->ctx->http_type == HTTP_INI_CLIENT) {
+		free(conn->client);
+		conn->client = null;
 		free(conn);
 	}
 }
@@ -1963,7 +1961,7 @@ FORCEINLINE bool http_get_random(uint64_t *out) {
 }
 
 void_t free_ex(void_t memory) {
-	if (!is_empty(memory) && is_ptr_usable(memory))
+	if (!is_empty(memory))
 		free(memory);
 
 	return null;

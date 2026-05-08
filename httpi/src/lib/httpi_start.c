@@ -140,7 +140,9 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		sock = async_accept(socket2fd(listener->sock), null, null);
 	}
 
-	if (sock == INVALID_SOCKET) {
+	if (sock == INVALID_SOCKET
+		|| is_empty(ctx)
+		|| ctx->status != HTTP_STATUS_RUNNING) {
 		return nullptr;
 	}
 
@@ -165,6 +167,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		sock = INVALID_SOCKET;
 		free(so);
 	} else {
+
 		/* Put so socket structure into the queue */
 		http_set_close_on_exec(so->sock);
 		so->has_ssl = listener->has_ssl;
@@ -234,7 +237,7 @@ void http_stop(http_ini_t *ctx) {
 }
 
 void http_close_listening_sockets(http_ini_t *ctx) {
-	if (is_empty(ctx) || !is_data(ctx->server_sockets))
+	if (is_empty(ctx) || is_empty(ctx->server_sockets))
 		return;
 
 	if ($size(ctx->server_sockets) > 0) {
@@ -252,7 +255,7 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 			socket->sock = INVALID_SOCKET;
 			if (http_atexit_ctrl_c_flag)
 				events_task_unwind(socket->task);
-			else
+			else if (!is_empty(socket->task))
 				resume(socket->task);
 
 			free(socket);
@@ -272,11 +275,12 @@ void http_free_ini(http_ini_t *ctx) {
 
 	http_close_listening_sockets(ctx);
 	atomic_flag_clear(&ctx->host.nonce_mutex);
-	/* Deallocate config parameters */
+	/* Deallocate config parameters is `deferred` to `main task` exit!
 	for (i = 0; i < NUM_OPTIONS; i++) {
-		if (!is_empty(ctx->host.config[i]))
-			free(ctx->host.config[i]);
-	}
+		if (!str_is_empty(ctx->host.config[i])) {
+			str_free(ctx->host.config[i]);
+		}
+	}*/
 
 	/* Deallocate request handlers */
 	while (ctx->host.handlers) {
@@ -286,6 +290,7 @@ void http_free_ini(http_ini_t *ctx) {
 		free(tmp_rh);
 	}
 
+	ctx->host.handlers = null;
 	/* deallocate system name string */
 	if (!is_empty(ctx->systemName))
 		ctx->systemName = free_ex(ctx->systemName);
@@ -543,6 +548,7 @@ http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 	if (is_empty(ctx))
 		return nullptr;
 
+	ctx->host.handlers = null;
 	ctx->server_sockets = array();
 	if (is_empty(ctx->server_sockets)) {
 		free(ctx);
@@ -562,7 +568,6 @@ http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 	ctx->host.auth_nonce_mask = nonce ^ (uint64_t)(ptrdiff_t)(options);
 	atomic_flag_clear(&ctx->host.nonce_mutex);
 	ctx->user_data = user_data;
-	ctx->handlers = nullptr;
 
 	struct utsname name;
 	memset(&name, 0, sizeof(name));
@@ -607,7 +612,7 @@ static void http_server_task(param_t args) {
 	http_socket *listener = (http_socket *)args[0].object;
 	http_ini_t *ctx = (http_ini_t *)args[1].object;
 	http_t *conn = null;
-	listener->task = active_task();
+	listener->task = active_scheduler_task();
 	task_data_set(listener->task, (void_t)args);
 	yield();
 	while (!is_empty(ctx) && ctx->status == HTTP_STATUS_RUNNING) {
@@ -654,7 +659,7 @@ void httpi_start(http_ini_t *ctx, http_main_cb start) {
 	ctx->status = HTTP_STATUS_RUNNING;
 	async_task(http_main_task, 2, ctx, start);
 	foreach(socket in ctx->server_sockets) {
-		async_ex(Kb(32), http_server_task, 2, socket.object, ctx);
+		async_ex(Kb(64), http_server_task, 2, socket.object, ctx);
 	}
 
 	http_atexit_ctrl_c = ctx;

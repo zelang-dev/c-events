@@ -625,7 +625,7 @@ bool http_init_options(http_ini_t *ctx, string_t *options) {
 			free(ctx->host.config[idx]);
 		}
 
-		ctx->host.config[idx] = str_dup_ex(value);
+		ctx->host.config[idx] = str_dup(value);
 		debug_info("[%s] -> [%s]"CLR_LN, name, value);
 	}
 
@@ -633,7 +633,7 @@ bool http_init_options(http_ini_t *ctx, string_t *options) {
 	for (i = 0; config_options[i].name != NULL; i++) {
 		default_value = config_options[i].default_value;
 		if ((ctx->host.config[i] == NULL) && (default_value != NULL)) {
-			ctx->host.config[i] = str_dup_ex(default_value);
+			ctx->host.config[i] = str_dup(default_value);
 		}
 	}
 
@@ -853,7 +853,7 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 	/* MacOS needs that. If we do not zero it, subsequent bind() will fail.
 	 * Also, all-zeroes in the socket address means binding to all addresses
 	 * for both IPv4 and IPv6 (INADDR_ANY and IN6ADDR_ANY_INIT). */
-	memset(so, 0, sizeof(*so));
+	memset(so, 0, sizeof(http_socket));
 	so->lsa.sin.sin_family = AF_INET;
 	*ip_version = 0;
 

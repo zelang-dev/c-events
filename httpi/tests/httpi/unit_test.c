@@ -1500,7 +1500,6 @@ static void minimal_http_https_client_impl(const char *server,
 		abort();
 	}
 
-	defer(http_close_connection, client);
 	http_printf(client, "GET %s HTTP/1.0\r\n\r\n", uri);
 	r = http_get_response(client, client_err_buf, sizeof(client_err_buf), 1000);
 	if ((r < 0) || (0 != strcmp(client_err_buf, ""))) {
@@ -1546,7 +1545,7 @@ static void minimal_http_https_client_impl(const char *server,
 		ASSERT_STR_ABORT(client_data_buf, expected);
 	}
 
-	//http_close_connection(client);
+	http_close_connection(client);
 }
 
 static void minimal_http_client_check(const char *server,
