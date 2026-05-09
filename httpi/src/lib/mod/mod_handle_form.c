@@ -288,8 +288,8 @@ struct upload_user_data {
 	int num_uploaded_files;
 };
 
-static int http_upload_field_found(const char *key,
-	const char *filename,
+static int http_upload_field_found(string_t key,
+	string_t filename,
 	char *path,
 	size_t pathlen,
 	void *user_data) {
@@ -317,8 +317,8 @@ static int http_upload_field_found(const char *key,
 	return FORM_FIELD_STORAGE_STORE;
 }
 
-static int http_upload_field_get(const char *key,
-	const char *value,
+static int http_upload_field_get(string_t key,
+	string_t value,
 	size_t value_size,
 	void *user_data) {
 /* Function should never be called */
@@ -330,7 +330,7 @@ static int http_upload_field_get(const char *key,
 	return 0;
 }
 
-static int http_upload_field_stored(const char *path, long long file_size, void *user_data) {
+static int http_upload_field_stored(string_t path, long long file_size, void *user_data) {
 	struct upload_user_data *fud = (struct upload_user_data *)user_data;
 	(void)file_size;
 

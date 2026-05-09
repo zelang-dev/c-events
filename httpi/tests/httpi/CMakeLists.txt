@@ -1,5 +1,7 @@
 set(TARGETS_LIST
- unit_test
+ test-httpi_setup
+ test-httpi_start
+ test-httpi_units
 )
 
 foreach (TARGETS ${TARGETS_LIST})

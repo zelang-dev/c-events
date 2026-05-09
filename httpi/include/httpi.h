@@ -41,6 +41,7 @@ typedef struct http2_s http2_t;
 typedef struct h2_header h2_header_t;
 typedef struct form_data_handler_s form_data_handler_t;
 typedef struct http_server_port http_server_port_t;
+typedef struct httpi_s httpi_t;
 
 enum http_dbg {
 	/* No error messages are generated at all */
@@ -82,7 +83,7 @@ struct client_options {
 #	define HTTP2_DYN_TABLE_SIZE (256)
 #endif
 
-/* This structure needs to be passed to http_setup(),
+/* This structure needs to be passed to httpi_setup(),
  * to let `HttPi` know which callbacks to invoke. */
 typedef struct http_clb_s http_clb_t;
 
@@ -162,6 +163,18 @@ typedef void (*init_context_cb)(const http_ini_t *ctx);
  * - conn: `http_t` handle.
  * - file_name: full path name to the uploaded file. */
 typedef void(*upload_form_cb)(http_t *, string_t file_name);
+
+/* This structure needs to be passed to httpi_setup(),
+ * to let `HttPi` know which callbacks to invoke. */
+struct http_clb_s {
+	request_cb start;
+	log_msg_cb log_message;
+	log_access_cb log_access;
+	file_open_cb open_file;
+	http_error_cb http_error;
+	init_context_cb init_context;
+	upload_form_cb upload;
+};
 
 #ifdef __cplusplus
 extern "C"
@@ -479,7 +492,7 @@ C_API const options_ini_t *http_get_valid_options(void);
 C_API bool http_init_options(http_ini_t *ctx, string_t *options);
 
 /* The main `setup` entry point for the `HttPi` server. */
-C_API http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
+C_API http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 	void_t user_data, const options_ini_t **options);
 
 /* Create/execute the `main task` ~coroutine~ `entry/start` point for `HttPi` server.

@@ -18,9 +18,14 @@
 #undef X509_EXTENSIONS
 #endif
 
+#ifndef PATH_MAX
+#define PATH_MAX MAX_PATH
+#endif
+
 static char default_ssl_conf_filename[MAXHOSTNAMELEN];
 static char events_powered_by[MAXHOSTNAMELEN] = {0};
 static char events_host[MAXHOSTNAMELEN] = {0};
+static char events_system_name[_UTSNAME_LENGTH + 1] = {0};
 static char events_directory[PATH_MAX] = {0};
 static char events_ca_cert[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
 static char events_cert[PATH_MAX + MAXHOSTNAMELEN + 4] = {0};
@@ -729,9 +734,18 @@ const char *events_uname(void) {
 
 		snprintf(events_powered_by, MAXHOSTNAMELEN, "%zu Cores, %s %s %s",
 			thrd_cpu_count(), buffer->sysname, buffer->machine, buffer->release);
+
+		snprintf(events_system_name, sizeof(events_system_name), "%s", buffer->sysname);
 	}
 
 	return (const char *)events_powered_by;
+}
+
+const char *events_sysname(void) {
+	if (str_is_empty((const char *)events_system_name))
+		events_uname();
+
+	return (const char *)events_system_name;
 }
 
 static int tlserr(int const rc, struct tls *const secure) {

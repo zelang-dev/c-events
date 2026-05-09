@@ -1,10 +1,10 @@
 #include "httpi_internal.h"
 
 static const char alpn_proto_list[] = "\x02h2\x08http/1.1\x08http/1.0";
-static const char *alpn_proto_order_http1[] = {alpn_proto_list + 3,
+static string_t alpn_proto_order_http1[] = {alpn_proto_list + 3,
 											   alpn_proto_list + 3 + 8,
 											   NULL};
-static const char *alpn_proto_order_http2[] = {alpn_proto_list,
+static string_t alpn_proto_order_http2[] = {alpn_proto_list,
 											   alpn_proto_list + 3,
 											   alpn_proto_list + 3 + 8,
 											   NULL};
@@ -1299,8 +1299,8 @@ void http_no_cache_header(http_t *conn) {
 
 int should_keep_alive(http_t *conn) {
 	if (conn != NULL) {
-		const char *http_version = conn->req.http_version;
-		const char *header = http_get_header(conn, "Connection");
+		string_t http_version = conn->req.http_version;
+		string_t header = http_get_header(conn, "Connection");
 		if (conn->req.must_close || conn->code == 401 ||
 			!str_is_case(conn->ctx->host.config[ENABLE_KEEP_ALIVE], "yes") ||
 			(header != NULL && !str_is_case(header, "keep-alive") != 0) ||
@@ -1843,7 +1843,7 @@ int http_stat(http_t *conn, string_t path, struct file *filep) {
 }
 
 bool http_is_file_opened(struct file *filep) {
-	return (filep != NULL && (filep->membuf != NULL || filep->fp != NULL));
+	return filep == NULL ? false : (filep->membuf != NULL || filep->fp != NULL);
 }
 
 bool http_fopen(http_ini_t *ctx, const http_t *conn, string_t path, string_t mode, struct file *filep) {

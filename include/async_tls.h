@@ -111,6 +111,7 @@ C_API void use_secure_client(void);
 
 C_API const char *events_uname(void);
 C_API const char *events_hostname(void);
+C_API const char *events_sysname(void);
 C_API void events_ssl_error(void);
 C_API void events_ssl_init(void);
 

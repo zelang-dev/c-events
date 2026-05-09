@@ -135,9 +135,9 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 
 	debug_info("\nhttp_accept waiting on: #%d socket"CLR_LN, socket2fd(listener->sock));
 	if (listener->has_ssl) {
-		sock = tls_accept(listener->sock, null, null);
+		sock = tls_accept(socket2fd(listener->sock), null, null);
 	} else {
-		sock = async_accept(socket2fd(listener->sock), null, null);
+		sock = async_accept(listener->sock, null, null);
 	}
 
 	if (sock == INVALID_SOCKET
@@ -167,7 +167,6 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		sock = INVALID_SOCKET;
 		free(so);
 	} else {
-
 		/* Put so socket structure into the queue */
 		http_set_close_on_exec(so->sock);
 		so->has_ssl = listener->has_ssl;
@@ -289,11 +288,6 @@ void http_free_ini(http_ini_t *ctx) {
 		free(tmp_rh->uri);
 		free(tmp_rh);
 	}
-
-	ctx->host.handlers = null;
-	/* deallocate system name string */
-	if (!is_empty(ctx->systemName))
-		ctx->systemName = free_ex(ctx->systemName);
 
 	/* Deallocate context itself */
 	free(ctx);
@@ -533,7 +527,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 	return idx;
 }
 
-http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
+http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 	void_t user_data, const options_ini_t **options) {
 	uint64_t nonce = 0;
 	int i;
@@ -549,6 +543,7 @@ http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 		return nullptr;
 
 	ctx->host.handlers = null;
+	ctx->host.next = null;
 	ctx->server_sockets = array();
 	if (is_empty(ctx->server_sockets)) {
 		free(ctx);
@@ -568,11 +563,7 @@ http_ini_t *http_setup(int max_fd, http_clb_t *callbacks,
 	ctx->host.auth_nonce_mask = nonce ^ (uint64_t)(ptrdiff_t)(options);
 	atomic_flag_clear(&ctx->host.nonce_mutex);
 	ctx->user_data = user_data;
-
-	struct utsname name;
-	memset(&name, 0, sizeof(name));
-	uname(&name);
-	ctx->systemName = str_dup_ex(name.sysname);
+	ctx->systemName = events_sysname();
 
 	/*
 	 * NOTE(lsm): order is important here. SSL certificates must

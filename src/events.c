@@ -1117,8 +1117,8 @@ void events_ctr_c_unwind(void) {
 }
 
 static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
-	results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
 	if (is_ptr_usable(co)) {
+		results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
 		atomic_thread_fence(memory_order_seq_cst);
 		if (data != NULL && co->rid != NO_RESULT) {
 			results[co->rid]->result.object = data;
@@ -1130,9 +1130,8 @@ static EVENTS_INLINE void tasks_result_set(tasks_t *co, void *data) {
 			results[co->rid]->is_terminated = true;
 			co->status = TASK_FINISH;
 		}
+		atomic_store_explicit(&sys_event.results, results, memory_order_release);
 	}
-
-	atomic_store_explicit(&sys_event.results, results, memory_order_release);
 }
 
 /* called only if tasks_t func returns */
@@ -2426,7 +2425,7 @@ static void __tasks_pool_main(param_t args) {
 	events_deque_t *queue = args[0].object;
 	events_t *loop = args[1].object;
 	__thrd()->started = true;
-	task_name("tasks_pool_main #%d", (int)__thrd()->thrd_id);
+	task_name("thread_tasks_pool #%d", (int)__thrd()->thrd_id);
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
 		active_info();

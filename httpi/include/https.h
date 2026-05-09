@@ -325,7 +325,10 @@ C_API bool http_has_param(http_t *this, string key);
 
 C_API http_status http_get_status(http_t *this);
 C_API http_status http_get_code(http_t *this);
+C_API long long http_get_length(http_t *this);
+C_API int http_header_count(http_t *this);
 C_API double http_get_version(http_t *this);
+C_API string_t http_version(http_t *this);
 C_API string http_get_message(http_t *this);
 C_API string http_get_method(http_t *this);
 C_API string http_get_body(http_t *this);
@@ -333,6 +336,7 @@ C_API string http_get_protocol(http_t *this);
 C_API string http_get_url(http_t *this);
 C_API string http_get_uri(http_t *this);
 C_API string http_get_path(http_t *this);
+C_API string_t http_get_query(http_t *this);
 C_API string http_get_boundary(http_t *this);
 
 C_API bool http_cookie_is_multi(http_t *this);

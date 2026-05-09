@@ -557,6 +557,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 						s_pos = str_pos(this->url_to, "?");
 						this->url_to[s_pos] = '\0';
 						this->path = str_dup(this->url_to);
+						this->query_string = trim_at(this->url_to, (s_pos));
 						parameters = trim_at(this->url_to, (s_pos + 1));
 						// parse the parameters
 						parse_str(this, parameters, "&", nullptr);
@@ -1119,8 +1120,16 @@ FORCEINLINE string http_get_path(http_t *this) {
 	return this->path;
 }
 
+FORCEINLINE string_t http_get_query(http_t *this) {
+	return str_is_empty(this->req.query_string) ? this->query_string : this->req.query_string;
+}
+
 FORCEINLINE double http_get_version(http_t *this) {
 	return this->version;
+}
+
+FORCEINLINE string_t http_version(http_t *this) {
+	return this->req.http_version;
 }
 
 FORCEINLINE string http_get_method(http_t *this) {
@@ -1129,6 +1138,14 @@ FORCEINLINE string http_get_method(http_t *this) {
 
 FORCEINLINE http_status http_get_code(http_t *this) {
 	return this->code;
+}
+
+FORCEINLINE long long http_get_length(http_t *this) {
+	return this->content_length;
+}
+
+FORCEINLINE int http_header_count(http_t *this) {
+	return this->num_headers;
 }
 
 FORCEINLINE http_status http_get_status(http_t *this) {

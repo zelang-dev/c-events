@@ -278,7 +278,7 @@ static int parse_auth_header(http_t *conn, char *buf,
 
 /* Use the global passwords file, if specified by auth_gpass option,
  * or search for .htpasswd in the requested directory. */
-static void open_auth_file(http_t *conn,string_t path,struct file *filep) {
+static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 	if ((conn != NULL) && (conn->domain != NULL)) {
 		char name[UTF8_PATH_MAX];
 		string_t p, e,
@@ -686,7 +686,7 @@ static int modify_passwords_file_ha1(string_t fname,
 	}
 
 	/* Check if the file exists, and get file size */
-	if (0 == stat(fname, &st)) {
+	if (0 == fs_stat(fname, &st)) {
 		int temp_buf_len;
 		if (st.st_size > 10485760) {
 			/* Some funster provided a >10 MB text file */
@@ -704,7 +704,7 @@ static int modify_passwords_file_ha1(string_t fname,
 		}
 
 		/* File exists. Read it into a memory buffer. */
-		fp = fopen(fname, "r");
+		fp = fs_fopen(fname, "r");
 		if (fp == NULL) {
 			/* Cannot read file. No permission? */
 			free(temp_file);
@@ -732,7 +732,7 @@ static int modify_passwords_file_ha1(string_t fname,
 						domain,
 						ha1);
 					if (i < 1) {
-						fclose(fp);
+						fs_fclose(fp);
 						free(temp_file);
 						return 0;
 					}
@@ -743,18 +743,18 @@ static int modify_passwords_file_ha1(string_t fname,
 				/* Copy existing user, including password hash */
 				i = sprintf(temp_file + temp_file_offs, "%s:%s:%s\n", u, d, h);
 				if (i < 1) {
-					fclose(fp);
+					fs_fclose(fp);
 					free(temp_file);
 					return 0;
 				}
 				temp_file_offs += i;
 			}
 		}
-		fclose(fp);
+		fs_fclose(fp);
 	}
 
 	/* Create new file */
-	fp = fopen(fname, "w");
+	fp = fs_fopen(fname, "w");
 	if (!fp) {
 		free(temp_file);
 		return 0;
@@ -769,7 +769,7 @@ static int modify_passwords_file_ha1(string_t fname,
 
 	if ((temp_file != NULL) && (temp_file_offs > 0)) {
 		/* Store buffered content of old file */
-		if (fwrite(temp_file, 1, (size_t)temp_file_offs, fp)
+		if (fs_fwrite(temp_file, 1, (size_t)temp_file_offs, fp)
 			!= (size_t)temp_file_offs) {
 			result = 0;
 		}
@@ -783,7 +783,7 @@ static int modify_passwords_file_ha1(string_t fname,
 	}
 
 	/* All data written */
-	if (fclose(fp) != 0) {
+	if (fs_fclose(fp) != 0) {
 		result = 0;
 	}
 

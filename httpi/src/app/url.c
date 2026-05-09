@@ -105,7 +105,7 @@ static char *g_system_info;
 static char g_config_file_name[PATH_MAX] = "";
 /* Set by start_httpi() */
 static http_ini_t *g_ctx;
-/* Passed to http_setup() by start_httpi() */
+/* Passed to httpi_setup() by start_httpi() */
 static struct tuser_data g_user_data;
 
 #if !defined(CONFIG_FILE)
@@ -1026,15 +1026,15 @@ static void start_httpi(int argc, char *argv[]) {
 	error.text_buffer_size = sizeof(error_text);
 
 	/* Start `url` */
-	g_ctx = http_setup(0, &callbacks, &g_user_data, (const options_ini_t **)options);
+	g_ctx = httpi_setup(0, &callbacks, &g_user_data, (const options_ini_t **)options);
 
-	/* http_setup copies all options to an internal buffer.
+	/* httpi_setup copies all options to an internal buffer.
 	 * The options data field here is not required anymore. */
 	for (i = 0; options[i] != NULL; i++) {
 		free((char *)options[i]);
 	}
 
-	/* If http_setup fails, it returns NULL */
+	/* If httpi_setup fails, it returns NULL */
 	if (g_ctx == NULL) {
 #ifdef _WIN32
 		/* On Windows: provide option to edit configuration file. */

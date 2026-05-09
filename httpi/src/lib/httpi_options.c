@@ -651,11 +651,11 @@ bool http_init_options(http_ini_t *ctx, string_t *options) {
 }
 
 int http_match_prefix(string_t pattern, size_t pattern_len, string_t str) {
-	const char *or_str;
+	string_t or_str;
 	size_t i;
 	int j, len, res;
 
-	if ((or_str = (const char *)memchr(pattern, '|', pattern_len)) != NULL) {
+	if ((or_str = (string_t)memchr(pattern, '|', pattern_len)) != NULL) {
 		res = http_match_prefix(pattern, (size_t)(or_str - pattern), str);
 		return res > 0
 			? res
@@ -698,7 +698,7 @@ ptrdiff_t http_match_prefix_strlen(string_t pattern, string_t str) {
 }
 
 static int isbyte(int n) { return n >= 0 && n <= 255; }
-static int parse_net(const char *spec, uint32_t *net, uint32_t *mask) {
+static int parse_net(string_t spec, uint32_t *net, uint32_t *mask) {
 	int n, a, b, c, d, slash = 32, len = 0;
 
 	if ((sscanf(spec, "%d.%d.%d.%d/%d%n", &a, &b, &c, &d, &slash, &n) == 5 ||
@@ -714,7 +714,7 @@ static int parse_net(const char *spec, uint32_t *net, uint32_t *mask) {
 	return len;
 }
 
-int set_throttle(const char *spec, uint32_t remote_ip, const char *uri) {
+int set_throttle(string_t spec, uint32_t remote_ip, string_t uri) {
 	int throttle = 0;
 	struct vec vec, val;
 	uint32_t net, mask;

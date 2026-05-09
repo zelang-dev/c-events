@@ -258,9 +258,11 @@ struct http_cb_info {
 	int handler_type;
 	int removing;
 	unsigned int refcount;
+	size_t uri_len;
 	/* Name/Pattern of the URI. */
 	char *uri;
-	size_t uri_len;
+	/* User supplied argument for the handler function. */
+	void_t cbdata;
 
 	/* Handler for http/https or authorization requests. */
 	route_cb handler;
@@ -273,9 +275,6 @@ struct http_cb_info {
 
 	/* Handler for authorization requests */
 	auth_cb auth_handler;
-
-	/* User supplied argument for the handler function. */
-	void_t cbdata;
 
 	/* accepted subprotocols for ws/wss requests. */
 	struct ws_subprotocols_s *subprotocols;
@@ -412,19 +411,9 @@ enum {
 	FORM_FIELD_HANDLE_ABORT = 0x10
 };
 
-/* This structure needs to be passed to http_setup(),
- * to let `HttPi` know which callbacks to invoke. */
-struct http_clb_s {
-	request_cb start;
-	log_msg_cb log_message;
-	log_access_cb log_access;
-	file_open_cb open_file;
-	http_error_cb http_error;
-	init_context_cb init_context;
-	upload_form_cb upload;
-};
-
 struct ini_domain_s {
+	/* Protects nonce_count */
+	atomic_spinlock nonce_mutex;
 	int64_t ssl_cert_last_mtime;
 	/* Server nonce */
 	/* Mask for all nonce values */
@@ -439,8 +428,6 @@ struct ini_domain_s {
 	struct http_cb_info *handlers;
 	/* `HttPi` configuration parameters */
 	char *config[NUM_OPTIONS];
-	/* Protects nonce_count */
-	atomic_spinlock nonce_mutex;
 };
 
 struct twebdav_lock {
@@ -451,6 +438,11 @@ struct twebdav_lock {
 };
 
 struct http_ini_s {
+	/* Server nonce */
+	/* Protects ssl_ctx, handlers,
+	 * ssl_cert_last_mtime, nonce_count, and
+	 * next (linked list) */
+	atomic_spinlock nonce_mutex;
 	/* Should we stop event loop */
 	volatile enum http_status_t status;
 	/* HTTP_INI_SERVER, HTTP_INI_CLIENT, or HTTP_INI_WEBSOCKET */
@@ -466,7 +458,7 @@ struct http_ini_s {
 	string error_log_file;
 	string document_root;
 	/* What operating system is running */
-	string systemName;
+	string_t systemName;
 	/* Server start time, used for authentication */
 	time_t start_time;
 	/* User-defined data */
@@ -485,14 +477,9 @@ struct http_ini_s {
 	struct ini_domain_s host;
 	/* WebDAV lock structures */
 	struct twebdav_lock webdav_lock[NUM_WEBDAV_LOCKS];
-	/* Server nonce */
-	/* Protects ssl_ctx, handlers,
-	 * ssl_cert_last_mtime, nonce_count, and
-	 * next (linked list) */
-	atomic_spinlock nonce_mutex;
 };
 
-typedef struct httpi_s {
+struct httpi_s {
 	http_protocol_type proto;
 	/* Total bytes sent to client */
 	int64_t num_bytes_sent;
@@ -544,7 +531,7 @@ typedef struct httpi_s {
 	time_t conn_birth_time;
 	/* Unread data from the last chunk */
 	size_t chunk_remainder;
-	/* User data pointer passed to `http_setup()` */
+	/* User data pointer passed to `httpi_setup()` */
 	void_t user_data;
 	/* Connection-specific user data */
 	void_t conn_data;
@@ -565,7 +552,7 @@ typedef struct httpi_s {
 	z_stream websocket_inflate_state;
 	/* Client's IP address. */
 	char remote_addr[48];
-} httpi_t;
+};
 
 struct http_s {
 	data_types type;
@@ -599,6 +586,7 @@ struct http_s {
 	string url_to;
 	/* The requested path */
 	string path;
+	string_t query_string;
 	/* The multi-part `boundary` name */
 	string boundary;
 	/* Array of multi-part `disposition` names */
@@ -621,6 +609,8 @@ struct http_s {
 	hash_http_t *sessions;
 	http_ini_t *ctx;
 	struct ini_domain_s *domain;
+	httpi_t req;
+	http2_t http2;
 	/* The protocol */
 	char protocol[16];
 	/* The requested method */
@@ -628,8 +618,6 @@ struct http_s {
 	/* The response status message */
 	char message[64];
 	char variable[256];
-	httpi_t req;
-	http2_t http2;
 };
 
 /*
@@ -949,7 +937,7 @@ void discard_unread_request_data(http_t *conn);
 /* Pre-process URIs according to RFC + protect against directory disclosure
  * attacks by removing '..', excessive '/' and '\' characters */
 void remove_double_dots_slashes(char *s);
-int set_throttle(const char *spec, uint32_t remote_ip, const char *uri);
+int set_throttle(string_t spec, uint32_t remote_ip, string_t uri);
 
 /* Used to free the resources associated with a context. */
 void http_free_ini(http_ini_t *ctx);

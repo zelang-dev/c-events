@@ -2300,7 +2300,6 @@ void http_handle_request(http_t *conn) {
 	int handler_type;
 	time_t curtime = time(NULL);
 	char date[64];
-	char *tmp;
 
 	path[0] = 0;
 
@@ -2348,14 +2347,8 @@ void http_handle_request(http_t *conn) {
 	 * ri->local_uri_raw still points to memory allocated in
 	 * worker_thread_run(). ri->local_uri is private to the request so we
 	 * don't have to use preallocated memory here. */
-	tmp = str_dup(ri->local_uri);
-	if (!tmp) {
-		/* Out of memory. We cannot do anything reasonable here. */
-		return;
-	}
+	remove_double_dots_slashes((string)ri->local_uri);
 
-	remove_double_dots_slashes(tmp);
-	ri->local_uri = tmp;
 	/* Only compute if later code can actually use it */
 	/* Cache URI length once; recompute only if the buffer changes later. */
 	uri_len = (int)strlen(ri->local_uri);
@@ -2603,7 +2596,7 @@ no_callback_resource:
 		/* 6.3. This is either a OPTIONS, GET, HEAD or POST request,
 		 * or it is a PUT or DELETE request to a resource that does not
 		 * correspond to a file. Check authorization. */
-		if (!check_authorization(conn, path)) {
+		if (!str_is_empty(path) && !check_authorization(conn, path)) {
 			send_authorization_request(conn, NULL);
 
 			/* Callback handler will not be used anymore. Release it */
