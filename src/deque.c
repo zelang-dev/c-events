@@ -153,8 +153,8 @@ void deque_destroy(void) {
 		if (deque_thread_set) {
 			for (i = 0; i <= count; i++) {
 				if (is_ptr_usable(queue[i])) {
-					atomic_flag_test_and_set(&queue[i]->started);
 					atomic_flag_test_and_set(&queue[i]->shutdown);
+					atomic_flag_test_and_set(&queue[i]->started);
 				}
 			}
 

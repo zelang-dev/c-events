@@ -412,8 +412,6 @@ enum {
 };
 
 struct ini_domain_s {
-	/* Protects nonce_count */
-	atomic_spinlock nonce_mutex;
 	int64_t ssl_cert_last_mtime;
 	/* Server nonce */
 	/* Mask for all nonce values */
@@ -428,6 +426,8 @@ struct ini_domain_s {
 	struct http_cb_info *handlers;
 	/* `HttPi` configuration parameters */
 	char *config[NUM_OPTIONS];
+	/* Protects nonce_count */
+	atomic_spinlock nonce_mutex;
 };
 
 struct twebdav_lock {
@@ -438,11 +438,6 @@ struct twebdav_lock {
 };
 
 struct http_ini_s {
-	/* Server nonce */
-	/* Protects ssl_ctx, handlers,
-	 * ssl_cert_last_mtime, nonce_count, and
-	 * next (linked list) */
-	atomic_spinlock nonce_mutex;
 	/* Should we stop event loop */
 	volatile enum http_status_t status;
 	/* HTTP_INI_SERVER, HTTP_INI_CLIENT, or HTTP_INI_WEBSOCKET */
@@ -477,6 +472,11 @@ struct http_ini_s {
 	struct ini_domain_s host;
 	/* WebDAV lock structures */
 	struct twebdav_lock webdav_lock[NUM_WEBDAV_LOCKS];
+	/* Server nonce */
+	/* Protects ssl_ctx, handlers,
+	 * ssl_cert_last_mtime, nonce_count, and
+	 * next (linked list) */
+	atomic_spinlock nonce_mutex;
 };
 
 struct httpi_s {

@@ -1699,16 +1699,14 @@ static void close_socket_gracefully(http_t *conn) {
 }
 
 static void close_connection(http_t *conn) {
-	if (is_empty(conn) || is_empty(conn->client) || conn->client->sock == INVALID_SOCKET)
+	if (is_empty(conn) || is_empty(conn->client)
+		|| conn->client->sock == INVALID_SOCKET)
 		return;
 
 	atomic_lock(&conn->ctx->nonce_mutex);
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
-	if (conn->client->sock != INVALID_SOCKET) {
-		close_socket_gracefully(conn);
-		conn->client->sock = INVALID_SOCKET;
-	}
+	close_socket_gracefully(conn);
 	atomic_unlock(&conn->ctx->nonce_mutex);
 }
 
@@ -2309,10 +2307,9 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"
 #endif /* defined(GCC_DIAGNOSTIC) */
+
 	/* conn_size is aligned to 8 bytes */
-
 	conn->ctx = (http_ini_t *)(((char *)conn) + conn_size);
-
 #if defined(GCC_DIAGNOSTIC)
 #pragma GCC diagnostic pop
 #endif /* defined(GCC_DIAGNOSTIC) */
@@ -2321,6 +2318,7 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 	conn->req.buf_size = (int)max_req_size;
 	conn->ctx->http_type = HTTP_INI_CLIENT;
 	conn->domain = &(conn->ctx->host);
+	atomic_flag_clear(&conn->ctx->nonce_mutex);
 	if (use_ssl) {
 		char addr[ARRAY_SIZE] = {0};
 		snprintf(addr, sizeof(addr), "https://%s:%d", client_options->host, client_options->port);

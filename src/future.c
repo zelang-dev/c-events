@@ -213,8 +213,8 @@ void thrd_pool_shutdown(void) {
 		size_t i, count = atomic_load(&sys_event.num_loops);
 		for (i = 0; i <= count; i++) {
 			if (is_ptr_usable(queue[i])) {
-				atomic_flag_test_and_set(&queue[i]->started);
 				atomic_flag_test_and_set(&queue[i]->shutdown);
+				atomic_flag_test_and_set(&queue[i]->started);
 			}
 		}
 	}

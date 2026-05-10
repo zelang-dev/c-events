@@ -2298,12 +2298,24 @@ EVENTS_INLINE void suspend(void) {
 }
 
 EVENTS_INLINE void resume(tasks_t *co) {
-	tasks_t *t = __thrd()->running;
-	tasklist_t *l = __thrd()->run_queue;
-	t->ready = true;
-	co->ready = true;
-	enqueue(l, t);
-	task_switch(co);
+	if (co->magic_number == TASK_MAGIC_NUMBER) {
+		co->ready = true;
+		tasks_t *t = __thrd()->running;
+		tasklist_t *l = __thrd()->run_queue;
+		t->ready = true;
+		enqueue(l, co);
+		enqueue(l, t);
+		suspend();
+		if (task_id() == 1 && __thrd()->sleep_count == 1) {
+#ifndef _WIN32
+			__thrd()->active_timer++;
+#endif
+			task_sleep_switch();
+#ifndef _WIN32
+			__thrd()->active_timer--;
+#endif
+		}
+	}
 }
 
 EVENTS_INLINE void yield(void) {
@@ -2424,19 +2436,22 @@ static void enqueue_tasks(tasks_t *t) {
 static void __tasks_pool_main(param_t args) {
 	events_deque_t *queue = args[0].object;
 	events_t *loop = args[1].object;
+	tasks_t *t = active_scheduler_task();
+
 	__thrd()->started = true;
 	task_name("thread_tasks_pool #%d", (int)__thrd()->thrd_id);
 
 	while (!atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)) {
 		active_info();
 		task_take(queue);
-		if (queue->tasks != NULL)
+		if (!is_empty(queue->tasks))
 			__thrd_waitfor(queue);
 		else if (__thrd()->task_count > 1 || __thrd()->loop != NULL)
 			yield();
 		else
 			break;
 	}
+	t->user_data = null;
 }
 
 static int __tasks_pool_wrapper(void *arg) {
@@ -2451,13 +2466,23 @@ static int __tasks_pool_wrapper(void *arg) {
 
 	if (!atomic_flag_load(&queue->shutdown)) {
 		__thrd()->loop = loop;
-		async_ex(Kb(32), __tasks_pool_main, 2, queue, loop);
+		param_t params = arrays(2, queue, loop);
+		tasks_t *t = create_task(Kb(32), (data_func_t)__tasks_pool_main, params, false, true);
+		(void)task_push(t, false);
+		t->user_data = params;
 		__thrd()->pool = work->queue->pool;
 		do {
 			if (!__thrd()->task_count || atomic_flag_load_explicit(&queue->shutdown, memory_order_relaxed)
 				|| tasks_schedulering(true) == TASK_ERRED)
 				break;
 		} while (__thrd()->loop != NULL);
+		if (is_ptr_usable(t) && t->magic_number == TASK_MAGIC_NUMBER
+			&& is_data(t->user_data)) {
+			t->user_data = null;
+			data_delete(params);
+			deferred_unwind(t->garbage);
+			task_delete(t);
+		}
 	}
 
 	if (__thrd()->started)
