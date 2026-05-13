@@ -797,6 +797,48 @@ EVENTS_INLINE tls_config_t *tls_get_config(int fd) {
 	return events_target(fd)->tls_config;
 }
 
+int tls_socket_bind(int fd) {
+	events_fd_t *starget = events_target(fd);
+	defer(tls_config_free, starget->tls_config);
+	if (!tls_config_set_keypair_file(starget->tls_config, cert_file(), pkey_file())) {
+		starget->tls = tls_server();
+		if (is_empty(starget->tls)) {
+			cerr("\nfailed to tls_server: `tls_server`\n");
+		} else {
+			if (!tls_configure(starget->tls, starget->tls_config))
+				return fd;
+
+			cerr("\nfailed to tls_configure: %s", tls_error(starget->tls));
+		}
+	} else {
+		cerr("\nfailed to set tls_config_set_keypair_file: %s\n", tls_config_error(starget->tls_config));
+	}
+
+	return -EINVAL;
+}
+
+int tls_socket_set(struct sockaddr *sa, char *host, int backlog, int protocol) {
+	fds_t server;
+	int err = 0, rport = 0;
+	char *url = null;
+	if (!str_is_empty(host))
+		url = str_parseip((char *)host, (uint32_t *)&err, &rport, true);
+
+	if (str_is_empty(host) || (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0", url)))
+		url = (char *)events_hostname();
+
+	if (!is_empty(url) && (server = async_socket(sa, url, backlog, protocol)) > 0) {
+		events_fd_t *starget = events_target(socket2fd(server));
+		starget->tls_config = tls_config_new();
+		if (is_empty(starget->tls_config))
+			cerr("\nfailed to tls_socket_set: `tls_config_new`\n");
+		else
+			return socket2fd(server);
+	}
+
+	return -EINVAL;
+}
+
 int tls_bind(const char *host, int backlog) {
 	fds_t server;
 	int err = 0, port = 0;
@@ -810,7 +852,7 @@ int tls_bind(const char *host, int backlog) {
 		if (defer(tls_config_free, starget->tls_config) > 0) {
 			if (!tls_config_set_keypair_file(starget->tls_config, cert_file(), pkey_file())) {
 				starget->tls = tls_server();
-				if (!is_empty(starget->tls) > 0) {
+				if (!is_empty(starget->tls)) {
 					deferring(tls_closer, server);
 					if (!tls_configure(starget->tls, starget->tls_config))
 						return socket2fd(server);

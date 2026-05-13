@@ -270,7 +270,7 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 		port = atoi(HTTPS_PORT);
 	else
 		port = atoi(HTTP_PORT);
-	ASSERT((ctx = httpi_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
+	ASSERT((ctx = httpi_setup(0, &CALLBACKS, NULL, server_opts(OPTIONS))) != NULL);
 
 	/* Try to connect to our own server */
 	/* Invalid port test */
@@ -358,8 +358,7 @@ TEST(main_main) {
 		fetch_data[i] = 'a' + i % 10;
 	}
 
-	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, NULL);
-	cb.upload = upload_cb;
+	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
 
 	EXEC_TEST_WITH(http_connect_websocket_client, 0);
 	EXEC_TEST_WITH(http_connect_websocket_client, 1);

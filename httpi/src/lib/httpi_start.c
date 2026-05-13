@@ -305,14 +305,14 @@ http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...) {
 }
 
 FORCEINLINE http_clb_t http_callbacks(request_cb handler, log_msg_cb message,
-	log_access_cb log, file_open_cb file, http_error_cb error, init_context_cb init) {
+	log_access_cb log, file_open_cb file, http_error_cb error, upload_form_cb form) {
 	http_clb_t callbacks = {0};
 	callbacks.handler = handler;
 	callbacks.http_error = error;
 	callbacks.log_access = log;
 	callbacks.log_message = message;
 	callbacks.open_file = file;
-	callbacks.init_context = init;
+	callbacks.upload = form;
 	return callbacks;
 }
 
@@ -599,7 +599,15 @@ static void http_server_task(param_t args) {
 	http_t *conn = null;
 	listener->task = active_scheduler_task();
 	task_data_set(listener->task, (void_t)args);
-	yield();
+	if (listener->has_ssl) {
+		if (is_empty(ctx->host.config[SSL_CERTIFICATE]))
+			use_certificate(ctx->host.config[SSL_CERTIFICATE], 0);
+
+		tls_socket_bind(socket2fd(listener->sock));
+	} else {
+		yield();
+	}
+
 	while (!is_empty(ctx) && ctx->status == HTTP_STATUS_RUNNING) {
 		if (!is_empty(conn = http_accept((http_socket *)listener, ctx))) {
 			conn->ctx = ctx;

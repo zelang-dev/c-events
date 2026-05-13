@@ -3,7 +3,8 @@ set(TARGETS_LIST
  test-http_download
  test-http_upload
  test-httpi_setup
- test-httpi_start
+ test-httpi_http_server
+ test-httpi_https_server
  test-httpi_units
 )
 

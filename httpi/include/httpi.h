@@ -82,6 +82,8 @@ struct client_options {
 #	define HTTP2_DYN_TABLE_SIZE (256)
 #endif
 
+#define server_opts(str_opts) ((const options_ini_t **)(str_opts))
+
 /* This structure needs to be passed to httpi_setup(),
  * to let `HttPi` know which callbacks to invoke. */
 typedef struct http_clb_s http_clb_t;
@@ -155,7 +157,7 @@ typedef int (*http_error_cb)(http_t *, int status);
  * - ctx: `server` handle */
 typedef void (*init_context_cb)(const http_ini_t *ctx);
 
-/* Called when civetweb has uploaded a file to a temporary directory as a
+/* Called when `httpi` has uploaded a file to a temporary directory as a
  * result of `http_upload()` call.
  *
  * Parameters:
@@ -521,7 +523,7 @@ C_API int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data 
 C_API int64_t http_store_body(http_ini_t *ctx, http_t *conn, string_t path);
 
 C_API http_clb_t http_callbacks(request_cb handler, log_msg_cb message, log_access_cb log,
-	file_open_cb file, http_error_cb error, init_context_cb init);
+	file_open_cb file, http_error_cb error, upload_form_cb form);
 
 /* Use to stop an instance of a `HttPi` server completely and return all its resources. */
 C_API void http_stop(http_ini_t *ctx);

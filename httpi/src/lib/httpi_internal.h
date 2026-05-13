@@ -246,6 +246,10 @@ struct http2_s {
 struct vec {
 	string_t ptr;
 	size_t len;
+
+	/* According to RFC 1035, hostnames are restricted to 255 characters
+	 * in total (63 between two dots). */
+	char hostname[256];
 };
 
 struct ws_subprotocols_s {

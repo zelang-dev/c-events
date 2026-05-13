@@ -246,7 +246,8 @@ TEST(http_route) {
 	int i;
 	string_t request = "GET /U7 HTTP/1.0\r\n\r\n";
 
-	ctx = httpi_setup(0, NULL, NULL, (const options_ini_t **)OPTIONS);
+	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
+	ctx = httpi_setup(0, NULL, NULL, server_opts(OPTIONS));
 	ASSERT(ctx != NULL);
 
 	for (i = 0; i < 1000; i++) {
@@ -291,9 +292,6 @@ TEST(main_main) {
 	for (i = 0; i < fetch_data_size; i++) {
 		fetch_data[i] = 'a' + i % 10;
 	}
-
-	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, NULL);
-	cb.upload = upload_cb;
 
 	EXEC_TEST(http_route);
 

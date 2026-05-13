@@ -86,6 +86,9 @@ C_API int tls_accept(int, char *server, int *port);
 C_API void tls_handler(tls_client_cb, int);
 C_API int tls_flusher(int);
 
+C_API int tls_socket_set(struct sockaddr *sa, char *host, int backlog, int protocol);
+C_API int tls_socket_bind(int fd);
+
 C_API bool tls_is_selfserver(void);
 C_API void tls_selfserver_set(void);
 C_API void tls_selfserver_clear(void);

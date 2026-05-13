@@ -914,16 +914,15 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 
 		/* According to RFC 1035, hostnames are restricted to 255 characters
 		 * in total (63 between two dots). */
-		char hostname[256];
 		size_t hostnlen = (size_t)(cb - vec->ptr);
-		if ((hostnlen >= vec->len) || (hostnlen >= sizeof(hostname))) {
+		if ((hostnlen >= vec->len) || (hostnlen >= sizeof(vec->hostname))) {
 			/* This would be invalid in any case */
 			*ip_version = 0;
 			return 0;
 		}
 
-		str_lcpy(hostname, vec->ptr, hostnlen + 1);
-		if (http_inet_pton(AF_INET, hostname, &so->lsa.sin, sizeof(so->lsa.sin), 1)) {
+		str_lcpy((string)vec->hostname, vec->ptr, hostnlen + 1);
+		if (http_inet_pton(AF_INET, vec->hostname, &so->lsa.sin, sizeof(so->lsa.sin), 1)) {
 			if (sscanf(cb + 1, "%u%n", &port, &len)
 				== 1) { // NOLINT(cert-err34-c) 'sscanf' used to convert a
 						// string to an integer value, but function will not
@@ -935,7 +934,7 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 			} else {
 				len = 0;
 			}
-		} else if (http_inet_pton(AF_INET6, hostname, &so->lsa.sin6, sizeof(so->lsa.sin6), 1)) {
+		} else if (http_inet_pton(AF_INET6, vec->hostname, &so->lsa.sin6, sizeof(so->lsa.sin6), 1)) {
 			if (sscanf(cb + 1, "%u%n", &port, &len) == 1) {
 				*ip_version = 6;
 				so->lsa.sin6.sin6_port = htons((uint16_t)port);
@@ -1041,15 +1040,13 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			? ip_version
 			: (ip_version == 4 ? 1 : 0));
 	if (so->has_ssl) {
-		snprintf(address, sizeof(address), "%s", vec.ptr);
-		if ((so->sock = tls_bind(address, opt_listen_backlog)) < 0) {
+		if ((so->sock = tls_socket_set(&so->lsa.sa, vec.hostname, opt_listen_backlog, ip_family)) < 0) {
 			http_log(DEBUG_CRASH, NULL, "cannot create secure socket (entry %i)", portsTotal);
 			free(so);
 			return portsOk;
 		}
 	} else {
-		snprintf(address, sizeof(address), "%s", vec.ptr);
-		if ((so->sock = async_socket(&so->lsa.sa, address, opt_listen_backlog, ip_family)) == INVALID_SOCKET) {
+		if ((so->sock = async_socket(&so->lsa.sa, vec.hostname, opt_listen_backlog, ip_family)) == INVALID_SOCKET) {
 			http_log(DEBUG_CRASH, NULL, "cannot create socket or listen (entry %i)", portsTotal);
 			if (so->is_optional) {
 				portsOk++; /* it's okay if we couldn't create a socket,
@@ -1102,6 +1099,7 @@ int http_set_ports_option(http_ini_t *ctx) {
 	ports_ok = 0;
 
 	list = ctx->host.config[LISTENING_PORTS];
+	memset(&vec, 0, sizeof(vec));
 	while ((list = http_next_option(list, &vec, NULL)) != NULL) {
 		ports_total++;
 		if (is_empty(so = calloc(1, sizeof(http_socket)))) {

@@ -157,6 +157,9 @@ static int test_log_message(const http_t *conn, const char *message) {
 }
 
 void main_main(http_ini_t *ctx) {
+	use_ca_certificate("cert.pem");
+	tls_selfserver_set();
+
 	/* Add some handler */
 	http_route(ctx,
 		"/hello",
@@ -171,34 +174,77 @@ void main_main(http_ini_t *ctx) {
 	delay(seconds(5));
 
 	/* Call a test client */
-	minimal_http_client_check("127.0.0.1", 8080, "/hello", "Hello world");
+	minimal_https_client_check("127.0.0.1", 8443, "/hello", "Hello world");
 
 	/* Run the server for 1 second */
 	delay(seconds(1));
 
 	/* Call a test client */
-	minimal_http_client_check("127.0.0.1", 8080, "/8?Alternative=Response", "Alternative=Response");
+	minimal_https_client_check("127.0.0.1", 8443, "/8?Alternative=Response", "Alternative=Response");
 
 	/* Run the server for 1 second */
 	delay(seconds(1));
 
 	/* Call a test client */
-	minimal_http_client_check("localhost", 8080, "/8", "Number eight");
+	minimal_https_client_check("localhost", 8443, "/8", "Number eight");
 
 	/* Stop the server */
 	http_stop(ctx);
 }
 
-TEST(httpi_start) {
-	/* This test should ensure the minimum server example in
-	 * docs/Embedding.md is still running. */
+TEST(httpi_https_start) {
+	/* This test should show a HTTPS server with enhanced
+	 * security settings.
+	 *
+	 * Articles:
+	 * https://hynek.me/articles/hardening-your-web-servers-ssl-ciphers/
+	 *
+	 * Scanners:
+	 * https://securityheaders.io/
+	 * https://www.htbridge.com/ssl/
+	 * https://www.htbridge.com/websec/
+	 * https://www.ssllabs.com/ssltest/
+	 * https://www.qualys.com/forms/freescan/
+	 * /
+
+	/* Server start parameters for HTTPS */
+	const char *OPTIONS[32];
+	int opt_idx = 0;
+
+	/* HTTPS port - required */
+	OPTIONS[opt_idx++] = "listening_ports";
+	OPTIONS[opt_idx++] = "8443s";
+
+	/* path to certificate file - required
+	OPTIONS[opt_idx++] = "ssl_certificate";
+	OPTIONS[opt_idx++] = ca_cert_file(); */
+
+#if defined(LOCAL_TEST) || defined(_WIN32)
+	/* Do not set this on Travis CI, since the build containers
+	 * contain older SSL libraries */
+
+	/* set minimum SSL version to TLS 1.2 - recommended */
+	OPTIONS[opt_idx++] = "ssl_protocol_version";
+	OPTIONS[opt_idx++] = "4";
+
+	/* set some modern ciphers - recommended */
+	OPTIONS[opt_idx++] = "ssl_cipher_list";
+	OPTIONS[opt_idx++] = "ECDH+AESGCM+AES256:!aNULL:!MD5:!DSS";
+#endif
+
+	/* set "HTTPS only" header - recommended */
+	OPTIONS[opt_idx++] = "strict_transport_security_max_age";
+	OPTIONS[opt_idx++] = "31622400";
+
+	/* end of options - required */
+	OPTIONS[opt_idx] = NULL;
 
 	/* Server context handle */
 	http_ini_t *ctx;
 	http_clb_t cb = http_callbacks(null, test_log_message, null, null, null, null);
 
 	/* Initialize the library */
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, null), DATA_INFO_SERVER));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, server_opts(OPTIONS)), DATA_INFO_SERVER));
 
 	/* Start the server */
 	httpi_start(ctx, main_main);
@@ -209,10 +255,10 @@ TEST(list) {
 	int result = 0;
 
 	/* print headline */
-	cout("HttPi %s minimal request/response start test\n\n", httpi_version());
+	cout("HttPi %s minimal `https` request/response server test\n\n", httpi_version());
 
 	/* start stop server */
-	EXEC_TEST(httpi_start);
+	EXEC_TEST(httpi_https_start);
 
 	return result;
 }

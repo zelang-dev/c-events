@@ -446,10 +446,8 @@ TEST(http_download) {
 	}
 
 	http_ini_t *ctx;
-	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, NULL);
-	cb.upload = upload_cb;
-
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS), DATA_INFO_SERVER));
+	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, NULL, server_opts(OPTIONS)), DATA_INFO_SERVER));
 	httpi_start(ctx, main_main);
 
 	/* test completed */

@@ -49,7 +49,6 @@ fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol
 		err = bind(fd, (struct sockaddr *)sa, sn);
 		events_get_sockaddr(fd)->sa = *sa;
 		if (!err && sa->sa_family == AF_INET6) {
-			trace;
 			/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
 			/* Set IPv6 only option, but don't abort on errors. */
 			if (protocol > 6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&off, sizeof(off)) != 0) {

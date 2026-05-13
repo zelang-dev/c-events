@@ -237,9 +237,8 @@ TEST(http_upload) {
 
 	struct init_data init = {0};
 
-	init.callbacks = &CALLBACKS;
-	init.configuration_options = OPTIONS;
-	ASSERT((ctx = httpi_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
+	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
+	ASSERT((ctx = httpi_setup(0, &cb, NULL, server_opts(OPTIONS))) != NULL);
 
 	/* Upload one file */
 	ASSERT((file_data = read_file("test-httpi_start.c", &file_len)) != NULL);
@@ -278,7 +277,7 @@ TEST(http_upload) {
     ASSERT((file_data = read_file("include/httpi.h", &file_len)) != NULL);
     ASSERT((file2_data = read_file("README.md", &file2_len)) != NULL);
     post_data = NULL;
-    post_data_len = alloc_printf(&post_data, 0,
+    post_data_len = alloc_printf(&post_data, null, 0,
         /* First file */
         "--%s\r\n"
         "Content-Disposition: form-data; "
@@ -328,8 +327,6 @@ TEST(main_main) {
 		fetch_data[i] = 'a' + i % 10;
 	}
 
-	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, NULL);
-	cb.upload = upload_cb;
 	EXEC_TEST(http_upload);
 
 	/* test completed */
