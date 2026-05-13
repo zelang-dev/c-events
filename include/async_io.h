@@ -379,6 +379,9 @@ C_API int fs_rmdir(const char *path);
 C_API int async_fs_stat(future *thrd, const char *path, struct stat *st);
 C_API int fs_stat(const char *path, struct stat *st);
 
+C_API int async_fs_fstat(future *thrd, int fd, struct stat *st);
+C_API int fs_fstat(int fd, struct stat *st);
+
 C_API int async_fs_access(future *thrd, const char *path, int mode);
 C_API int fs_access(const char *path, int mode);
 

@@ -259,17 +259,6 @@ static string_t OPTIONS[] = {
     NULL,
 };
 
-static int alloc_printf(char **out_buf, char *buf, size_t size, char *fmt, ...)
-{
-	va_list ap;
-	int ret = 0;
-	va_start(ap, fmt);
-	ret = alloc_vprintf(out_buf, buf, size, fmt, ap);
-	va_end(ap);
-
-	return ret;
-}
-
 TEST(set_throttle) {
 	ASSERT(set_throttle(NULL, 0x0a000001, "/") == 0);
 	ASSERT(set_throttle("10.0.0.0/8=20", 0x0a000001, "/") == 20);
@@ -410,7 +399,7 @@ TEST(parse_date_str) {
 	return 0;
 }
 
-TEST(alloc_vprintf) {
+TEST(alloc_printf) {
 	char buf[BUF_LEN], *p = buf;
 
 	ASSERT(alloc_printf(&p, buf, sizeof(buf), "%s", "hi") == 2);
@@ -721,7 +710,7 @@ TEST(list) {
 	//EXEC_TEST(http_url_encode);
 	EXEC_TEST(http_url_decode);
 	EXEC_TEST(http_md5);
-	EXEC_TEST(alloc_vprintf);
+	EXEC_TEST(alloc_printf);
 	//EXEC_TEST(str_decode64);
 	EXEC_TEST(str_encode64);
 	EXEC_TEST(mask_data);

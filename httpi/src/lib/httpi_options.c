@@ -349,26 +349,6 @@ string_t http_get_option(http_ini_t *ctx, string_t name) {
 	}
 }
 
-string http_error_string(int error_code, string buf, size_t buf_len) {
-	if (buf == NULL || buf_len < 1)
-		return NULL;
-#ifdef _WIN32
-	int return_val = strerror_s(buf, buf_len, error_code);
-	if (return_val != 0)
-		return NULL;
-
-	return buf;
-#elif defined(__FreeBSD__) || ((_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && !defined(_GNU_SOURCE))
-	int return_val = strerror_r(error_code, buf, buf_len);
-	if (return_val != 0)
-		return NULL;
-
-	return buf;
-#else /* GNU version of strerror_r */
-	return strerror_r(error_code, buf, buf_len);
-#endif
-}
-
 http_t *fake_conn(http_t *fc, http_ini_t *ctx) {
 	static const http_t conn_zero = {0};
 	*fc = conn_zero;
@@ -390,7 +370,7 @@ bool http_set_gpass_option(http_ini_t *ctx) {
 	path = dom_ctx->config[GLOBAL_PASSWORDS_FILE];
 	if (!str_is_empty(path) && !http_stat(fake_conn(&fc, ctx), path, &file)) {
 		http_log(DEBUG_ERROR, NULL, "%s: cannot open %s: %s",
-			__func__, path, http_error_string(os_geterror(), error_string, ARRAY_SIZE));
+			__func__, path, ex_strerror(os_geterror()));
 		return false;
 	}
 
@@ -406,7 +386,6 @@ bool http_set_uid_option_ex(http_ini_t *ctx) {
 
 	struct passwd *pw;
 	string_t uid;// = getuid();
-	char error_string[ERROR_STRING_LEN];
 
 	if (ctx == NULL) return false;
 
@@ -417,11 +396,11 @@ bool http_set_uid_option_ex(http_ini_t *ctx) {
 	if ((pw = getpwnam(uid)) == NULL)
 		http_log(DEBUG_CRASH, NULL, "%s: unknown user [%s]", __func__, uid);
 	else if (setgid(pw->pw_gid) == -1)
-		http_log(DEBUG_CRASH, NULL, "%s: setgid(%s): %s", __func__, uid, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+		http_log(DEBUG_CRASH, NULL, "%s: setgid(%s): %s", __func__, uid, ex_strerror(os_geterror()));
 	else if (setgroups(0, NULL))
-		http_log(DEBUG_CRASH, NULL, "%s: setgroups(): %s", __func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+		http_log(DEBUG_CRASH, NULL, "%s: setgroups(): %s", __func__, ex_strerror(os_geterror()));
 	else if (setuid(pw->pw_uid) == -1)
-		http_log(DEBUG_CRASH, NULL, "%s: setuid(%s): %s", __func__, uid, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+		http_log(DEBUG_CRASH, NULL, "%s: setuid(%s): %s", __func__, uid, ex_strerror(os_geterror()));
 	else
 		return true;
 
@@ -454,11 +433,11 @@ bool http_set_uid_option(http_ini_t *ctx) {
 		} else {
 			/* Valid change request.  */
 			if (setgid(to_pw->pw_gid) == -1) {
-				http_abort_start(ctx, "%s: setgid(%s): %s", __func__, run_as_user, strerror(errno));
+				http_abort_start(ctx, "%s: setgid(%s): %s", __func__, run_as_user, ex_strerror(os_geterror()));
 			} else if (setgroups(0, NULL) == -1) {
-				http_abort_start(ctx, "%s: setgroups(): %s", __func__, strerror(errno));
+				http_abort_start(ctx, "%s: setgroups(): %s", __func__, ex_strerror(os_geterror()));
 			} else if (setuid(to_pw->pw_uid) == -1) {
-				http_abort_start(ctx, "%s: setuid(%s): %s", __func__, run_as_user, strerror(errno));
+				http_abort_start(ctx, "%s: setuid(%s): %s", __func__, run_as_user, ex_strerror(os_geterror()));
 			} else {
 				success = true;
 			}
@@ -602,7 +581,25 @@ bool http_set_acl_option(http_ini_t *ctx) {
 	return http_check_acl(ctx, &sa) != -1;
 }
 
-bool http_init_options(http_ini_t *ctx, string_t *options) {
+bool http_set_ini_option(http_ini_t *ctx, string_t option, string_t value) {
+	int idx = http_get_option_index(option);
+	if (idx == -1) {
+		debug_info("Invalid configuration option: %s", option);
+		return false;
+	}
+
+	if (ctx->host.config[idx] != NULL) {
+		/* A duplicate configuration option is not an error - the last
+		 * option value will be used. */
+		debug_info("warning: %s: duplicate option"CLR_LN, option);
+	}
+
+	ctx->host.config[idx] = str_dup(value);
+	debug_info("[%s] -> [%s]"CLR_LN, option, value);
+	return true;
+}
+
+bool http_ini_options(http_ini_t *ctx, string_t *options) {
 	string_t name, value, default_value;
 	int ireq, i, idx;
 
@@ -1069,7 +1066,7 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	if ((getsockname(so->sock, &(usa.sa), &len) != 0) || (usa.sa.sa_family != so->lsa.sa.sa_family)) {
 		int err = os_geterror();
 		http_log(DEBUG_CRASH, NULL, "call to getsockname failed %s: %d (%s)"CLR_LN,
-			address, err, strerror(err));
+			address, err, ex_strerror(err));
 		tls_closer(so->sock);
 		so->sock = INVALID_SOCKET;
 		free(so);

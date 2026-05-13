@@ -22,7 +22,6 @@ void *main_main(param_t args) {
 							cout("6 %s"CLR_LN, http_get_header(parser, "Cache-Control"));
 							cout("8 %s"CLR_LN, http_get_header(parser, "Vary"));
 							cout("11 %s"CLR_LN, http_get_header(parser, "Content-Type"));
-							cout("11 %s"CLR_LN, http_get_header(parser, "content-type"));
 							cout("12 %s"CLR_LN, http_get_protocol(parser));
 							cout("13 %s"CLR_LN, http_get_message(parser));
 							cout("13 %d"CLR_LN, http_get_code(parser));

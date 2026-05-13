@@ -634,7 +634,7 @@ static void process_command_line_arguments(int argc, char *argv[], string_t *opt
 			/* Errno will still hold the error from fopen. */
 			die("Cannot open config file %s: %s",
 				g_config_file_name,
-				strerror(errno));
+				ex_strerror(os_geterror()));
 		}
 		/* Otherwise: `url` can work without a config file */
 	}
@@ -727,7 +727,7 @@ static int verify_existence(string_t *options, string_t option_name, int must_be
 			"absolute, or it is relative to `url` executable.",
 			option_name,
 			path,
-			strerror(errno));
+			ex_strerror(os_geterror()));
 		return 0;
 	}
 	return 1;
@@ -1072,7 +1072,7 @@ static void start_httpi(int argc, char *argv[]) {
 		if (0 == read_config_file(g_add_domain[i], options)) {
 			die("Cannot open config file %s: %s",
 				g_add_domain[i],
-				strerror(errno));
+				ex_strerror(os_geterror()));
 		}
 
 		j = sanitize_options(options, argv[0]);

@@ -208,7 +208,7 @@ int remove_directory(http_t *conn, string_t dir) {
 					"%s: _stat_ex(%s) failed: %s",
 					__func__,
 					path,
-					strerror(os_geterror()));
+					ex_strerror(os_geterror()));
 				ok = 0;
 			}
 
@@ -269,7 +269,7 @@ int scan_directory(http_t *conn,	string_t dir, void *data, int (*cb)(struct de *
 					"%s: _stat_ex(%s) failed: %s",
 					__func__,
 					path,
-					strerror(os_geterror()));
+					ex_strerror(os_geterror()));
 			}
 			de.file_name = dp->d_name;
 			if (cb(&de, data)) {
@@ -333,7 +333,7 @@ void handle_directory_request(http_t *conn, string_t dir) {
 	}
 
 	if (!fs_scan_directory(conn, dir, &data, dir_scan_callback)) {
-		http_error(conn, 500, "Error: Cannot open directory\nopendir(%s): %s", dir, strerror(os_geterror()));
+		http_error(conn, 500, "Error: Cannot open directory\nopendir(%s): %s", dir, ex_strerror(os_geterror()));
 		return;
 	}
 
@@ -764,47 +764,6 @@ void http_cors_header(http_t *conn) {
 			cors_meth_cfg,
 			-1);
 	}
-}
-
-int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap) {
-	va_list ap_copy;
-	int len;
-
-	va_copy(ap_copy, ap);
-	len = vsnprintf(NULL, 0, fmt, ap_copy);
-	va_end(ap_copy);
-	if ((size_t)(len) >= prealloc_size) {
-		/*
-		 * The pre-allocated buffer not large enough.
-		 * Allocate a new buffer.
-		 */
-		*out_buf = malloc((size_t)(len)+1);
-		if (is_empty(*out_buf)) {
-			/*
-			 * Allocation failed. Return -1 as "out of memory" error.
-			 */
-			return -1;
-		}
-
-		/*
-		 * Buffer allocation successful. Store the string there.
-		 */
-		va_copy(ap_copy, ap);
-		vsnprintf(*out_buf, (size_t)(len)+1, fmt, ap_copy);
-		va_end(ap_copy);
-	} else {
-		/*
-		 * The pre-allocated buffer is large enough.
-		 * Use it to store the string and return the address.
-		 */
-		va_copy(ap_copy, ap);
-		vsnprintf(prealloc_buf, prealloc_size, fmt, ap_copy);
-		va_end(ap_copy);
-
-		*out_buf = prealloc_buf;
-	}
-
-	return len;
 }
 
 static int http_vprintf(http_t *conn, string_t fmt, va_list ap) {
@@ -1377,12 +1336,6 @@ void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
 	time_t timestamp;
 
 	/*
-	 * Check if the message is severe enough to display. This is controlled
-	 * with a context specific debug level. */
-	if (!is_empty(conn) && debug_level > conn->ctx->debug_level)
-		return;
-
-	/*
 	 * Gather all the information from the parameters of this function and
 	 * create a NULL terminated string buffer with the error message. */
 	va_start(ap, fmt);
@@ -1394,7 +1347,8 @@ void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
 	 * We now try to open the error log file. If this succeeds the error is
 	 * appended to the file. */
 	if (is_empty(conn)
-		|| (!is_empty(conn) && is_empty(conn->ctx->error_log_file))) {
+		|| ((!is_empty(conn->ctx->callbacks.log_message) && conn->ctx->callbacks.log_message(conn, buf) == 0)
+			|| is_empty(conn->ctx->error_log_file))) {
 		cerr("[%010lu]%s: %s"CLR_LN, (unsigned long)timestamp, log_level_str(debug_level), buf);
 		return;
 	}
@@ -1675,7 +1629,7 @@ static void close_socket_gracefully(http_t *conn) {
 			http_log(DEBUG_ERROR, conn,
 				"%s: getsockopt(SOL_SOCKET SO_ERROR) failed: %s",
 				__func__,
-				strerror(os_geterror()));
+				ex_strerror(os_geterror()));
 		}
 	}
 
@@ -2289,7 +2243,7 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 		}
 	}
 
-	if (conn == NULL) {
+	if (is_empty(conn)) {
 		if (error != NULL) {
 			error->code = ENOMEM;
 			error->code_sub = (unsigned)alloc_size;
@@ -2298,7 +2252,7 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 				error->text,
 				error->text_buffer_size,
 				"calloc(): %s",
-				strerror(os_geterror()));
+				ex_strerror(os_geterror()));
 		}
 		return NULL;
 	}
@@ -2321,20 +2275,15 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 	atomic_flag_clear(&conn->ctx->nonce_mutex);
 	if (use_ssl) {
 		char addr[ARRAY_SIZE] = {0};
-		snprintf(addr, sizeof(addr), "https://%s:%d", client_options->host, client_options->port);
-		if (sock = tls_dial(addr) < 0) {
-			/* "error" will be set by connect_socket. */
-			/* free all memory and return NULL; */
-			free(conn);
-			return NULL;
-		}
+		snprintf(addr, sizeof(addr), "%s:%d", client_options->host, client_options->port);
+		sock = tls_dial(addr);
 	} else {
-		if ((int)(sock = async_connect((string)client_options->host, client_options->port, 1)) < 0) {
-			/* "error" will be set by connect_socket. */
-			/* free all memory and return NULL; */
-			free(conn);
-			return NULL;
-		}
+		sock = async_connect((string)client_options->host, client_options->port, 1);
+	}
+
+	if ((int)sock < 0) {
+		free(conn);
+		return NULL;
 	}
 
 	if (is_empty(conn->client = (http_socket *)calloc(1, sizeof(http_socket)))) {
@@ -2346,7 +2295,7 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 				error->text,
 				error->text_buffer_size,
 				"calloc(): %s",
-				strerror(os_geterror()));
+				ex_strerror(os_geterror()));
 		}
 		tls_closer(socket2fd(sock));
 		free(conn);
@@ -2358,14 +2307,15 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 	conn->client->lsa = sa;
 	len = sizeof(conn->client->rsa.sin);
 	psa = (struct sockaddr *)&(conn->client->rsa.sin);
-	if (getsockname(sock, psa, &len) != 0) {
+	if (!use_ssl && getsockname(sock, psa, &len) != 0) {
 		http_log(DEBUG_ERROR, conn,
 			"%s: getsockname() failed: %s",
 			__func__,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 	}
 
 	conn->client->has_ssl = use_ssl ? true : false;
+	conn->type = (data_types)DATA_HTTPINFO;
 	return conn;
 }
 
@@ -2381,10 +2331,6 @@ http_t *http_connect_client(string_t host, int port,
 	memset(&opts, 0, sizeof(opts));
 	opts.host = host;
 	opts.port = port;
-	if (use_ssl) {
-		opts.host_name = host;
-	}
-
 	return http_connect_client_impl(&opts, use_ssl, &error);
 }
 

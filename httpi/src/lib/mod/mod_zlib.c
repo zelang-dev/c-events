@@ -56,7 +56,7 @@ void http_compressed_data(http_t *conn, struct file *filep) {
 	do {
 		zstream.avail_in = fs_fread(in_buf, 1, Kb(8), in_file);
 		if (ferror(in_file)) {
-			http_log(DEBUG_ERROR, conn, "fread failed: %s", strerror(os_geterror()));
+			http_log(DEBUG_ERROR, conn, "fread failed: %s", ex_strerror(os_geterror()));
 			(void)deflateEnd(&zstream);
 			return;
 		}

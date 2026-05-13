@@ -287,6 +287,57 @@ string url_decode(string str) {
 	return str;
 }
 
+int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap) {
+	va_list ap_copy;
+	int len;
+
+	va_copy(ap_copy, ap);
+	len = vsnprintf(NULL, 0, fmt, ap_copy);
+	va_end(ap_copy);
+	if ((size_t)(len) >= prealloc_size) {
+		/*
+		 * The pre-allocated buffer not large enough.
+		 * Allocate a new buffer.
+		 */
+		*out_buf = malloc((size_t)(len)+1);
+		if (is_empty(*out_buf)) {
+			/*
+			 * Allocation failed. Return -1 as "out of memory" error.
+			 */
+			return -1;
+		}
+
+		/*
+		 * Buffer allocation successful. Store the string there.
+		 */
+		va_copy(ap_copy, ap);
+		vsnprintf(*out_buf, (size_t)(len)+1, fmt, ap_copy);
+		va_end(ap_copy);
+	} else {
+		/*
+		 * The pre-allocated buffer is large enough.
+		 * Use it to store the string and return the address.
+		 */
+		va_copy(ap_copy, ap);
+		vsnprintf(prealloc_buf, prealloc_size, fmt, ap_copy);
+		va_end(ap_copy);
+
+		*out_buf = prealloc_buf;
+	}
+
+	return len;
+}
+
+int alloc_printf(string *out_buf, string buf, size_t size, string_t fmt, ...) {
+	va_list ap;
+	int ret = 0;
+	va_start(ap, fmt);
+	ret = alloc_vprintf(out_buf, buf, size, fmt, ap);
+	va_end(ap);
+
+	return ret;
+}
+
 hash_http_t *http_extract_var(string_t query, string delim, string sep) {
 	hash_http_t *this = null;
 	if (!str_is_empty(query) && defer_free(this = hash_create_auto(ARRAY_SIZE))) {
@@ -574,7 +625,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 			}
 
 			if (found) {
-				if (!is_multi_set && str_is(key, "Content-Type")
+				if (!is_multi_set && str_is_case(key, "Content-Type")
 					&& str_case_equal(value, "multipart/form-data; boundary=", 30)) {
 					if (!is_data(this->garbage))
 						this->garbage = array();
@@ -584,7 +635,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 					this->is_multipart = true;
 					this->boundary = para[1];
 					$append(this->garbage, para);
-				} else if (str_is(key, "Set-Cookie")) {
+				} else if (str_is_case(key, "Set-Cookie")) {
 					if (is_empty(this->sessions))
 						this->sessions = hashtable_init(key_ops_auto, val_ops_value, hash_lp_idx, ARRAY_SIZE);
 
@@ -640,7 +691,9 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 					}
 				}
 
-				hash_put_str(this->headers, key, value);
+				char keyaddr[ARRAY_SIZE] = {0};
+				snprintf(keyaddr, sizeof(keyaddr), "%s", key);
+				hash_put_str(this->headers, str_tolower(keyaddr), value);
 			}
 		}
 
@@ -1169,7 +1222,9 @@ FORCEINLINE string http_get_uri(http_t *this) {
 }
 
 FORCEINLINE string http_get_header(http_t *this, string key) {
-	return is_empty(this->headers) ? nullptr : (string)hash_get(this->headers, key);
+	char keyaddr[ARRAY_SIZE] = {0};
+	snprintf(keyaddr, sizeof(keyaddr), "%s", key);
+	return is_empty(this->headers) ? nullptr : (string)hash_get(this->headers, str_tolower(keyaddr));
 }
 
 string http_get_var(http_t *this, string key, string var) {
@@ -1212,20 +1267,18 @@ FORCEINLINE string http_get_param(http_t *this, string key) {
 }
 
 void http_put_header(http_t *this, string key, string value, bool force_cap) {
-    string temp = key;
     if (is_empty(this->headers)) {
 		this->headers = hashtable_init(key_ops_auto, val_ops_auto, hash_lp_idx, ARRAY_SIZE);
         defer_free(this->headers);
     }
 
-    if (force_cap)
-        temp = word_toupper(key, '-');
-
-	hash_pair_t *kv = hash_put_str(this->headers, temp, value);
+	hash_pair_t *kv = hash_put_str(this->headers, key, value);
 }
 
 FORCEINLINE bool http_has_header(http_t *this, string key) {
-	return is_empty(this->headers) ? false : hash_has((hash_t *)this->headers, key);
+	char keyaddr[ARRAY_SIZE] = {0};
+	snprintf(keyaddr, sizeof(keyaddr), "%s", key);
+	return is_empty(this->headers) ? false : hash_has((hash_t *)this->headers, str_tolower(keyaddr));
 }
 
 FORCEINLINE bool http_has_var(http_t *this, string key, string var) {

@@ -411,6 +411,10 @@ static EVENTS_INLINE void *_os_stat(param_t args) {
 	return casting(stat(args[0].const_char_ptr, args[1].object));
 }
 
+static EVENTS_INLINE void *_os_fstat(param_t args) {
+	return casting(fstat(args[0].integer, args[1].object));
+}
+
 static EVENTS_INLINE void *_os_access(param_t args) {
 	return casting(access(args[0].const_char_ptr, args[1].integer));
 }
@@ -507,6 +511,14 @@ EVENTS_INLINE int async_fs_stat(future *thrd, const char *path, struct stat *st)
 
 EVENTS_INLINE int fs_stat(const char *path, struct stat *st) {
 	return async_fs_stat(futures_pool(), path, st);
+}
+
+EVENTS_INLINE int async_fs_fstat(future *thrd, int fd, struct stat *st) {
+	return queue_get(queue_work(thrd, _os_fstat, 2, casting(fd), st)).integer;
+}
+
+EVENTS_INLINE int fs_fstat(int fd, struct stat *st) {
+	return async_fs_fstat(futures_pool(), fd, st);
 }
 
 EVENTS_INLINE int async_fs_access(future *thrd, const char *path, int mode) {

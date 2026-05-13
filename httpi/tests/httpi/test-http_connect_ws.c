@@ -50,12 +50,12 @@ static char *read_file(string_t path, int *size) {
 	FILE *fp;
 	struct stat st;
 	char *data = NULL;
-	if ((fp = fs_fopen(path, "rb")) != NULL && !fs_fstat(fileno(fp), &st)) {
+	if ((fp = fopen(path, "rb")) != NULL && !fstat(fileno(fp), &st)) {
 		*size = (int)st.st_size;
 		data = malloc(*size);
 		ASSERT(data != NULL);
-		ASSERT(fs_fread(data, 1, *size, fp) == (size_t)*size);
-		fs_fclose(fp);
+		ASSERT(fread(data, 1, *size, fp) == (size_t)*size);
+		fclose(fp);
 	}
 	return data;
 }
@@ -68,19 +68,6 @@ static string_t upload_filename = "upload_test.txt";
 static string_t upload_filename2 = "upload_test2.txt";
 #endif
 static string_t upload_ok_message = "upload successful";
-static string_t OPTIONS[] = {
-	"document_root",
-	".",
-	"listening_ports",
-	LISTENING_ADDR,
-	"enable_keep_alive",
-	"yes",
-#ifndef NO_SSL
-	"ssl_certificate",
-	"../resources/ssl_cert.pem",
-#endif
-	NULL,
-};
 
 static string_t open_file_cb(http_t *conn, string_t path, size_t *size)
 {
@@ -215,69 +202,148 @@ static int log_message_cb(const http_t *conn, string_t msg)
 	return 0;
 }
 
-static int request_test_handler(http_t *conn, void *cbdata) {
-	int i;
-	char chunk_data[32];
+int (*begin_request)(http_t *);
+void (*end_request)(const http_t *, int reply_status_code);
+int (*log_message)(const http_t *, string_t message);
+int (*init_ssl)(void *ssl_context, void *user_data);
+int (*websocket_connect)(const http_t *);
+void (*websocket_ready)(http_t *);
+int (*websocket_data)(http_t *, int bits, char *data, size_t data_len);
+void (*connection_close)(http_t *);
+string_t (*open_file)(const http_t *, string_t path, size_t *data_len);
+void (*init_lua)(http_t *, void *lua_context);
+void (*upload)(http_t *, string_t file_name);
 
-	ASSERT(cbdata == (void *)7);
-	strcpy(chunk_data, "123456789A123456789B123456789C");
+static struct http_clb_s CALLBACKS;
+static string_t OPTIONS[] = {
+    "document_root",
+    ".",
+    "listening_ports",
+    LISTENING_ADDR,
+    "enable_keep_alive",
+    "yes",
+#ifndef NO_SSL
+    "ssl_certificate",
+    "../resources/ssl_cert.pem",
+#endif
+    NULL,
+};
 
-	http_printf(conn,
-	          "HTTP/1.1 200 OK\r\n"
-	          "Transfer-Encoding: chunked\r\n"
-	          "Content-Type: text/plain\r\n\r\n");
+static void init_CALLBACKS(void) {
+	memset(&CALLBACKS, 0, sizeof(CALLBACKS));
+	CALLBACKS.handler = begin_request_handler_cb;
+	CALLBACKS.log_message = log_message_cb;
+	CALLBACKS.open_file = open_file_cb;
+	CALLBACKS.upload = upload_cb;
+};
 
-	for (i = 0; i < 20; i++) {
-		http_printf(conn, "%x\r\n", i);
-		http_write(conn, chunk_data, i);
-		http_printf(conn, "\r\n");
+static char *read_conn(http_t *conn, int *size) {
+	char buf[100], *data = NULL;
+	int len;
+	*size = 0;
+	while ((len = http_read(conn, buf, sizeof(buf))) > 0) {
+		*size += len;
+		data = realloc(data, *size);
+		ASSERT(data != NULL);
+		memcpy(data + *size - len, buf, len);
 	}
+	return data;
+}
 
-	http_printf(conn, "0\r\n\r\n");
-
+static int websocket_data_handler(const http_t *conn, int flags, char *data, size_t data_len, void *cbdata)
+{
+	(void)conn;
+	(void)flags;
+	(void)data;
+	(void)data_len;
+	(void)cbdata;
 	return 1;
 }
 
-TEST(http_route) {
-	char ebuf[100];
-	http_ini_t *ctx;
+TEST_WITH(http_connect_websocket_client, use_ssl) {
 	http_t *conn;
-	char uri[64];
-	int i;
-	string_t request = "GET /U7 HTTP/1.0\r\n\r\n";
+	char ebuf[100];
+	int port;
+	http_ini_t *ctx;
 
-	ctx = httpi_setup(0, NULL, NULL, (const options_ini_t **)OPTIONS);
-	ASSERT(ctx != NULL);
+	if (use_ssl)
+		port = atoi(HTTPS_PORT);
+	else
+		port = atoi(HTTP_PORT);
+	ASSERT((ctx = httpi_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
 
-	for (i = 0; i < 1000; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, request_test_handler, NULL);
-	}
+	/* Try to connect to our own server */
+	/* Invalid port test */
+	conn = http_connect_websocket_client("localhost",
+	                                   0,
+	                                   use_ssl,
+	                                   ebuf,
+	                                   sizeof(ebuf),
+	                                   "/",
+	                                   "http://localhost",
+	                                   (ws_data_cb)websocket_data_handler,
+	                                   NULL,
+	                                   NULL);
+	ASSERT(conn == NULL);
 
-	for (i = 500; i < 800; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, NULL, (void *)1);
-	}
-
-	for (i = 600; i >= 0; i--) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, NULL, (void *)2);
-	}
-
-	for (i = 750; i <= 1000; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, NULL, (void *)3);
-	}
-
-	for (i = 5; i < 9; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, request_test_handler, (void *)(intptr_t)i);
-	}
-
-	conn = http_download( "localhost", atoi(HTTP_PORT), 0, ebuf, sizeof(ebuf), "%s", request);
+	/* Should succeed, the default `HttPi` server should complete the handshake
+	 */
+	conn = http_connect_websocket_client("localhost",
+	                                   port,
+	                                   use_ssl,
+	                                   ebuf,
+	                                   sizeof(ebuf),
+	                                   "/",
+	                                   "http://localhost",
+	                                   (ws_data_cb)websocket_data_handler,
+	                                   NULL,
+	                                   NULL);
 	ASSERT(conn != NULL);
-	delay(10000);
-	http_close_connection(conn);
+
+	/* Try an external server test */
+	port = 80;
+	if (use_ssl) {
+		port = 443;
+	}
+
+	/* Not a websocket server path */
+	conn = http_connect_websocket_client("websocket.org",
+	                                   port,
+	                                   use_ssl,
+	                                   ebuf,
+	                                   sizeof(ebuf),
+	                                   "/",
+	                                   "http://websocket.org",
+	                                   (ws_data_cb)websocket_data_handler,
+	                                   NULL,
+	                                   NULL);
+	ASSERT(conn == NULL);
+
+	/* Invalid port test */
+	conn = http_connect_websocket_client("echo.websocket.org",
+	                                   0,
+	                                   use_ssl,
+	                                   ebuf,
+	                                   sizeof(ebuf),
+	                                   "/",
+	                                   "http://websocket.org",
+	                                   (ws_data_cb)websocket_data_handler,
+	                                   NULL,
+	                                   NULL);
+	ASSERT(conn == NULL);
+
+	/* Should succeed, echo.websocket.org echos the data back */
+	conn = http_connect_websocket_client("echo.websocket.org",
+	                                   port,
+	                                   use_ssl,
+	                                   ebuf,
+	                                   sizeof(ebuf),
+	                                   "/",
+	                                   "http://websocket.org",
+	                                   (ws_data_cb)websocket_data_handler,
+	                                   NULL,
+	                                   NULL);
+	ASSERT(conn != NULL);
 
 	http_stop(ctx);
 	return 0;
@@ -295,7 +361,8 @@ TEST(main_main) {
 	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, NULL);
 	cb.upload = upload_cb;
 
-	EXEC_TEST(http_route);
+	EXEC_TEST_WITH(http_connect_websocket_client, 0);
+	EXEC_TEST_WITH(http_connect_websocket_client, 1);
 
 	/* test completed */
 	free(fetch_data);

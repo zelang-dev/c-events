@@ -64,26 +64,10 @@ static long fetch_data_size = 1024 * 1024;
 static char *fetch_data;
 static string_t inmemory_file_data = "hi there";
 static string_t upload_filename = "upload_test.txt";
-#if 0
 static string_t upload_filename2 = "upload_test2.txt";
-#endif
 static string_t upload_ok_message = "upload successful";
-static string_t OPTIONS[] = {
-	"document_root",
-	".",
-	"listening_ports",
-	LISTENING_ADDR,
-	"enable_keep_alive",
-	"yes",
-#ifndef NO_SSL
-	"ssl_certificate",
-	"../resources/ssl_cert.pem",
-#endif
-	NULL,
-};
 
-static string_t open_file_cb(http_t *conn, string_t path, size_t *size)
-{
+static string_t open_file_cb(http_t *conn, string_t path, size_t *size) {
 	(void)conn;
 	if (!strcmp(path, "./blah")) {
 		*size = strlen(inmemory_file_data);
@@ -102,8 +86,8 @@ static void upload_cb(http_t *conn, string_t path) {
 		ASSERT((p2 = read_file(path, &len2)) != NULL);
 		ASSERT(len1 == len2);
 		ASSERT(memcmp(p1, p2, len1) == 0);
-		free_ex(p1);
-		free_ex(p2);
+		free(p1);
+		free(p2);
 		remove(upload_filename);
 	} else if (atoi(http_get_query(conn)) == 2) {
 		if (!strcmp(path, "./upload_test.txt")) {
@@ -111,16 +95,16 @@ static void upload_cb(http_t *conn, string_t path) {
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
 			ASSERT(memcmp(p1, p2, len1) == 0);
-			free_ex(p1);
-			free_ex(p2);
+			free(p1);
+			free(p2);
 			remove(upload_filename);
 		} else if (!strcmp(path, "./upload_test2.txt")) {
 			ASSERT((p1 = read_file("README.md", &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
 			ASSERT(memcmp(p1, p2, len1) == 0);
-			free_ex(p1);
-			free_ex(p2);
+			free(p1);
+			free(p2);
 			remove(upload_filename);
 		} else {
 			ASSERT(0);
@@ -182,7 +166,7 @@ static int begin_request_handler_cb(http_t *conn) {
 			          "Content-Type: text/plain\r\n\r\n",
 			          bytes_read);
 			http_write(conn, data, bytes_read);
-			free_ex(data);
+			free(data);
 		} else {
 			data = malloc(1024);
 			assert(data != NULL);
@@ -194,7 +178,7 @@ static int begin_request_handler_cb(http_t *conn) {
 			          "Content-Type: text/plain\r\n\r\n");
 			http_write(conn, data, bytes_read);
 
-			free_ex(data);
+			free(data);
 		}
 		http_close_connection(conn);
 		return 1;
@@ -208,78 +192,130 @@ static int begin_request_handler_cb(http_t *conn) {
 	return 0;
 }
 
-static int log_message_cb(const http_t *conn, string_t msg)
-{
+static int log_message_cb(const http_t *conn, string_t msg) {
 	(void)conn;
 	printf("%s\n", msg);
 	return 0;
 }
 
-static int request_test_handler(http_t *conn, void *cbdata) {
-	int i;
-	char chunk_data[32];
+static struct http_clb_s CALLBACKS;
+static string_t OPTIONS[] = {
+    "document_root",
+    ".",
+    "listening_ports",
+    LISTENING_ADDR,
+    "enable_keep_alive",
+    "yes",
+#ifndef NO_SSL
+    "ssl_certificate",
+    "../resources/ssl_cert.pem",
+#endif
+    NULL,
+};
 
-	ASSERT(cbdata == (void *)7);
-	strcpy(chunk_data, "123456789A123456789B123456789C");
-
-	http_printf(conn,
-	          "HTTP/1.1 200 OK\r\n"
-	          "Transfer-Encoding: chunked\r\n"
-	          "Content-Type: text/plain\r\n\r\n");
-
-	for (i = 0; i < 20; i++) {
-		http_printf(conn, "%x\r\n", i);
-		http_write(conn, chunk_data, i);
-		http_printf(conn, "\r\n");
+static char *read_conn(http_t *conn, int *size) {
+	char buf[100], *data = NULL;
+	int len;
+	*size = 0;
+	while ((len = http_read(conn, buf, sizeof(buf))) > 0) {
+		*size += len;
+		data = realloc(data, *size);
+		ASSERT(data != NULL);
+		memcpy(data + *size - len, buf, len);
 	}
-
-	http_printf(conn, "0\r\n\r\n");
-
-	return 1;
+	return data;
 }
 
-TEST(http_route) {
-	char ebuf[100];
+TEST(http_upload) {
+	static string_t boundary = "OOO___MY_BOUNDARY___OOO";
 	http_ini_t *ctx;
 	http_t *conn;
-	char uri[64];
-	int i;
-	string_t request = "GET /U7 HTTP/1.0\r\n\r\n";
+	char ebuf[100], buf[20], *file2_data;
+    int file2_len;
+	char *file_data, *post_data;
+	int file_len, post_data_len;
 
-	ctx = httpi_setup(0, NULL, NULL, (const options_ini_t **)OPTIONS);
-	ASSERT(ctx != NULL);
+	struct init_data init = {0};
 
-	for (i = 0; i < 1000; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, request_test_handler, NULL);
-	}
+	init.callbacks = &CALLBACKS;
+	init.configuration_options = OPTIONS;
+	ASSERT((ctx = httpi_setup(0, &CALLBACKS, NULL, (const options_ini_t **)OPTIONS)) != NULL);
 
-	for (i = 500; i < 800; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, NULL, (void *)1);
-	}
+	/* Upload one file */
+	ASSERT((file_data = read_file("test-httpi_start.c", &file_len)) != NULL);
+	post_data = NULL;
+	post_data_len = alloc_printf(&post_data,
+                                 NULL,
+	                             0,
+	                             "--%s\r\n"
+	                             "Content-Disposition: form-data; "
+	                             "name=\"file\"; "
+	                             "filename=\"%s\"\r\n\r\n"
+	                             "%.*s\r\n"
+	                             "--%s--\r\n",
+	                             boundary,
+	                             upload_filename,
+	                             file_len,
+	                             file_data,
+	                             boundary);
+	ASSERT(post_data_len > 0);
 
-	for (i = 600; i >= 0; i--) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, NULL, (void *)2);
-	}
+	/* TODO (bel): ... */
+    ASSERT((conn = http_download("localhost", atoi(HTTPS_PORT), 1,
+        ebuf, sizeof(ebuf),
+        "POST /upload?1 HTTP/1.1\r\n"
+        "Content-Length: %d\r\n"
+        "Content-Type: multipart/form-data; "
+        "boundary=%s\r\n\r\n"
+        "%.*s", post_data_len, boundary,
+        post_data_len, post_data)) != NULL);
+    free(file_data), free(post_data);
+    ASSERT(http_read(conn, buf, sizeof(buf)) == (int) strlen(upload_ok_message));
+    ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);
+    http_close_connection(conn);
 
-	for (i = 750; i <= 1000; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, NULL, (void *)3);
-	}
+    /* Upload two files */
+    ASSERT((file_data = read_file("include/httpi.h", &file_len)) != NULL);
+    ASSERT((file2_data = read_file("README.md", &file2_len)) != NULL);
+    post_data = NULL;
+    post_data_len = alloc_printf(&post_data, 0,
+        /* First file */
+        "--%s\r\n"
+        "Content-Disposition: form-data; "
+        "name=\"file\"; "
+        "filename=\"%s\"\r\n\r\n"
+        "%.*s\r\n"
 
-	for (i = 5; i < 9; i++) {
-		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, request_test_handler, (void *)(intptr_t)i);
-	}
+        /* Second file */
+        "--%s\r\n"
+        "Content-Disposition: form-data; "
+        "name=\"file\"; "
+        "filename=\"%s\"\r\n\r\n"
+        "%.*s\r\n"
 
-	conn = http_download( "localhost", atoi(HTTP_PORT), 0, ebuf, sizeof(ebuf), "%s", request);
-	ASSERT(conn != NULL);
-	delay(10000);
-	http_close_connection(conn);
+        /* Final boundary */
+        "--%s--\r\n",
+        boundary, upload_filename,
+        file_len, file_data,
+        boundary, upload_filename2,
+        file2_len, file2_data,
+        boundary);
+    ASSERT(post_data_len > 0);
+    ASSERT((conn = http_download("localhost", atoi(HTTPS_PORT), 1,
+        ebuf, sizeof(ebuf),
+        "POST /upload?2 HTTP/1.1\r\n"
+        "Content-Length: %d\r\n"
+        "Content-Type: multipart/form-data; "
+        "boundary=%s\r\n\r\n"
+        "%.*s", post_data_len, boundary,
+        post_data_len, post_data)) != NULL);
+    free(file_data), free(file2_data), free(post_data);
+    ASSERT(http_read(conn, buf, sizeof(buf)) == (int) strlen(upload_ok_message));
+    ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);
+    http_close_connection(conn);
 
 	http_stop(ctx);
+
 	return 0;
 }
 
@@ -294,8 +330,7 @@ TEST(main_main) {
 
 	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, NULL);
 	cb.upload = upload_cb;
-
-	EXEC_TEST(http_route);
+	EXEC_TEST(http_upload);
 
 	/* test completed */
 	free(fetch_data);

@@ -149,6 +149,7 @@ const char *lastMessage;
 static int test_log_message(const http_t *conn, const char *message) {
 	(void)conn;
 	trace;
+	trace;
 	printf("LOG_MESSAGE: %s\n", message);
 	lastMessage = message;
 
@@ -197,7 +198,7 @@ TEST(httpi_start) {
 	http_clb_t cb = http_callbacks(null, test_log_message, null, null, null, null);
 
 	/* Initialize the library */
-	ASSERT_NOTNULL((ctx = httpi_setup(0, &cb, null, null)));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, null), DATA_INFO_SERVER));
 
 	/* Start the server */
 	httpi_start(ctx, main_main);

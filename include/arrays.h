@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <sys/types.h>
+#include <ctype.h>
 #if defined(__s390__) || defined(__s390x__)
 #	include <endian.h>
 #endif
@@ -288,6 +289,8 @@ C_API int str_pos(const char *text, char *pattern);
 C_API int str_subcount(const char *text, char *pattern);
 C_API char *str_cpy(char *dest, const char *src, size_t len);
 C_API void str_lcpy(char *dest, const char *src, size_t len);
+C_API char *str_toupper(char *s);
+C_API char *str_tolower(char *s);
 C_API char *str_trim(const char *str, size_t length);
 C_API char *str_trim_at(const char *str, int pos, size_t length);
 C_API char *str_dup(const char *str);

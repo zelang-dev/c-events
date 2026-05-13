@@ -330,7 +330,7 @@ static int http_upload_field_get(string_t key,
 	return 0;
 }
 
-static int http_upload_field_stored(string_t path, long long file_size, void *user_data) {
+static int http_upload_field_stored(string_t path, int64_t file_size, void *user_data) {
 	struct upload_user_data *fud = (struct upload_user_data *)user_data;
 	(void)file_size;
 

@@ -182,6 +182,7 @@ extern "C"
 {
 #endif
 
+C_API int alloc_printf(string *out_buf, string buf, size_t size, string_t fmt, ...);
 C_API string url_decode(string str);
 C_API string url_encode(char const *s, size_t len);
 C_API void parse_str(http_t *this, string lines, string sep, string part);

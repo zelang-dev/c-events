@@ -438,6 +438,7 @@ struct twebdav_lock {
 };
 
 struct http_ini_s {
+	data_types type;
 	/* Should we stop event loop */
 	volatile enum http_status_t status;
 	/* HTTP_INI_SERVER, HTTP_INI_CLIENT, or HTTP_INI_WEBSOCKET */
@@ -768,13 +769,10 @@ string_t http_get_default_option(ini_options_type name);
 void http_set_close_on_exec(fds_t sock);
 bool http_is_file_opened(struct file *filep);
 
-string http_error_string(int error_code, string buf, size_t buf_len);
-
 /*
  * Print message to buffer. If buffer is large enough to hold the message,
  * return buffer. If buffer is to small, allocate large enough buffer on heap,
- * and return allocated buffer.
- */
+ * and return allocated buffer. */
 int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap);
 
 /* Perform case-insensitive match of string against pattern

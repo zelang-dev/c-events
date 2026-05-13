@@ -383,6 +383,7 @@ C_API void ex_signal_setup(void);
 
 /* Reset signal handler to default */
 C_API void ex_signal_default(void);
+C_API char *ex_strerror(int);
 
 #ifdef _WIN32
 #	define EXCEPTION_PANIC 0xE0000001

@@ -969,6 +969,36 @@ void str_lcpy(char *dest, const char *src, size_t len) {
 	*dest = '\0';
 }
 
+EVENTS_INLINE char *str_toupper(char *s) {
+	unsigned char *c;
+	const unsigned char *e;
+	size_t len = strlen(s);
+
+	c = (unsigned char *)s;
+	e = (unsigned char *)c + len;
+	while (c < e) {
+		*c = toupper(*c);
+		c++;
+	}
+
+	return s;
+}
+
+EVENTS_INLINE char *str_tolower(char *s) {
+	unsigned char *c;
+	const unsigned char *e;
+	size_t len = strlen(s);
+
+	c = (unsigned char *)s;
+	e = c + len;
+	while (c < e) {
+		*c = tolower(*c);
+		c++;
+	}
+
+	return s;
+}
+
 static data_types scheme_type(char *scheme) {
 	if (str_has("http,tcp,ws,ftp", scheme))
 		return DATA_TCP;

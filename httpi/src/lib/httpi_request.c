@@ -1098,7 +1098,7 @@ static void dav_mkcol(http_t *conn, string_t path) {
 			"%s: http_stat(%s) failed: %s",
 			__func__,
 			path,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 	}
 
 	if (de.file.last_modified) {
@@ -1106,14 +1106,14 @@ static void dav_mkcol(http_t *conn, string_t path) {
 		/* TODO (mid): Add a webdav unit test first, before changing
 		 * anything here. */
 		http_error(
-			conn, 405, "Error: mkcol(%s): %s", path, strerror(os_geterror()));
+			conn, 405, "Error: mkcol(%s): %s", path, ex_strerror(os_geterror()));
 		return;
 	}
 
 	body_len = conn->req.data_len - conn->req.request_len;
 	if (body_len > 0) {
 		http_error(
-			conn, 415, "Error: mkcol(%s): %s", path, strerror(os_geterror()));
+			conn, 415, "Error: mkcol(%s): %s", path, ex_strerror(os_geterror()));
 		return;
 	}
 
@@ -1146,7 +1146,7 @@ static void dav_mkcol(http_t *conn, string_t path) {
 			http_status,
 			"Error processing %s: %s",
 			path,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 	}
 }
 
@@ -1404,7 +1404,7 @@ void http_send_file_data(http_t *conn, struct file *filep,
 		/* file stored on disk */
 		if ((offset > 0) && (fseek(filep->fp, offset, SEEK_SET) != 0)) {
 			http_error(conn, 500, "%s", "Error: Unable to access file at requested position.");
-			http_log(DEBUG_ERROR, conn, "%s: fseek() failed: %s", __func__, strerror(os_geterror()));
+			http_log(DEBUG_ERROR, conn, "%s: fseek() failed: %s", __func__, ex_strerror(os_geterror()));
 		} else {
 			while (len > 0) {
 				/* Calculate how much to read from the file into the buffer. */
@@ -1531,7 +1531,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 	}
 
 	if (!http_fopen(conn->ctx, conn, path, "rb", filep)) {
-		http_error(conn, 500, "Error: Cannot open file\nfopen(%s): %s", path, strerror(os_geterror()));
+		http_error(conn, 500, "Error: Cannot open file\nfopen(%s): %s", path, ex_strerror(os_geterror()));
 		return;
 	}
 
@@ -1722,7 +1722,7 @@ static void do_ssi_include(http_t *conn, string_t ssi, char *tag, int include_le
 			"Cannot open SSI #include: [%s]: fopen(%s): %s",
 			tag,
 			path,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 	} else {
 		http_set_close_on_exec(fd2socket(fileno(file.fp)));
 		if (http_match_prefix_strlen(conn->domain->config[SSI_EXTENSIONS], path)
@@ -1747,7 +1747,7 @@ static void do_ssi_exec(http_t *conn, char *tag) {
 			http_log(DEBUG_ERROR, conn,
 				"Cannot SSI #exec: [%s]: %s",
 				cmd,
-				strerror(os_geterror()));
+				ex_strerror(os_geterror()));
 		} else {
 			http_send_file_data(conn, &file, 0, INT64_MAX, 0); /* send static file */
 			pclose(file.fp);
@@ -1862,7 +1862,7 @@ static void handle_ssi_file_request(http_t *conn,
 			500,
 			"Error: Cannot read file\nfopen(%s): %s",
 			path,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 	} else {
 		/* Set "must_close" for HTTP/1.x, since we do not know the
 		 * content length */
@@ -2164,14 +2164,14 @@ static void put_file(http_t *conn, string_t path) {
 		/* put_dir returns -1 if the path is too long */
 		http_error(conn, 414, "Error: Path too long\nput_dir(%s): %s",
 			path,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 		return;
 	}
 
 	if (rc == -2) {
 		/* put_dir returns -2 if the directory can not be created */
 		http_error(conn, 500, "Error: Can not create directory\nput_dir(%s): %s",
-			path, strerror(os_geterror()));
+			path, ex_strerror(os_geterror()));
 		return;
 	}
 
@@ -2182,7 +2182,7 @@ static void put_file(http_t *conn, string_t path) {
 		(void)http_fclose(&file);
 		http_error(conn, 500, "Error: Can not create file\nfopen(%s): %s",
 			path,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 		return;
 	}
 
@@ -2274,7 +2274,7 @@ static void delete_file(http_t *conn, string_t path) {
 			423,
 			"Error: Cannot delete file\nremove(%s): %s",
 			path,
-			strerror(os_geterror()));
+			ex_strerror(os_geterror()));
 	}
 }
 
@@ -2360,10 +2360,10 @@ void http_handle_request(http_t *conn) {
 	//conn->throttle = set_throttle(conn->domain->config[THROTTLE], &conn->client->rsa, ri->local_uri);
 
 	/* 3. call a "handle everything" callback, if registered */
-	if (conn->ctx->callbacks.start != NULL) {
-		/* Note the "start" function is called before an authorization check.
-		 * If an authorization check is required, use a request_handler instead. */
-		i = conn->ctx->callbacks.start(conn);
+	if (conn->ctx->callbacks.handler != NULL) {
+		/* Note the "handler" function is called before an authorization check.
+		 * If an authorization check is required, use a `http_route()` instead. */
+		i = conn->ctx->callbacks.handler(conn);
 		if (i > 0) {
 			/* callback already processed the request. Store the
 			return value as a status code for the access log. */
@@ -2371,7 +2371,7 @@ void http_handle_request(http_t *conn) {
 			if (!conn->req.must_close) {
 				discard_unread_request_data(conn);
 			}
-			debug_info("%s", "start handled request"CLR_LN);
+			debug_info("%s", "handler registered handled request"CLR_LN);
 			return;
 		} else if (i == 0) {
 			/* `HttPi` should process the request */

@@ -290,7 +290,7 @@ static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 			if (!http_fopen(conn->ctx, conn, gpass, "rb", filep)) {
 				/* Use http_log here, since gpass has been
 				 * configured. */
-				http_log(DEBUG_ERROR, conn, "fopen(%s): %s", gpass, strerror(os_geterror()));
+				http_log(DEBUG_ERROR, conn, "fopen(%s): %s", gpass, ex_strerror(os_geterror()));
 
 			}
 			/* Important: using local struct http_file to test path for
@@ -313,7 +313,7 @@ static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 				/* Don't use http_log here, but only a trace, since
 				 * this is a typical case. It will occur for every directory
 				 * without a password file. */
-				debug_info("fopen(%s): %s"CLR_LN, name, strerror(os_geterror()));
+				debug_info("fopen(%s): %s"CLR_LN, name, ex_strerror(os_geterror()));
 			}
 		} else {
 			/* Try to find .htpasswd in requested directory. */
@@ -337,7 +337,7 @@ static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 				/* Don't use http_log here, but only a trace, since
 				 * this is a typical case. It will occur for every directory
 				 * without a password file. */
-				debug_info("fopen(%s): %s"CLR_LN, name, strerror(os_geterror()));
+				debug_info("fopen(%s): %s"CLR_LN, name, ex_strerror(os_geterror()));
 			}
 		}
 	}
@@ -544,7 +544,7 @@ int check_authorization(http_t *conn, string_t path) {
 					"%s: cannot open %s: %s",
 					__func__,
 					fname,
-					strerror(errno));
+					ex_strerror(os_geterror()));
 			}
 			break;
 		}

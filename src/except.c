@@ -409,6 +409,27 @@ void ex_update(ex_context_t *context) {
 #endif
 }
 
+char *ex_strerror(int error_code) {
+	ex_memory_t *local = get_scope();
+	char *buf = local->scrape;
+	size_t buf_len = sizeof(local->scrape);
+#ifdef _WIN32
+	int return_val = strerror_s(buf, buf_len, error_code);
+	if (return_val != 0)
+		return NULL;
+
+	return buf;
+#elif defined(__FreeBSD__) || ((_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && !defined(_GNU_SOURCE))
+	int return_val = strerror_r(error_code, buf, buf_len);
+	if (return_val != 0)
+		return NULL;
+
+	return buf;
+#else /* GNU version of strerror_r */
+	return strerror_r(error_code, buf, buf_len);
+#endif
+}
+
 ex_context_t *ex_init(void) {
     ex_context_t *context = NULL;
     if (is_empty(context = ex_local())) {

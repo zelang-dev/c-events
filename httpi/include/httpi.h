@@ -76,7 +76,6 @@ struct client_options {
 	int port;
 	string_t client_cert;
 	string_t server_cert;
-	string_t host_name;
 };
 
 #if !defined(HTTP2_DYN_TABLE_SIZE)
@@ -167,7 +166,8 @@ typedef void(*upload_form_cb)(http_t *, string_t file_name);
 /* This structure needs to be passed to httpi_setup(),
  * to let `HttPi` know which callbacks to invoke. */
 struct http_clb_s {
-	request_cb start;
+	/* handle everything callback*/
+	request_cb handler;
 	log_msg_cb log_message;
 	log_access_cb log_access;
 	file_open_cb open_file;
@@ -489,7 +489,15 @@ C_API const options_ini_t *http_get_valid_options(void);
  *
  * When successful, the function returns false. Otherwise true is returned,
  * and the function already performed a cleanup. */
-C_API bool http_init_options(http_ini_t *ctx, string_t *options);
+C_API bool http_ini_options(http_ini_t *ctx, string_t *options);
+/*
+ * Returns the content of an option for a given context.
+ * If an error occurs, NULL is returned. If the option is valid
+ * but there is no context associated with it,
+ * the return value is an empty string. */
+C_API string_t http_get_option(http_ini_t *ctx, string_t name);
+
+C_API bool http_set_ini_option(http_ini_t *ctx, string_t option, string_t value);
 
 /* The main `setup` entry point for the `HttPi` server. */
 C_API http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
@@ -512,18 +520,11 @@ C_API int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data 
  * or a negative number to indicate a failure. */
 C_API int64_t http_store_body(http_ini_t *ctx, http_t *conn, string_t path);
 
-C_API http_clb_t http_callbacks(request_cb begin, log_msg_cb message, log_access_cb log,
+C_API http_clb_t http_callbacks(request_cb handler, log_msg_cb message, log_access_cb log,
 	file_open_cb file, http_error_cb error, init_context_cb init);
 
 /* Use to stop an instance of a `HttPi` server completely and return all its resources. */
 C_API void http_stop(http_ini_t *ctx);
-
-/*
- * Returns the content of an option for a given context.
- * If an error occurs, NULL is returned. If the option is valid
- * but there is no context associated with it,
- * the return value is an empty string. */
-C_API string_t http_get_option(http_ini_t *ctx, string_t name);
 
 /* Sets a `request/route` handler for a specific uri in a server context. */
 C_API void http_route(http_ini_t *ctx, string_t uri, route_cb handler, void_t cbdata);

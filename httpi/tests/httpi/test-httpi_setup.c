@@ -146,7 +146,7 @@ TEST(httpi_setup) {
 	}
 
 	/* Initialize the library */
-	ASSERT_NOTNULL((ctx = httpi_setup(0, &cb, null, null)));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, null), DATA_INFO_SERVER));
 	ASSERT_EQ(test_parse_port_string(), 0);
 	http_stop(ctx);
 	return 0;

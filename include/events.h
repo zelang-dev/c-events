@@ -227,6 +227,8 @@ C_API bool events_is_active(void);
 /* Initializes events. */
 C_API int events_init(int max_fd);
 
+C_API int events_start(int max_fd, main_cb startup, void *args);
+
 /* Deinitialize events. */
 C_API void events_deinit(void);
 C_API void events_ctr_c_unwind(void);

@@ -1324,10 +1324,6 @@ EVENTS_INLINE int os_geterror(void) {
 	return convert_wsa_error(WSAGetLastError());
 }
 
-void os_perror(const char *s) {
-	fprintf(stderr, "%s: %s\n", s, strerror(errno));
-}
-
 int os_rename(const char *oldpath, const char *newpath) {
 	return MoveFileEx(oldpath, newpath, MOVEFILE_REPLACE_EXISTING) ? 0 : -1;
 }

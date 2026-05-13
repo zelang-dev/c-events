@@ -37,6 +37,7 @@ typedef void (*events_cb)(fds_t fd, int event, void *args);
 typedef void (*actor_cb)(actor_t *, void *);
 typedef void (*os_cb)(intptr_t file, int bytes, void *data);
 typedef void *(*param_func_t)(param_t);
+typedef launch_func_t main_cb;
 typedef events_cb sig_cb;
 typedef task_group_t *waitgroup_t;
 

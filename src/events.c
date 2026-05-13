@@ -187,6 +187,24 @@ EVENTS_INLINE bool events_is_active(void) {
 	return atomic_load_explicit(&sys_event.num_loops, memory_order_relaxed) > 0;
 }
 
+int events_start(int max_fd, main_cb startup, void *args) {
+	events_t *loop;
+	int r;
+	if (!(r = events_init(max_fd))
+		&& !is_empty(loop = events_init_pool(thrd_cpu_count() / 2))) {
+		if (is_empty(args))
+			async_task((param_func_t)startup, 0);
+		else
+			async_task((param_func_t)startup, 1, args);
+
+		async_run(loop);
+		r = events_destroy(loop);
+		events_deinit();
+	}
+
+	return r;
+}
+
 int events_init(int max_fd) {
 	atomic_thread_fence(memory_order_seq_cst);
 	if (events_startup_set)
@@ -1276,7 +1294,6 @@ static void *task_wait_system(void *v) {
 	tasks_t *t;
 	tasklist_t *l;
 	size_t now;
-	events_t *loop;
 	(void)v;
 
 	task_system();
@@ -1297,11 +1314,8 @@ static void *task_wait_system(void *v) {
 #endif
 
 		now = events_nsec();
-		loop = __thrd()->loop;
 		active_info();
-		if (loop == null || (!loop->active_descriptors
-			&& !loop->active_io && !loop->active_timers
-			&& !__thrd()->sleep_count && __thrd()->task_count == 1))
+		if (is_empty(__thrd()->loop))
 			return 0;
 
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {

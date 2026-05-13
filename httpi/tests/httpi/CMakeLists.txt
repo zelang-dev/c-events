@@ -1,4 +1,7 @@
 set(TARGETS_LIST
+ test-http_connect
+ test-http_download
+ test-http_upload
  test-httpi_setup
  test-httpi_start
  test-httpi_units

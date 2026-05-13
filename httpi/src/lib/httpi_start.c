@@ -124,7 +124,6 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	http_t *conn = nullptr;
 	time_t conn_birth_time;
 	char src_addr[IP_ADDR_STR_LEN];
-	char error_string[ERROR_STRING_LEN];
 	fds_t sock;
 	union usa *usa;
 	socklen_t len;
@@ -173,7 +172,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		so->has_redir = listener->has_redir;
 		if (getsockname(so->sock, &so->lsa.sa, &len) != 0) {
 			http_log(DEBUG_ERROR, nullptr, "%s: getsockname() failed: %s",
-				__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+				__func__, ex_strerror(os_geterror()));
 		}
 
 		on = 1;
@@ -188,7 +187,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 			|| (so->lsa.sa.sa_family == AF_INET6)) {
 			if (setsockopt(so->sock, SOL_SOCKET, SO_KEEPALIVE, (string_t)&on, sizeof(on)) != 0) {
 				http_log(DEBUG_ERROR, nullptr, "%s: setsockopt(SOL_SOCKET SO_KEEPALIVE) failed: %s",
-					__func__, http_error_string(os_geterror(), error_string, ERROR_STRING_LEN));
+					__func__, ex_strerror(os_geterror()));
 			}
 		}
 
@@ -274,18 +273,12 @@ void http_free_ini(http_ini_t *ctx) {
 
 	http_close_listening_sockets(ctx);
 	atomic_flag_clear(&ctx->host.nonce_mutex);
-	/* Deallocate config parameters is `deferred` to `main task` exit!
-	for (i = 0; i < NUM_OPTIONS; i++) {
-		if (!str_is_empty(ctx->host.config[i])) {
-			str_free(ctx->host.config[i]);
-		}
-	}*/
 
 	/* Deallocate request handlers */
 	while (ctx->host.handlers) {
 		tmp_rh = ctx->host.handlers;
 		ctx->host.handlers = tmp_rh->next;
-		free(tmp_rh->uri);
+		str_free(tmp_rh->uri);
 		free(tmp_rh);
 	}
 
@@ -311,15 +304,15 @@ http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...) {
 	return nullptr;
 }
 
-FORCEINLINE http_clb_t http_callbacks(request_cb begin, log_msg_cb message,
+FORCEINLINE http_clb_t http_callbacks(request_cb handler, log_msg_cb message,
 	log_access_cb log, file_open_cb file, http_error_cb error, init_context_cb init) {
 	http_clb_t callbacks = {0};
-	callbacks.start = begin;
+	callbacks.handler = handler;
 	callbacks.http_error = error;
-	callbacks.init_context = init;
 	callbacks.log_access = log;
 	callbacks.log_message = message;
 	callbacks.open_file = file;
+	callbacks.init_context = init;
 	return callbacks;
 }
 
@@ -550,7 +543,7 @@ http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 		return nullptr;
 	}
 
-	if (http_init_options(ctx, (string_t *)options))
+	if (http_ini_options(ctx, (string_t *)options))
 		return nullptr;
 
 	if (events_init((max_fd <= 0 ? atoi(ctx->host.config[MAX_FD]) : max_fd)))
@@ -596,6 +589,7 @@ http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 
 	ctx->http_type = HTTP_INI_SERVER;
 	ctx->status = HTTP_STATUS_STARTING;
+	ctx->type = (data_types)DATA_INFO_SERVER;
 	return ctx;
 }
 
