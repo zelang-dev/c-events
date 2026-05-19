@@ -64,9 +64,6 @@ static long fetch_data_size = 1024 * 1024;
 static char *fetch_data;
 static string_t inmemory_file_data = "hi there";
 static string_t upload_filename = "upload_test.txt";
-#if 0
-static string_t upload_filename2 = "upload_test2.txt";
-#endif
 static string_t upload_ok_message = "upload successful";
 static string_t OPTIONS[] = {
 	"document_root",

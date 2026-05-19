@@ -873,7 +873,7 @@ int tls_bind(const char *host, int backlog) {
 }
 
 static int async_tls_accept(int server, int socket) {
-	int event, rc;
+	int event, rc = 0;
 	if (!server || !socket)
 		return -1;
 
@@ -900,7 +900,7 @@ static int async_tls_accept(int server, int socket) {
 }
 
 EVENTS_INLINE int tls_accept(int fd, char *server, int *port) {
-	int rc, client = socket2fd(async_accept(fd2socket(fd), server, port));
+	int rc = 0, client = socket2fd(async_accept(fd2socket(fd), server, port));
 	if (!(rc = async_tls_accept(fd, client)))
 		return client;
 

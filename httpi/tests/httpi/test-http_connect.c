@@ -135,8 +135,7 @@ TEST(http_connect_client) {
 
 TEST(list) {
 	int result = 0;
-	//string name = "lWaReeNe StoBBs";
-	string name2 = "lWaReeNe StoBBs";
+
 	/* print headline */
 	cout("HttPi %s minimal client test\n\n", httpi_version());
 

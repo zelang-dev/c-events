@@ -56,6 +56,24 @@ void promise_set(promise *p, void *res) {
 	atomic_flag_test_and_set(&p->done);
 }
 
+EVENTS_INLINE values_t promise_wait(promise *p) {
+	while (is_promise(p) && !atomic_flag_load(&p->done))
+		yield_active_info();
+
+	return p->result->value;
+}
+
+EVENTS_INLINE void promise_clean(promise *p) {
+	if (is_promise(p) && atomic_flag_load(&p->done)) {
+		if (is_data(p->args)) {
+			$delete(p->args);
+			p->args = null;
+		}
+
+		events_free(p);
+	}
+}
+
 EVENTS_INLINE bool is_future(void *self) {
 	return data_type(self) == DATA_FUTURE;
 }
@@ -247,6 +265,51 @@ static void queue_work_handler(param_t args) {
 		errno = job->erred;
 }
 
+promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...) {
+	if (is_promise(f)) {
+		va_list ap;
+		future *thrd = futures_pool();
+
+		va_start(ap, num_args);
+		array_t args = data_ex(num_args, ap);
+		va_end(ap);
+
+		if (!is_empty(args)) {
+			if (is_data(f->args))
+				$delete(f->args);
+
+			f->args = args;
+			f->func = fn;
+			f->result->is_array = false;
+			atomic_flag_clear(&f->mutex);
+			atomic_flag_clear(&f->done);
+			/* determent which thread tasks pool receive next `future` job. */
+			if (thrd->id == sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
+				% ($size(sys_event.future_cpu_idx)))].u_int]->pool->id)
+				atomic_fetch_add(&sys_event.future_id_count, 1);
+
+			array_t data = arrays(2, thrd, f);
+			tasks_t *t = create_task(Kb(32), (data_func_t)queue_work_handler, data, false, true);
+			if (task_push(t, false) == TASK_ERRED) {
+				promise_clean(f);
+				if (!is_empty(data))
+					$delete(data);
+
+				f = null;
+			} else {
+				t->tid = thrd->id;
+				f->type = DATA_PROMISE;
+				yield();
+			}
+
+			return f;
+		}
+	}
+
+	throw(logic_error);
+	return f;
+}
+
 promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 	va_list ap;
 	promise *f = null;
@@ -262,6 +325,7 @@ promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 			f->result->is_array = false;
 			atomic_flag_clear(&f->mutex);
 			atomic_flag_clear(&f->done);
+			/* determent which thread tasks pool receive next `future` job. */
 			if (thrd->id == sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
 				% ($size(sys_event.future_cpu_idx)))].u_int]->pool->id)
 				atomic_fetch_add(&sys_event.future_id_count, 1);
@@ -277,7 +341,6 @@ promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 			} else {
 				t->tid = thrd->id;
 				f->type = DATA_PROMISE;
-				defer_free(f);
 				yield();
 			}
 		} else {
@@ -298,6 +361,7 @@ void queue_wait(array_t work, then_cb then) {
 			foreach(worker in work) {
 				if (!queue_is_valid(worker.object)) {
 					if (!is_empty(then)) {
+						defer_free(worker.object);
 						promise *value = (promise *)worker.object;
 						if (value->result->is_array == 1) {
 							tuple_t result = (tuple_t)value->result->value.object;
@@ -335,13 +399,17 @@ values_t queue_get(void *self) {
 			yield_active_info();
 
 		if (p->result->is_array == 1) {
+			defer_free(p);
 			defer_free(p->result->value.object);
 			p->result->is_array = DATA_INVALID;
 			return *(tuple_t)(p->result->value.object);
 		}
 
-		if (p->result->is_array == 0)
+		if (p->result->is_array == 0) {
+			p->result->is_array = DATA_INVALID;
+			defer_free(p);
 			return p->result->value;
+		}
 	}
 
 	throw(logic_error);

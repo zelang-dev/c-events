@@ -188,6 +188,8 @@ C_API string url_encode(char const *s, size_t len);
 C_API void parse_str(http_t *this, string lines, string sep, string part);
 C_API void parse_multipart(http_t *this);
 
+C_API void http_snprintf(int *truncated, string buf, size_t buflen, string_t fmt, ...);
+C_API void http_credentials(http_t *conn, string user, size_t userlen, string pass, size_t passlen);
 C_API hash_http_t *http_extract_var(string_t query, string delim, string sep);
 C_API string http_get_decoded(hash_http_t *this, string key);
 

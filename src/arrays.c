@@ -22,7 +22,6 @@ typedef struct array_metadata_s {
 	data_types type;
 	size_t size;
 	size_t capacity;
-	free_cb destructor;
 	events_cacheline_t _pad;
 	atomic_spinlock lock;
 } array_metadata_t;
@@ -35,8 +34,6 @@ const data_values_t data_values_empty[1] = {0};
 #define array_set_capacity(vec, size) array_address(vec)->capacity = (size)
 #define array_set_size(vec, _size) array_address(vec)->size = (_size)
 #define array_set_type(vec, _type) array_address(vec)->type = (_type)
-#define array_set_destructor(vec, elem_destructor_fn) array_address(vec)->destructor = (elem_destructor_fn)
-#define array_destructor(vec) array_address(vec)->destructor
 #define array_mutex(vec) array_address(vec)->lock
 #define array_length(vec) ((vec) ? array_address(vec)->size : (size_t)0)
 #define array_type(vec) ((vec) ? array_address(vec)->type : DATA_INVALID)
@@ -52,7 +49,6 @@ const data_values_t data_values_empty[1] = {0};
             void *cv_p__ = events_malloc(cv_sz__);	\
             (vec) = array_base(cv_p__);			\
             array_set_size((vec), 0);			\
-            array_set_destructor((vec), NULL);	\
             array_set_type((vec), DATA_ARRAY);	\
         }										\
         array_set_capacity((vec), (count));		\
@@ -140,11 +136,6 @@ EVENTS_INLINE void data_remove(array_t arr, size_t i) {
 
 		const size_t cv_sz__ = array_length(arr);
 		if ((i) < cv_sz__) {
-			free_cb destructor__ = array_destructor(arr);
-			if (destructor__) {
-				destructor__(&(arr)[i]);
-			}
-
 			array_set_size((arr), cv_sz__ - 1);
 			memmove((arr)+(i), (arr)+(i)+1, sizeof(*(arr)) * (cv_sz__ - 1 - (i)));
 		}
@@ -154,14 +145,6 @@ EVENTS_INLINE void data_remove(array_t arr, size_t i) {
 EVENTS_INLINE void data_delete(array_t arr) {
 	if (arr && is_ptr_usable(arr)) {
 		void *p1__ = array_address(arr);
-		free_cb destructor__ = array_destructor(arr);
-		if (destructor__) {
-			size_t i__;
-			for (i__ = 0; i__ < array_length(arr); ++i__) {
-				destructor__(&(arr)[i__]);
-			}
-		}
-
 		array_set_type(arr, DATA_INVALID);
 		events_free(p1__);
 	}
@@ -272,14 +255,6 @@ EVENTS_INLINE array_t data_reset(array_t vec) {
 	if (vec) {
 		if (array_type(vec) == DATA_TUPLE)
 			throw(logic_error);
-
-		free_cb destructor__ = array_destructor(vec);
-		if (destructor__) {
-			size_t i__;
-			for (i__ = 0; i__ < array_length(vec); ++i__) {
-				destructor__(&(vec)[i__]);
-			}
-		}
 
 		array_set_size(vec, 0);
 	}
@@ -852,7 +827,7 @@ bool str_has_either(const char *src, char *match, char *match2) {
 	return false;
 }
 
-FORCEINLINE int mempos_str(const char *msg, size_t msg_len, char *pattern) {
+EVENTS_INLINE int mempos_str(const char *msg, size_t msg_len, char *pattern) {
 	return mempos((const unsigned char *)msg, msg_len, (unsigned char *)pattern, strlen(pattern));
 }
 

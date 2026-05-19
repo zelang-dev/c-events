@@ -318,6 +318,7 @@ struct file {
 	uint64_t size;
 	time_t last_modified;
 	FILE *fp;
+	promise *pf;
 	string_t membuf; /* Non-NULL if file data is in memory */
 };
 
@@ -465,6 +466,7 @@ struct http_ini_s {
 	void *user_data;
 	/* User-defined callback function */
 	http_clb_t callbacks;
+	//array_t options;
 	/* Array of `http_socket` listening sockets */
 	array_t server_sockets;
 	/* linked list of uri handlers */
@@ -772,6 +774,7 @@ int http_set_ports_option(http_ini_t *ctx);
 string_t http_get_default_option(ini_options_type name);
 void http_set_close_on_exec(fds_t sock);
 bool http_is_file_opened(struct file *filep);
+int is_valid_port(unsigned long port);
 
 /*
  * Print message to buffer. If buffer is large enough to hold the message,
@@ -824,7 +827,6 @@ int http_server(http_ini_t *ctx);
  * Password files are always hidden, independent of the patterns defined by the user. */
 bool http_must_hide_file(http_ini_t *ctx, string_t path);
 
-void http_snprintf(http_t *conn, int *truncated, string buf, size_t buflen, string_t fmt, ...);
 struct tm *http_gmtime_r(const time_t *clk, struct tm *result);
 
 /* Do cleanup work when an error occurred initializing a context. */
@@ -938,7 +940,7 @@ string_t http_fgets(char *buf, size_t size, struct file *filep, char **p);
 void discard_unread_request_data(http_t *conn);
 /* Pre-process URIs according to RFC + protect against directory disclosure
  * attacks by removing '..', excessive '/' and '\' characters */
-void remove_double_dots_slashes(char *s);
+void remove_double_dots_slashes(char *inout);
 int set_throttle(string_t spec, uint32_t remote_ip, string_t uri);
 
 /* Used to free the resources associated with a context. */

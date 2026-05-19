@@ -28,6 +28,7 @@
 static volatile bool events_startup_set = false;
 static volatile bool events_shutdown_set = false;
 static volatile bool events_tasks_started = false;
+static main_cb events_main_func = null;
 static array_t events_fsevents_tasks = null;
 static int events_execute(events_t * loop, int max_wait);
 static tasks_t *atexit_ctr_c_task = null;
@@ -186,12 +187,16 @@ EVENTS_INLINE void events_update_polling(events_t *loop, int fd, int events) {
 EVENTS_INLINE bool events_is_active(void) {
 	return atomic_load_explicit(&sys_event.num_loops, memory_order_relaxed) > 0;
 }
+void events_set_main(main_cb startup) {
+	events_main_func = startup;
+}
 
 int events_start(int max_fd, main_cb startup, void *args) {
 	events_t *loop;
 	int r;
 	if (!(r = events_init(max_fd))
 		&& !is_empty(loop = events_init_pool(thrd_cpu_count() / 2))) {
+		events_set_main(startup);
 		if (is_empty(args))
 			async_task((param_func_t)startup, 0);
 		else
@@ -1666,6 +1671,10 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	void *memory = NULL;
 	tasks_t *co = NULL;
 	bool is_main = false;
+
+	if (func == null)
+		return NULL;
+
 	/* Stack size should be at least `TASK_STACK_SIZE`. */
 	if ((heapsize != 0 && heapsize < TASK_STACK_SIZE) || heapsize == 0)
 		heapsize = TASK_STACK_SIZE;
@@ -1675,7 +1684,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 		heapsize = MINSIGSTKSZ + heapsize;
 #endif
 
-	if (atomic_load(&sys_event.id_generate) == 1 && !is_skipping) {
+	if (events_main_func == (main_cb)func && !events_tasks_started && !is_skipping) {
 		is_main = true;
 		heapsize = heapsize * 6;
 	}
@@ -2317,9 +2326,13 @@ EVENTS_INLINE void resume(tasks_t *co) {
 		tasks_t *t = __thrd()->running;
 		tasklist_t *l = __thrd()->run_queue;
 		t->ready = true;
-		enqueue(l, co);
+		if (co->cycles > 1)
+			enqueue(l, co);
 		enqueue(l, t);
-		suspend();
+		if (co->cycles > 1)
+			suspend();
+		else
+			task_switch(co);
 		if (task_id() == 1 && __thrd()->sleep_count == 1) {
 #ifndef _WIN32
 			__thrd()->active_timer++;

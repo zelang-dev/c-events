@@ -40,7 +40,7 @@ static int http_send_websocket_handshake(http_t *conn, string_t websock_key) {
 	int truncated;
 
 	/* Calculate Sec-WebSocket-Accept reply from Sec-WebSocket-Key. */
-	http_snprintf(conn, &truncated, buf, sizeof(buf), "%s%s", websock_key, magic);
+	http_snprintf(&truncated, buf, sizeof(buf), "%s%s", websock_key, magic);
 	if (truncated) {
 		conn->req.must_close = 1;
 		return 0;
@@ -795,7 +795,7 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 		/* error_buffer should be already filled ... */
 		if (!error_buffer[0]) {
 			/* ... if not add an error message */
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				error_buffer,
 				error_buffer_size,
@@ -867,7 +867,7 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 	}
 
 	if (i <= 0) {
-		http_snprintf(conn,
+		http_snprintf(
 			NULL, /* No truncation check for ebuf */
 			error_buffer,
 			error_buffer_size,
@@ -896,7 +896,7 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 		 * Server does not know websockets. */
 		if (!*error_buffer) {
 			/* set an error, if not yet set */
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				error_buffer,
 				error_buffer_size,

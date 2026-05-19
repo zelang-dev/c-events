@@ -132,7 +132,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	if (is_empty(listener) || is_empty(ctx))
 		return nullptr;
 
-	debug_info("\nhttp_accept waiting on: #%d socket"CLR_LN, socket2fd(listener->sock));
+	debug_info("\nACCEPT waiting on: #%d socket"CLR_LN, socket2fd(listener->sock));
 	if (listener->has_ssl) {
 		sock = tls_accept(socket2fd(listener->sock), null, null);
 	} else {
@@ -145,6 +145,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		return nullptr;
 	}
 
+	conn_birth_time = time(null);
 	usa = events_get_sockaddr(sock);
 	if (is_empty(so = (http_socket *)calloc(1, sizeof(http_socket)))) {
 		http_log(DEBUG_INFO, nullptr, "%s: Out of memory", __func__);
@@ -157,7 +158,6 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	so->rsa.storage = usa->storage;
 	memset(&so->lsa.sa, 0, sizeof(so->lsa.sa));
 	len = sizeof(so->lsa.sa);
-	conn_birth_time = time(null);
 	if (!http_check_acl(ctx, (const union usa *)&so->rsa)) {
 		sockaddr_to_str(src_addr, sizeof(src_addr), &so->rsa);
 		http_log(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
@@ -207,6 +207,8 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 			conn->status = STATUS_NO_CONTENT;
 			conn->hostname = nullptr;
 			conn->client = so;
+			conn->req.content_len = -1;
+			conn->content_length = -1;
 			conn->version = 1.1;
 			conn->req.conn_birth_time = conn_birth_time;
 			conn->req.remote_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client->rsa));
@@ -282,6 +284,13 @@ void http_free_ini(http_ini_t *ctx) {
 		free(tmp_rh);
 	}
 
+	//foreach(ini in ctx->options) {
+		//str_free(ini.object);
+	//}
+
+	//$delete(ctx->options);
+	//ctx->options = null;
+
 	/* Deallocate context itself */
 	free(ctx);
 	ctx = null;
@@ -337,7 +346,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 	if ((ctx == NULL) || (options == NULL)) {
 		if (error != NULL) {
 			error->code = EINVAL;
-			http_snprintf(NULL,
+			http_snprintf(
 				NULL, /* No truncation check for error buffers */
 				error->text,
 				error->text_buffer_size,
@@ -351,7 +360,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 		|| ctx->status == HTTP_STATUS_TERMINATED) {
 		if (error != NULL) {
 			error->code = ENOEXEC;
-			http_snprintf(NULL,
+			http_snprintf(
 				NULL, /* No truncation check for error buffers */
 				error->text,
 				error->text_buffer_size,
@@ -367,7 +376,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 		if (error != NULL) {
 			error->code = ENOMEM;
 			error->code_sub = (unsigned)sizeof(struct ini_domain_s);
-			http_snprintf(NULL,
+			http_snprintf(
 				NULL, /* No truncation check for error buffers */
 				error->text,
 				error->text_buffer_size,
@@ -385,7 +394,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 			if (error != NULL) {
 				error->code = EINVAL;
 				error->code_sub = (unsigned)-1;
-				http_snprintf(NULL,
+				http_snprintf(
 					NULL, /* No truncation check for error buffers */
 					error->text,
 					error->text_buffer_size,
@@ -399,7 +408,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 			if (error != NULL) {
 				error->code = EINVAL;
 				error->code_sub = (unsigned)idx;
-				http_snprintf(NULL,
+				http_snprintf(
 					NULL, /* No truncation check for error buffers */
 					error->text,
 					error->text_buffer_size,
@@ -425,7 +434,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 		if (error != NULL) {
 			error->code = EINVAL;
 			error->code_sub = AUTHENTICATION_DOMAIN;
-			http_snprintf(NULL,
+			http_snprintf(
 				NULL, /* No truncation check for error buffers */
 				error->text,
 				error->text_buffer_size,
@@ -464,7 +473,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 				/* Init SSL failed */
 				if (error != NULL) {
 					error->code = tls_config_error_code(config);
-					http_snprintf(NULL,
+					http_snprintf(
 						NULL, /* No truncation check for error buffers */
 						error->text,
 						error->text_buffer_size,
@@ -492,7 +501,7 @@ int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error
 				new_dom->config[AUTHENTICATION_DOMAIN]);
 			if (error != NULL) {
 				error->code = EINVAL;
-				http_snprintf(NULL,
+				http_snprintf(
 					NULL, /* No truncation check for error buffers */
 					error->text,
 					error->text_buffer_size,
@@ -543,6 +552,13 @@ http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 		return nullptr;
 	}
 
+	//ctx->options = array();
+	//if (is_empty(ctx->options)) {
+	////	$delete(ctx->server_sockets);
+	//	free(ctx);
+	//	return nullptr;
+	//}
+
 	if (http_ini_options(ctx, (string_t *)options))
 		return nullptr;
 
@@ -564,7 +580,6 @@ http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 	if (!http_set_gpass_option(ctx))
 		return http_abort_start(ctx, "Error setting gpass option");
 
-	//use_certificate(http_get_option(ctx, "ssl_ca_path"), 0);
 	if (!http_set_ports_option(ctx))
 		return http_abort_start(ctx, "Error setting ports option");
 
@@ -597,23 +612,28 @@ static void http_server_task(param_t args) {
 	http_socket *listener = (http_socket *)args[0].object;
 	http_ini_t *ctx = (http_ini_t *)args[1].object;
 	http_t *conn = null;
+
 	listener->task = active_scheduler_task();
 	task_data_set(listener->task, (void_t)args);
 	if (listener->has_ssl) {
-		if (is_empty(ctx->host.config[SSL_CERTIFICATE]))
+		if (is_type(ctx, DATA_INFO_SERVER) && is_empty(ctx->host.config[SSL_CERTIFICATE]))
 			use_certificate(ctx->host.config[SSL_CERTIFICATE], 0);
 
-		tls_socket_bind(socket2fd(listener->sock));
+		if (is_type(ctx, DATA_INFO_SERVER) && ctx->status == HTTP_STATUS_RUNNING)
+			tls_socket_bind(socket2fd(listener->sock));
 	} else {
 		yield();
 	}
 
-	while (!is_empty(ctx) && ctx->status == HTTP_STATUS_RUNNING) {
+	while (is_type(ctx, DATA_INFO_SERVER) && ctx->status == HTTP_STATUS_RUNNING) {
 		if (!is_empty(conn = http_accept((http_socket *)listener, ctx))) {
 			conn->ctx = ctx;
 			accept_handler(http_handler, socket2fd(conn->client->sock));
 		}
 	}
+
+	if (listener->has_ssl)
+		tls_config_free(tls_get_config(socket2fd(listener->sock)));
 }
 
 int http_server(http_ini_t *ctx) {
@@ -634,22 +654,24 @@ int http_server(http_ini_t *ctx) {
 	return EXIT_FAILURE;
 }
 
-static FORCEINLINE void *http_main_task(param_t args) {
+static void *http_main_task(param_t args) {
 	http_main_cb start = (http_main_cb)args[1].func;
 	yield();
 	if (!is_empty(start))
 		start((http_ini_t *)args[0].object);
 
+	yield();
 	return 0;
 }
 
-void httpi_start(http_ini_t *ctx, http_main_cb start) {
+FORCEINLINE void httpi_start(http_ini_t *ctx, http_main_cb start) {
 	events_t *loop = events_init_pool(thrd_cpu_count() / 2);
 	if (is_empty(ctx) || is_empty(loop))
 		exit(EXIT_FAILURE);
 
 	int i;
 	ctx->status = HTTP_STATUS_RUNNING;
+	events_set_main((main_cb)http_main_task);
 	async_task(http_main_task, 2, ctx, start);
 	foreach(socket in ctx->server_sockets) {
 		async_ex(Kb(64), http_server_task, 2, socket.object, ctx);

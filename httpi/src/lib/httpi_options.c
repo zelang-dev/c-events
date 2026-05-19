@@ -619,10 +619,11 @@ bool http_ini_options(http_ini_t *ctx, string_t *options) {
 			/* A duplicate configuration option is not an error - the last
 			 * option value will be used. */
 			cerr("warning: %s: duplicate option"CLR_LN, name);
-			free(ctx->host.config[idx]);
+			//free(ctx->host.config[idx]);
 		}
 
-		ctx->host.config[idx] = str_dup(value);
+		ctx->host.config[idx] = (string)value;
+		//$append_string(ctx->options, ctx->host.config[idx]);
 		debug_info("[%s] -> [%s]"CLR_LN, name, value);
 	}
 
@@ -630,7 +631,8 @@ bool http_ini_options(http_ini_t *ctx, string_t *options) {
 	for (i = 0; config_options[i].name != NULL; i++) {
 		default_value = config_options[i].default_value;
 		if ((ctx->host.config[i] == NULL) && (default_value != NULL)) {
-			ctx->host.config[i] = str_dup(default_value);
+			ctx->host.config[i] = (string)default_value;
+			//$append_string(ctx->options, ctx->host.config[i]);
 		}
 	}
 
@@ -834,7 +836,7 @@ int http_switch_domain(http_t *conn) {
 	return 1;
 }
 
-static FORCEINLINE int is_valid_port(unsigned long port) {
+int is_valid_port(unsigned long port) {
 	return (port <= 0xffff);
 }
 
@@ -1030,7 +1032,6 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			config_options[LISTEN_BACKLOG_SIZE].name,
 			opt_txt);
 
-		free(so);
 		return portsOk;
 	}
 
@@ -1357,7 +1358,7 @@ int http_get_system_info(char *buffer, int buflen) {
 	/* Server version */
 	{
 		string_t version = httpi_version();
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1390,7 +1391,7 @@ int http_get_system_info(char *buffer, int buflen) {
 		dwMajorVersion = (DWORD)(LOBYTE(LOWORD(dwVersion)));
 		dwMinorVersion = (DWORD)(HIBYTE(LOWORD(dwVersion)));
 
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1400,7 +1401,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)dwMinorVersion);
 		system_info_length += http_str_append(&buffer, end, block);
 
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1411,7 +1412,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)si.dwActiveProcessorMask);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__rtems__)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1421,7 +1422,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			rtems_version());
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__ZEPHYR__)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1435,7 +1436,7 @@ int http_get_system_info(char *buffer, int buflen) {
 		memset(&name, 0, sizeof(name));
 		uname(&name);
 
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1451,7 +1452,7 @@ int http_get_system_info(char *buffer, int buflen) {
 
 	/* Features */
 	{
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1471,7 +1472,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			"");
 		system_info_length += http_str_append(&buffer, end, block);
 
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1505,8 +1506,7 @@ int http_get_system_info(char *buffer, int buflen) {
 #endif
 #endif
 
-		http_snprintf(
-			NULL, NULL, block, sizeof(block), ",%s\"build\" : \"%s\"", eol, bd);
+		http_snprintf(null, block, sizeof(block), ",%s\"build\" : \"%s\"", eol, bd);
 
 		system_info_length += http_str_append(&buffer, end, block);
 	}
@@ -1515,7 +1515,7 @@ int http_get_system_info(char *buffer, int buflen) {
 	/* http://sourceforge.net/p/predef/wiki/Compilers/ */
 	{
 #if defined(_MSC_VER)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1525,7 +1525,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)_MSC_FULL_VER);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__MINGW64__)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1534,7 +1534,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)__MINGW64_VERSION_MAJOR,
 			(unsigned)__MINGW64_VERSION_MINOR);
 		system_info_length += http_str_append(&buffer, end, block);
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1544,7 +1544,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)__MINGW32_MINOR_VERSION);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__MINGW32__)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1554,7 +1554,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)__MINGW32_MINOR_VERSION);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__clang__)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1566,7 +1566,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			__clang_version__);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__GNUC__)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1577,7 +1577,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)__GNUC_PATCHLEVEL__);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__INTEL_COMPILER)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1586,7 +1586,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)__INTEL_COMPILER);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__BORLANDC__)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1595,7 +1595,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)__BORLANDC__);
 		system_info_length += http_str_append(&buffer, end, block);
 #elif defined(__SUNPRO_C)
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1604,7 +1604,7 @@ int http_get_system_info(char *buffer, int buflen) {
 			(unsigned)__SUNPRO_C);
 		system_info_length += http_str_append(&buffer, end, block);
 #else
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),
@@ -1617,7 +1617,7 @@ int http_get_system_info(char *buffer, int buflen) {
 	/* Determine 32/64 bit data mode.
 	 * see https://en.wikipedia.org/wiki/64-bit_computing */
 	{
-		http_snprintf(NULL,
+		http_snprintf(
 			NULL,
 			block,
 			sizeof(block),

@@ -154,7 +154,7 @@ int http_get_response(http_t *conn, string ebuf, size_t ebuf_len, int timeout) {
 	}
 
 	if (!conn) {
-		http_snprintf(conn,
+		http_snprintf(
 			NULL, /* No truncation check for ebuf */
 			ebuf,
 			ebuf_len,
@@ -171,7 +171,7 @@ int http_get_response(http_t *conn, string ebuf, size_t ebuf_len, int timeout) {
 
 	if (timeout >= 0) {
 		events_tcp_timeout(conn->client->sock, timeout);
-		http_snprintf(conn, NULL, txt, sizeof(txt), "%i", timeout);
+		http_snprintf(NULL, txt, sizeof(txt), "%i", timeout);
 		new_timeout = txt;
 	} else {
 		new_timeout = NULL;

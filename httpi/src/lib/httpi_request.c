@@ -255,7 +255,7 @@ void http_interpret_uri(http_t *conn,
 		/* Using filename_buf_len - 1 because memmove() for path may shift
 		 * part of the path one byte on the right. */
 		truncated = 0;
-		http_snprintf(conn,
+		http_snprintf(
 			&truncated,
 			filename,
 			filename_buf_len - 1,
@@ -271,7 +271,7 @@ void http_interpret_uri(http_t *conn,
 		rewrite = conn->domain->config[URL_REWRITE_PATTERN];
 		while ((rewrite = http_next_option(rewrite, &a, &b)) != NULL) {
 			if ((match_len = http_match_prefix(a.ptr, a.len, uri)) > 0) {
-				http_snprintf(conn,
+				http_snprintf(
 					&truncated,
 					filename,
 					filename_buf_len - 1,
@@ -291,6 +291,11 @@ void http_interpret_uri(http_t *conn,
 		/* Local file path and name, corresponding to requested URI
 		 * is now stored in "filename" variable. */
 		if (http_stat(conn, filename, filestat)) {
+			if (!is_empty(filestat->membuf)) {
+				*is_found = true;
+				return;
+			}
+
 			fileExists = 1;
 			break;
 		}
@@ -370,8 +375,7 @@ void http_interpret_uri(http_t *conn,
 	 * encoding: gzip header.
 	 * We can only do this if the browser declares support. */
 	if (conn->req.accept_gzip) {
-		http_snprintf(
-			conn, &truncated, gz_path, sizeof(gz_path), "%s.gz", filename);
+		http_snprintf(&truncated, gz_path, sizeof(gz_path), "%s.gz", filename);
 
 		if (truncated) {
 			goto interpret_cleanup;
@@ -700,7 +704,7 @@ static int construct_local_link(http_t *conn,
 			 * "" (completely skipping the server name part). In any case, the
 			 * last part is the server local path. */
 			string_t server_name = events_uname();
-			http_snprintf(conn,
+			http_snprintf(
 				&truncated,
 				buf,
 				buflen,
@@ -751,7 +755,7 @@ static int construct_local_link(http_t *conn,
 				server_domain = server_ip;
 			}
 
-			http_snprintf(conn,
+			http_snprintf(
 				&truncated,
 				buf,
 				buflen,
@@ -1195,7 +1199,7 @@ static void dav_move_file(http_t *conn, string_t path, int do_copy) {
 			remove_double_dots_slashes(local_dest);
 			if (local_dest[0] == '/') {
 				int trunc_check = 0;
-				http_snprintf(conn,
+				http_snprintf(
 					&trunc_check,
 					dest_path,
 					sizeof(dest_path),
@@ -1327,27 +1331,154 @@ static int get_first_ssl_listener_index(const http_ini_t *ctx) {
 
 #undef in
 
-/* Protect against directory disclosure attack by removing '..',
- * excessive '/' and '\' characters */
-void remove_double_dots_slashes(char *s) {
-	char *p = s;
+void remove_double_dots_slashes(char *inout) {
+	/* Windows backend protection
+	 * (https://tools.ietf.org/html/rfc3986#section-7.3): Replace backslash
+	 * in URI by slash */
+	char *out_end = inout;
+	char *in = inout;
 
-	while (*s != '\0') {
-		*p++ = *s++;
-		if (s[-1] == '/' || s[-1] == '\\') {
-			/* Skip all following slashes, backslashes and double-dots */
-			while (s[0] != '\0') {
-				if (s[0] == '/' || s[0] == '\\') {
-					s++;
-				} else if (s[0] == '.' && s[1] == '.') {
-					s += 2;
-				} else {
-					break;
-				}
+	if (!in) {
+		/* Param error. */
+		return;
+	}
+
+	while (*in) {
+		if (*in == '\\') {
+			*in = '/';
+		}
+		in++;
+	}
+
+	/* Algorithm "remove_dot_segments" from
+	 * https://tools.ietf.org/html/rfc3986#section-5.2.4 */
+	/* Step 1:
+	 * The input buffer is initialized.
+	 * The output buffer is initialized to the empty string.
+	 */
+	in = inout;
+
+	/* Step 2:
+	 * While the input buffer is not empty, loop as follows:
+	 */
+	/* Less than out_end of the inout buffer is used as output, so keep
+	 * condition: out_end <= in */
+	while (*in) {
+		/* Step 2a:
+		 * If the input buffer begins with a prefix of "../" or "./",
+		 * then remove that prefix from the input buffer;
+		 */
+		if (!strncmp(in, "../", 3)) {
+			in += 3;
+		} else if (!strncmp(in, "./", 2)) {
+			in += 2;
+		}
+		/* otherwise */
+		/* Step 2b:
+		 * if the input buffer begins with a prefix of "/./" or "/.",
+		 * where "." is a complete path segment, then replace that
+		 * prefix with "/" in the input buffer;
+		 */
+		else if (!strncmp(in, "/./", 3)) {
+			in += 2;
+		} else if (!strcmp(in, "/.")) {
+			in[1] = 0;
+		}
+		/* otherwise */
+		/* Step 2c:
+		 * if the input buffer begins with a prefix of "/../" or "/..",
+		 * where ".." is a complete path segment, then replace that
+		 * prefix with "/" in the input buffer and remove the last
+		 * segment and its preceding "/" (if any) from the output
+		 * buffer;
+		 */
+		else if (!strncmp(in, "/../", 4)) {
+			in += 3;
+			if (inout != out_end) {
+				/* remove last segment */
+				do {
+					out_end--;
+				} while ((inout != out_end) && (*out_end != '/'));
+			}
+		} else if (!strcmp(in, "/..")) {
+			in[1] = 0;
+			if (inout != out_end) {
+				/* remove last segment */
+				do {
+					out_end--;
+				} while ((inout != out_end) && (*out_end != '/'));
 			}
 		}
+		/* otherwise */
+		/* Step 2d:
+		 * if the input buffer consists only of "." or "..", then remove
+		 * that from the input buffer;
+		 */
+		else if (!strcmp(in, ".") || !strcmp(in, "..")) {
+			*in = 0;
+		}
+		/* otherwise */
+		/* Step 2e:
+		 * move the first path segment in the input buffer to the end of
+		 * the output buffer, including the initial "/" character (if
+		 * any) and any subsequent characters up to, but not including,
+		 * the next "/" character or the end of the input buffer.
+		 */
+		else {
+			do {
+				*out_end = *in;
+				out_end++;
+				in++;
+			} while ((*in != 0) && (*in != '/'));
+		}
 	}
-	*p = '\0';
+
+	/* Step 3:
+	 * Finally, the output buffer is returned as the result of
+	 * remove_dot_segments.
+	 */
+	/* Terminate output */
+	*out_end = 0;
+
+	/* For Windows, the files/folders "x" and "x." (with a dot but without
+	 * extension) are identical. Replace all "./" by "/" and remove a "." at
+	 * the end. Also replace all "//" by "/". Repeat until there is no "./"
+	 * or "//" anymore.
+	 */
+	out_end = in = inout;
+	while (*in) {
+		if (*in == '.') {
+			/* remove . at the end or preceding of / */
+			char *in_ahead = in;
+			do {
+				in_ahead++;
+			} while (*in_ahead == '.');
+			if (*in_ahead == '/') {
+				in = in_ahead;
+				if ((out_end != inout) && (out_end[-1] == '/')) {
+					/* remove generated // */
+					out_end--;
+				}
+			} else if (*in_ahead == 0) {
+				in = in_ahead;
+			} else {
+				do {
+					*out_end++ = '.';
+					in++;
+				} while (in != in_ahead);
+			}
+		} else if (*in == '/') {
+			/* replace // by / */
+			*out_end++ = '/';
+			do {
+				in++;
+			} while (*in == '/');
+		} else {
+			*out_end++ = *in;
+			in++;
+		}
+	}
+	*out_end = 0;
 }
 
 /* Look at the "path" extension and figure what mime type it has.
@@ -1423,9 +1554,8 @@ void http_send_file_data(http_t *conn, struct file *filep,
 				}
 
 				/* Read from file, exit the loop on error */
-				if ((num_read = fs_read(fileno(filep->fp), buf, to_read)) <= 0) {
+				if ((num_read = fs_read(fileno(filep->fp), buf, to_read)) <= 0)
 					break;
-				}
 
 				/* Send read bytes to the client, exit the loop on error */
 				if ((num_written = http_write(conn, buf, (size_t)num_read))
@@ -1499,7 +1629,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 
 	/* For gzipped files, add *.gz */
 	if (filep->gzipped) {
-		http_snprintf(conn, &truncated, gz_path, sizeof(gz_path), "%s.gz", path);
+		http_snprintf(&truncated, gz_path, sizeof(gz_path), "%s.gz", path);
 		if (truncated) {
 			http_error(conn,
 				500,
@@ -1516,7 +1646,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 	} else if ((conn->req.accept_gzip) && (range_hdr == NULL)
 		&& (filep->size >= FILE_COMPRESSION_SIZE_LIMIT)) {
 		struct file file_stat;
-		http_snprintf(conn, &truncated, gz_path, sizeof(gz_path), "%s.gz", path);
+		http_snprintf(&truncated, gz_path, sizeof(gz_path), "%s.gz", path);
 		if (!truncated && http_stat(conn, gz_path, &file_stat)
 			&& !file_stat.is_directory) {
 			file_stat.gzipped = 1;
@@ -1535,7 +1665,9 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 		return;
 	}
 
-	http_set_close_on_exec(fd2socket(fileno(filep->fp)));
+	if (is_empty(filep->membuf))
+		http_set_close_on_exec(fd2socket(fileno(filep->fp)));
+
 	/* If "Range" request was made: parse header, send only selected part
 	 * of the file. */
 	r1 = r2 = 0;
@@ -1555,7 +1687,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 		}
 		conn->status = 206;
 		cl = (n == 2) ? (((r2 > cl) ? cl : r2) - r1 + 1) : (cl - r1);
-		http_snprintf(conn,
+		http_snprintf(
 			NULL, /* range buffer is big enough */
 			range,
 			sizeof(range),
@@ -1604,7 +1736,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 		 * So we send these response headers only in this case. */
 		char len[32];
 		int trunc = 0;
-		http_snprintf(conn, &trunc, len, sizeof(len), "%" INT64_FMT, cl);
+		http_snprintf(&trunc, len, sizeof(len), "%" INT64_FMT, cl);
 		if (!trunc) {
 			http_response_add(conn, "Content-Length", len, -1);
 		}
@@ -1643,8 +1775,7 @@ void handle_static_file_request(http_t *conn, string_t path, struct file *filep,
 /* Check if the script file is in a path, allowed for script files.
  * This can be used if uploading files is possible not only for the server
  * admin, and the upload mechanism does not check the file extension.  */
-static int is_in_script_path(http_t *conn, string_t path)
-{
+static int is_in_script_path(http_t *conn, string_t path) {
 	/* TODO (Feature): Add config value for allowed script path.
 	 * Default: All allowed. */
 	(void)conn;
@@ -1658,7 +1789,7 @@ static int http_fgetc(struct file *filep) {
 	}
 
 	if (filep->fp != NULL) {
-		return fs_fgetc(filep->fp);
+		return promise_fgetc(filep->pf, filep->fp);
 	} else {
 		return EOF;
 	}
@@ -1682,7 +1813,7 @@ static void do_ssi_include(http_t *conn, string_t ssi, char *tag, int include_le
 	if (sscanf(tag, " virtual=\"%511[^\"]\"", file_name) == 1) {
 		/* File name is relative to the webserver root */
 		file_name[511] = 0;
-		(void)http_snprintf(conn,
+		(void)http_snprintf(
 			&truncated,
 			path,
 			sizeof(path),
@@ -1693,18 +1824,18 @@ static void do_ssi_include(http_t *conn, string_t ssi, char *tag, int include_le
 		/* File name is relative to the webserver working directory
 		 * or it is absolute system path */
 		file_name[511] = 0;
-		(void)http_snprintf(conn, &truncated, path, sizeof(path), "%s", file_name);
+		(void)http_snprintf(&truncated, path, sizeof(path), "%s", file_name);
 	} else if ((sscanf(tag, " file=\"%511[^\"]\"", file_name) == 1)
 		|| (sscanf(tag, " \"%511[^\"]\"", file_name) == 1)) {
  		/* File name is relative to the current document */
 		file_name[511] = 0;
-		(void)http_snprintf(conn, &truncated, path, sizeof(path), "%s", ssi);
+		(void)http_snprintf(&truncated, path, sizeof(path), "%s", ssi);
 		if (!truncated) {
 			if ((p = strrchr(path, '/')) != NULL) {
 				p[1] = '\0';
 			}
 			len = strlen(path);
-			(void)http_snprintf(conn, &truncated,
+			(void)http_snprintf(&truncated,
 				path + len, sizeof(path) - len, "%s", file_name);
 		}
 	} else {
@@ -1980,12 +2111,6 @@ void handle_not_modified_static_file_request(http_t *conn, struct file *filep) {
 	http_response_send(conn);
 }
 
-void discard_unread_request_data(http_t *conn) {
-	char buf[BUF_LEN];
-	while (tls_reader(socket2fd(conn->client->sock), buf, sizeof(buf)) > 0)
-		;
-}
-
 static int should_decode_url(const http_t *conn) {
 	if (!conn || !conn->domain) {
 		return false;
@@ -2013,7 +2138,7 @@ static void release_handler_ref(http_t *conn, struct http_cb_info *handler_info)
 	}
 }
 
-static int push_all(http_ini_t *ctx, FILE *fp,	string_t buf, int len) {
+static int push_all(http_ini_t *ctx, struct file *fp, string_t buf, int len) {
 	double timeout = -1.0;
 	int n, nwritten = 0;
 
@@ -2030,8 +2155,8 @@ static int push_all(http_ini_t *ctx, FILE *fp,	string_t buf, int len) {
 	}
 
 	while ((len > 0) && ctx->status == HTTP_STATUS_RUNNING) {
-		n = fs_fwrite((string)buf + nwritten, 1, len, fp);
-		if (ferror(fp) || n < 0) {
+		n = promise_fwrite(fp->pf, (string)buf + nwritten, 1, len, fp->fp);
+		if (ferror(fp->fp) || n < 0) {
 			if (nwritten == 0) {
 				nwritten = -1; /* Propagate the error */
 			}
@@ -2047,7 +2172,7 @@ static int push_all(http_ini_t *ctx, FILE *fp,	string_t buf, int len) {
 	return nwritten;
 }
 
-static int forward_body_data(http_t *conn, FILE *fp) {
+static int forward_body_data(http_t *conn, struct file *fp) {
 	string_t expect;
 	char buf[BUF_LEN];
 	int success = 0;
@@ -2200,7 +2325,7 @@ static void put_file(http_t *conn, string_t path) {
 		}
 	}
 
-	if (!forward_body_data(conn, file.fp)) {
+	if (!forward_body_data(conn, &file)) {
 		/* forward_body_data failed.
 		 * The error code has already been sent to the client,
 		 * and conn->status_code is already set. */
@@ -2300,6 +2425,7 @@ void http_handle_request(http_t *conn) {
 	int handler_type;
 	time_t curtime = time(NULL);
 	char date[64];
+	char *tmp;
 
 	path[0] = 0;
 
@@ -2347,7 +2473,14 @@ void http_handle_request(http_t *conn) {
 	 * ri->local_uri_raw still points to memory allocated in
 	 * worker_thread_run(). ri->local_uri is private to the request so we
 	 * don't have to use preallocated memory here. */
+	//tmp = str_dup(ri->local_uri);
+	//if (!tmp) {
+	//	/* Out of memory. We cannot do anything reasonable here. */
+	//	return;
+	//}
+
 	remove_double_dots_slashes((string)ri->local_uri);
+	//ri->local_uri = tmp;
 
 	/* Only compute if later code can actually use it */
 	/* Cache URI length once; recompute only if the buffer changes later. */
@@ -2883,8 +3016,7 @@ no_callback_resource:
 		return;
 	}
 	/* 13.3. everything but GET and HEAD (e.g. POST) */
-	if ((0 != strcmp(conn->method, "GET"))
-		&& (0 != strcmp(conn->method, "HEAD"))) {
+	if (strcmp(conn->method, "GET") && strcmp(conn->method, "HEAD")) {
 		http_error(conn,
 			405,
 			"%s method not allowed",

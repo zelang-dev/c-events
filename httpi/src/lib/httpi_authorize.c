@@ -300,7 +300,7 @@ static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 			 * http_stat */
 		} else if (http_stat(conn, path, filep)
 			&& filep->is_directory) {
-			http_snprintf(conn,
+			http_snprintf(
 				&truncated,
 				name,
 				sizeof(name),
@@ -323,7 +323,7 @@ static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 				}
 			}
 
-			http_snprintf(conn,
+			http_snprintf(
 				&truncated,
 				name,
 				sizeof(name),
@@ -530,7 +530,7 @@ int check_authorization(http_t *conn, string_t path) {
 	list = conn->domain->config[PROTECT_URI];
 	while ((list = http_next_option(list, &uri_vec, &filename_vec)) != NULL) {
 		if (!memcmp(conn->req.local_uri, uri_vec.ptr, uri_vec.len)) {
-			http_snprintf(conn,
+			http_snprintf(
 				&truncated,
 				fname,
 				sizeof(fname),
@@ -586,7 +586,7 @@ void send_authorization_request(http_t *conn, string_t realm) {
 	http_response_add(conn, "Content-Length", "0", -1);
 
 	/* Content for "WWW-Authenticate" header */
-	http_snprintf(conn,
+	http_snprintf(
 		&trunc,
 		buf,
 		sizeof(buf),
@@ -638,7 +638,7 @@ static int modify_passwords_file_ha1(string_t fname,
 	int found = 0, i, result = 1;
 	char line[512], u[256], d[256], h[256];
 	struct stat st = {0};
-	FILE *fp = NULL;
+	struct file fp = STRUCT_FILE_INITIALIZER;
 	char *temp_file = NULL;
 	int temp_file_offs = 0;
 
@@ -703,16 +703,19 @@ static int modify_passwords_file_ha1(string_t fname,
 			return 0;
 		}
 
+		memset(&fp, 0, sizeof(fp));
 		/* File exists. Read it into a memory buffer. */
-		fp = fs_fopen(fname, "r");
-		if (fp == NULL) {
+		fp.pf = promise_fopen(fname, "r");
+		fp.fp = (FILE *)promise_wait(fp.pf).object;
+		if (fp.fp == NULL) {
 			/* Cannot read file. No permission? */
 			free(temp_file);
+			promise_clean(fp.pf);
 			return 0;
 		}
 
 		/* Read content and store in memory */
-		while ((fs_fgets(line, sizeof(line), fp) != NULL)
+		while ((promise_fgets(fp.pf, line, sizeof(line), fp.fp) != NULL)
 			&& ((temp_file_offs + 600) < temp_buf_len)) {
 		 /* file format is "user:domain:hash\n" */
 			if (sscanf(line, "%255[^:]:%255[^:]:%255s", u, d, h) != 3) {
@@ -732,7 +735,7 @@ static int modify_passwords_file_ha1(string_t fname,
 						domain,
 						ha1);
 					if (i < 1) {
-						fs_fclose(fp);
+						promise_fclose(fp.pf, fp.fp);
 						free(temp_file);
 						return 0;
 					}
@@ -743,33 +746,35 @@ static int modify_passwords_file_ha1(string_t fname,
 				/* Copy existing user, including password hash */
 				i = sprintf(temp_file + temp_file_offs, "%s:%s:%s\n", u, d, h);
 				if (i < 1) {
-					fs_fclose(fp);
+					promise_fclose(fp.pf, fp.fp);
 					free(temp_file);
 					return 0;
 				}
 				temp_file_offs += i;
 			}
 		}
-		fs_fclose(fp);
+		promise_fclose(fp.pf, fp.fp);
 	}
 
 	/* Create new file */
-	fp = fs_fopen(fname, "w");
-	if (!fp) {
+	fp.pf = promise_fopen(fname, "w");
+	fp.fp = (FILE *)promise_wait(fp.pf).object;
+	if (!fp.fp) {
 		free(temp_file);
+		promise_clean(fp.pf);
 		return 0;
 	}
 
 #if !defined(_WIN32)
 	/* On Linux & co., restrict file read/write permissions to the owner */
-	if (fchmod(fileno(fp), S_IRUSR | S_IWUSR) != 0) {
+	if (fchmod(fileno(fp.fp), S_IRUSR | S_IWUSR) != 0) {
 		result = 0;
 	}
 #endif
 
 	if ((temp_file != NULL) && (temp_file_offs > 0)) {
 		/* Store buffered content of old file */
-		if (fs_fwrite(temp_file, 1, (size_t)temp_file_offs, fp)
+		if (promise_fwrite(fp.pf, temp_file, 1, (size_t)temp_file_offs, fp.fp)
 			!= (size_t)temp_file_offs) {
 			result = 0;
 		}
@@ -777,13 +782,15 @@ static int modify_passwords_file_ha1(string_t fname,
 
 	/* If new user, just add it */
 	if ((ha1 != NULL) && (!found)) {
-		if (fprintf(fp, "%s:%s:%s\n", user, domain, ha1) < 6) {
+		char ha1_buf[PATH_MAX] = {0};
+		snprintf(ha1_buf, sizeof(ha1_buf), "%s:%s:%s\n", user, domain, ha1);
+		if (promise_fprintf(fp.pf, fp.fp, ha1_buf) < 6) {
 			result = 0;
 		}
 	}
 
 	/* All data written */
-	if (fs_fclose(fp) != 0) {
+	if (promise_fclose(fp.pf, fp.fp) != 0) {
 		result = 0;
 	}
 

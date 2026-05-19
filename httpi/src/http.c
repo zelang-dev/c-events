@@ -417,12 +417,11 @@ void parse_multipart(http_t *this) {
 		bool found;
 
 		snprintf(scrape, ARRAY_SIZE, "--%s", this->boundary);
-		if (!this->content_length) {
-			if (!is_empty(value = http_get_header(this, "Content-Length")))
-				this->content_length = atoi(value);
+		if (!is_empty(value = http_get_header(this, "Content-Length"))) {
+			this->content_length = atoi(value);
+			boundary = (string *)mem_split_ex(this->body, this->content_length, this->boundary, &count);
 		}
 
-		boundary = (string *)mem_split_ex(this->body, this->content_length, this->boundary, &count);
 		if (is_empty(boundary))
 			return;
 
@@ -749,6 +748,8 @@ http_t *http_for(string hostname, double protocol) {
 		this->status = STATUS_NO_CONTENT;
 		this->hostname = hostname;
 		this->version = protocol;
+		this->req.content_len = -1;
+		this->content_length = -1;
 		this->req.http_version = "1.1";
 		this->type = (data_types)DATA_HTTPINFO;
 	}
@@ -1161,16 +1162,76 @@ FORCEINLINE string http_cookie_path(http_t *this, string name) {
 	return is_empty(cookie) ? nullptr : cookie->path;
 }
 
+/* Return null terminated string `buf` of given maximum length. */
+void http_vsnprintf(int *truncated, string buf, size_t buflen, string_t fmt, va_list ap) {
+	int n;
+	bool ok;
+
+	if (is_empty(buf) || buflen < 1) return;
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+/* Using fmt as a non-literal is intended here, since it is mostly called
+ * indirectly by http_snprintf */
+#endif
+	n = (int)vsnprintf(buf, buflen, fmt, ap);
+	ok = (n >= 0) && ((size_t)n < buflen);
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+	if (ok) {
+		if (!is_empty(truncated))
+			*truncated = false;
+	} else {
+		if (!is_empty(truncated))
+			*truncated = true;
+		n = (int)buflen - 1;
+	}
+	buf[n] = '\0';
+}
+
+void http_snprintf(int *truncated, string buf, size_t buflen, string_t fmt, ...) {
+	va_list ap;
+
+	va_start(ap, fmt);
+	http_vsnprintf(truncated, buf, buflen, fmt, ap);
+	va_end(ap);
+}
+
+void http_credentials(http_t *conn, string user, size_t userlen, string pass, size_t passlen) {
+	user[0] = pass[0] = '\0';
+	string v = http_get_header(conn, "Authorization");
+	if (v != NULL && str_case_equal(v, "Basic ", 6)) {
+		char buf[256];
+		string auth = str_decode64(trim_at(v, 6), buf, sizeof(buf));
+		int s_pos = str_pos(auth, ":");
+		if (s_pos != DATA_INVALID) {
+			auth[s_pos] = '\0';
+			http_snprintf(null, user, userlen, "%s", auth);
+			http_snprintf(null, pass, passlen, "%s", trim_at(auth, s_pos + 1));
+		}
+	} else if (v != NULL && str_case_equal(v, "Bearer ", 7)) {
+		http_snprintf(null, pass, passlen, "%s", v[7]);
+	} else if ((v = http_get_var(conn, "Cookie", "access_token")) != NULL) {
+		http_snprintf(null, pass, passlen, "%s", v);
+	} else if ((v = http_get_param(conn, "access_token")) != NULL) {
+		http_snprintf(null, pass, passlen, "%s", v);
+	}
+}
+
 FORCEINLINE string http_get_protocol(http_t *this) {
-	return this->protocol;
+	return is_empty(this) ? "" : this->protocol;
 }
 
 FORCEINLINE string http_get_boundary(http_t *this) {
-	return this->boundary;
+	return is_empty(this) ? "" : this->boundary;
 }
 
 FORCEINLINE string http_get_path(http_t *this) {
-	return this->path;
+	return is_empty(this) ? "" : this->path;
 }
 
 FORCEINLINE string_t http_get_query(http_t *this) {
@@ -1178,56 +1239,59 @@ FORCEINLINE string_t http_get_query(http_t *this) {
 }
 
 FORCEINLINE double http_get_version(http_t *this) {
-	return this->version;
+	return is_empty(this) ? (double)DATA_ERR : this->version;
 }
 
 FORCEINLINE string_t http_version(http_t *this) {
-	return this->req.http_version;
+	return is_empty(this) ? "" : this->req.http_version;
 }
 
 FORCEINLINE string http_get_method(http_t *this) {
-	return this->method;
+	return is_empty(this) ? "" : this->method;
 }
 
 FORCEINLINE http_status http_get_code(http_t *this) {
-	return this->code;
+	return !is_empty(this) ? this->code : DATA_ERR;
 }
 
 FORCEINLINE long long http_get_length(http_t *this) {
-	return this->content_length;
+	return !is_empty(this) ? this->req.content_len : DATA_ERR;
 }
 
 FORCEINLINE int http_header_count(http_t *this) {
-	return this->num_headers;
+	return !is_empty(this) ? this->num_headers : DATA_ERR;
 }
 
 FORCEINLINE http_status http_get_status(http_t *this) {
-	return this->status;
+	return !is_empty(this) ? this->status : DATA_ERR;
 }
 
 FORCEINLINE string http_get_message(http_t *this) {
-	return this->message;
+	return is_empty(this) ? "" : this->message;
 }
 
 FORCEINLINE string http_get_body(http_t *this) {
-	return this->body;
+	return is_empty(this) ? "" : this->body;
 }
 
 FORCEINLINE string http_get_url(http_t *this) {
-	return this->uri;
+	return is_empty(this) ? "" : this->uri;
 }
 
 FORCEINLINE string http_get_uri(http_t *this) {
-	return this->url_to;
+	return is_empty(this) ? "" : this->url_to;
 }
 
 FORCEINLINE string http_get_header(http_t *this, string key) {
 	char keyaddr[ARRAY_SIZE] = {0};
 	snprintf(keyaddr, sizeof(keyaddr), "%s", key);
-	return is_empty(this->headers) ? nullptr : (string)hash_get(this->headers, str_tolower(keyaddr));
+	return is_empty(this) || is_empty(this->headers) ? nullptr : (string)hash_get(this->headers, str_tolower(keyaddr));
 }
 
 string http_get_var(http_t *this, string key, string var) {
+	if (is_empty(this))
+		return null;
+
 	int x, has_sect = 0, count = 1;
 	string *sections, line;
 	if (http_has_var(this, key, var)) {
@@ -1263,7 +1327,7 @@ string http_get_var(http_t *this, string key, string var) {
 }
 
 FORCEINLINE string http_get_param(http_t *this, string key) {
-	return (string)hash_get(this->parameters, key);
+	return is_empty(this) ? "" : (string)hash_get(this->parameters, key);
 }
 
 void http_put_header(http_t *this, string key, string value, bool force_cap) {
@@ -1278,14 +1342,14 @@ void http_put_header(http_t *this, string key, string value, bool force_cap) {
 FORCEINLINE bool http_has_header(http_t *this, string key) {
 	char keyaddr[ARRAY_SIZE] = {0};
 	snprintf(keyaddr, sizeof(keyaddr), "%s", key);
-	return is_empty(this->headers) ? false : hash_has((hash_t *)this->headers, str_tolower(keyaddr));
+	return is_empty(this) || is_empty(this->headers) ? false : hash_has((hash_t *)this->headers, str_tolower(keyaddr));
 }
 
 FORCEINLINE bool http_has_var(http_t *this, string key, string var) {
     char temp[ARRAY_SIZE] = {0};
 
     snprintf(temp, ARRAY_SIZE, "%s%s", var, "=");
-	return is_empty(this->headers) ? false : str_has(http_get_header(this, key), temp);
+	return is_empty(this) || is_empty(this->headers) ? false : str_has(http_get_header(this, key), temp);
 }
 
 bool http_has_flag(http_t *this, string key, string flag) {
@@ -1297,11 +1361,11 @@ bool http_has_flag(http_t *this, string key, string flag) {
 	snprintf(flag1, 64, "%s%s", flag, ";");
 	snprintf(flag2, 64, "%s%s", flag, ",");
 	snprintf(flag3, 64, "%s%s", flag, "\r\n");
-	return is_empty(this->headers) ? false : str_has(value, flag1) || str_has(value, flag2) || str_has(value, flag3);
+	return is_empty(this) || is_empty(this->headers) ? false : str_has(value, flag1) || str_has(value, flag2) || str_has(value, flag3);
 }
 
 FORCEINLINE bool http_has_param(http_t *this, string key) {
-	return is_empty(this->parameters) ? false : hash_has(this->parameters, key);
+	return is_empty(this) || is_empty(this->parameters) ? false : hash_has(this->parameters, key);
 }
 
 string http_cookie(http_t *this, string_t key, string_t value, string_t path,

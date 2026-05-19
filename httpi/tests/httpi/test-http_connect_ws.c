@@ -64,9 +64,6 @@ static long fetch_data_size = 1024 * 1024;
 static char *fetch_data;
 static string_t inmemory_file_data = "hi there";
 static string_t upload_filename = "upload_test.txt";
-#if 0
-static string_t upload_filename2 = "upload_test2.txt";
-#endif
 static string_t upload_ok_message = "upload successful";
 
 static string_t open_file_cb(http_t *conn, string_t path, size_t *size)
@@ -227,14 +224,6 @@ static string_t OPTIONS[] = {
     "../resources/ssl_cert.pem",
 #endif
     NULL,
-};
-
-static void init_CALLBACKS(void) {
-	memset(&CALLBACKS, 0, sizeof(CALLBACKS));
-	CALLBACKS.handler = begin_request_handler_cb;
-	CALLBACKS.log_message = log_message_cb;
-	CALLBACKS.open_file = open_file_cb;
-	CALLBACKS.upload = upload_cb;
 };
 
 static char *read_conn(http_t *conn, int *size) {

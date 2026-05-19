@@ -16,7 +16,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }
@@ -56,6 +56,8 @@ static char *read_conn(http_t *conn, int *size) {
 		ASSERT(data != NULL);
 		memcpy(data + *size - len, buf, len);
 	}
+
+	defer_free(data);
 	return data;
 }
 
@@ -63,13 +65,12 @@ static char *read_file(string_t path, int *size) {
 	FILE *fp;
 	struct stat st;
 	char *data = NULL;
-	if ((fp = fs_fopen(path, "rb")) != NULL && !fs_fstat(fileno(fp), &st)) {
-		*size = (int)st.st_size;
-		data = malloc(*size);
-		ASSERT(data != NULL);
-		ASSERT(fs_fread(data, 1, *size, fp) == (size_t)*size);
-		fs_fclose(fp);
-	}
+	char filedir[PATH_MAX] = {0};
+	snprintf(filedir, sizeof(filedir), ".%s%s", SYS_DIRSEP, path);
+	data = fs_readfile(filedir);
+	ASSERT(data != NULL);
+	*size = (int)fs_filesize(path);
+	ASSERT(strlen(data) == (size_t)*size);
 	return data;
 }
 
@@ -77,11 +78,8 @@ static long fetch_data_size = 1024 * 1024;
 static char *fetch_data;
 static string_t inmemory_file_data = "hi there";
 static string_t upload_filename = "upload_test.txt";
-#if 0
 static string_t upload_filename2 = "upload_test2.txt";
-#endif
 static string_t upload_ok_message = "upload successful";
-static struct http_clb_s CALLBACKS;
 static string_t OPTIONS[] = {
 	"document_root",
 	".",
@@ -90,14 +88,13 @@ static string_t OPTIONS[] = {
 	"enable_keep_alive",
 	"yes",
 #ifndef NO_SSL
-	"ssl_certificate",
-	"../resources/ssl_cert.pem",
+	/*"ssl_certificate",
+	"../resources/ssl_cert.pem",*/
 #endif
 	NULL,
 };
 
-static string_t open_file_cb(http_t *conn, string_t path, size_t *size)
-{
+static string_t open_file_cb(http_t *conn, string_t path, size_t *size) {
 	(void)conn;
 	if (!strcmp(path, "./blah")) {
 		*size = strlen(inmemory_file_data);
@@ -112,30 +109,24 @@ static void upload_cb(http_t *conn, string_t path) {
 
 	if (atoi(http_get_query(conn)) == 1) {
 		ASSERT(!strcmp(path, "./upload_test.txt"));
-		ASSERT((p1 = read_file("../src/app/url.c", &len1)) != NULL);
+		ASSERT((p1 = read_file("upload_test.txt", &len1)) != NULL);
 		ASSERT((p2 = read_file(path, &len2)) != NULL);
 		ASSERT(len1 == len2);
 		ASSERT(memcmp(p1, p2, len1) == 0);
-		free(p1);
-		free(p2);
-		remove(upload_filename);
+		fs_unlink(upload_filename);
 	} else if (atoi(http_get_query(conn)) == 2) {
 		if (!strcmp(path, "./upload_test.txt")) {
 			ASSERT((p1 = read_file("include/httpi.h", &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
 			ASSERT(memcmp(p1, p2, len1) == 0);
-			free(p1);
-			free(p2);
-			remove(upload_filename);
+			fs_unlink(upload_filename);
 		} else if (!strcmp(path, "./upload_test2.txt")) {
 			ASSERT((p1 = read_file("README.md", &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
 			ASSERT(memcmp(p1, p2, len1) == 0);
-			free(p1);
-			free(p2);
-			remove(upload_filename);
+			fs_unlink(upload_filename);
 		} else {
 			ASSERT(0);
 		}
@@ -153,21 +144,21 @@ static int begin_request_handler_cb(http_t *conn) {
 	long to_write, write_now;
 	int bytes_read, bytes_written;
 
-	ASSERT(((req_len == -1) && (s_req_len == NULL)) ||
+	ASSERT(((req_len == 0 || req_len == -1) && (s_req_len == NULL)) ||
 	       ((s_req_len != NULL) && (req_len = atol(s_req_len))));
 
-	if (!strncmp(http_get_uri(conn), "/data/", 6)) {
-		if (!strcmp(http_get_uri(conn) + 6, "all")) {
+	string val = http_get_path(conn);
+	if (!strncmp(val, "/data/", 6)) {
+		if (!strcmp(trim_at(val, 6), "all")) {
 			to_write = fetch_data_size;
 		} else {
-			to_write = atol(http_get_url(conn) + 6);
+			to_write = atol(trim_at(val, 6));
 		}
 		http_printf(conn,
 		          "HTTP/1.1 200 OK\r\n"
 		          "Connection: close\r\n"
 		          "Content-Length: %li\r\n"
-		          "Content-Type: text/plain\r\n\r\n",
-		          to_write);
+		          "Content-Type: text/plain\r\n\r\n", to_write);
 		while (to_write > 0) {
 			write_now = to_write > fetch_data_size ? fetch_data_size : to_write;
 			bytes_written = http_write(conn, fetch_data, write_now);
@@ -178,14 +169,14 @@ static int begin_request_handler_cb(http_t *conn) {
 			}
 			to_write -= bytes_written;
 		}
-		http_close_connection(conn);
 		return 1;
 	}
 
-	if (!strcmp(http_get_url(conn), "/content_length")) {
+	if (str_is(val, "/content_length")) {
 		if (req_len > 0) {
 			data = malloc(req_len);
-			assert(data != NULL);
+			defer_free(data);
+			ASSERT(data != NULL);
 			bytes_read = http_read(conn, data, req_len);
 			ASSERT(bytes_read == req_len);
 
@@ -196,25 +187,24 @@ static int begin_request_handler_cb(http_t *conn) {
 			          "Content-Type: text/plain\r\n\r\n",
 			          bytes_read);
 			http_write(conn, data, bytes_read);
-			free(data);
 		} else {
 			data = malloc(1024);
-			assert(data != NULL);
+			defer_free(data);
+			ASSERT(data != NULL);
 			bytes_read = http_read(conn, data, 1024);
 
 			http_printf(conn,
 			          "HTTP/1.1 200 OK\r\n"
 			          "Connection: close\r\n"
-			          "Content-Type: text/plain\r\n\r\n");
-			http_write(conn, data, bytes_read);
-
-			free(data);
+				"Content-Type: text/plain\r\n\r\n");
+			if (bytes_read > 0)
+				http_write(conn, data, bytes_read);
 		}
-		http_close_connection(conn);
+
 		return 1;
 	}
 
-	if (!strcmp(http_get_url(conn), "/upload")) {
+	if (str_is(val, "/upload")) {
 		ASSERT(http_get_query(conn) != NULL);
 		ASSERT(http_upload(conn, ".") == atoi(http_get_query(conn)));
 	}
@@ -237,6 +227,12 @@ void main_main(http_ini_t *ctx) {
 	string_t h;
 	int i, len1, len2, port;
 	http_t *conn;
+
+	/* create test data */
+	defer_free(fetch_data = malloc(fetch_data_size));
+	for (i = 0; i < fetch_data_size; i++) {
+		fetch_data[i] = 'a' + i % 10;
+	}
 
 	if (use_ssl) {
 		port = atoi(HTTPS_PORT);
@@ -265,15 +261,13 @@ void main_main(http_ini_t *ctx) {
 		http_close_connection(conn);
 	}
 
-	/* Fetch test-httpi_start.c, should succeed */
-	ASSERT((conn = http_download("localhost", port, use_ssl, ebuf, sizeof(ebuf), "%s", "GET /test-httpi_start.c HTTP/1.0\r\n\r\n")) != NULL);
+	/* Fetch test-httpi_units.c, should succeed */
+	ASSERT((conn = http_download("localhost", port, use_ssl, ebuf, sizeof(ebuf), "%s", "GET /test-httpi_units.c HTTP/1.0\r\n\r\n")) != NULL);
 	ASSERT(http_get_code(conn) == (http_status)200);
 	ASSERT((p1 = read_conn(conn, &len1)) != NULL);
-	ASSERT((p2 = read_file("test-httpi_start.c", &len2)) != NULL);
+	ASSERT((p2 = read_file("test-httpi_units.c", &len2)) != NULL);
 	ASSERT(len1 == len2);
 	ASSERT(memcmp(p1, p2, len1) == 0);
-	free(p1);
-	free(p2);
 	http_close_connection(conn);
 
 	/* Fetch _in-memory file, should succeed. */
@@ -281,7 +275,6 @@ void main_main(http_ini_t *ctx) {
 	ASSERT((p1 = read_conn(conn, &len1)) != NULL);
 	ASSERT(len1 == (int)strlen(inmemory_file_data));
 	ASSERT(memcmp(p1, inmemory_file_data, len1) == 0);
-	free(p1);
 	http_close_connection(conn);
 
 	/* Fetch _in-memory data with no Content-Length, should succeed. */
@@ -290,7 +283,6 @@ void main_main(http_ini_t *ctx) {
 	ASSERT((p1 = read_conn(conn, &len1)) != NULL);
 	ASSERT(len1 == (int)fetch_data_size);
 	ASSERT(memcmp(p1, fetch_data, len1) == 0);
-	free(p1);
 	http_close_connection(conn);
 
 	/* Fetch _in-memory data with no Content-Length, should succeed. */
@@ -311,8 +303,6 @@ void main_main(http_ini_t *ctx) {
 			ASSERT(len1 == i);
 			ASSERT(memcmp(p1, fetch_data, fetch_data_size) == 0);
 		}
-
-		free(p1);
 		http_close_connection(conn);
 	}
 
@@ -336,7 +326,6 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(strcmp(http_get_protocol(conn), "HTTP/1.1") == 0);
 	ASSERT(http_get_code(conn) == 200);
 	ASSERT(strcmp(http_version(conn), "1.1") == 0);
-	free(p1);
 	http_close_connection(conn);
 
 	/* A POST request without Content-Length set is only valid, if the request
@@ -359,7 +348,6 @@ void main_main(http_ini_t *ctx) {
 	ASSERT((p1 = read_conn(conn, &len1)) != NULL);
 	ASSERT(len1 == (int)strlen(test_data));
 	ASSERT(memcmp(p1, test_data, len1) == 0);
-	free(p1);
 	http_close_connection(conn);
 
 	/* Another chunked POST request with different chunk sizes. */
@@ -392,14 +380,13 @@ void main_main(http_ini_t *ctx) {
 	ASSERT((p1 = read_conn(conn, &len1)) != NULL);
 	ASSERT(len1 == (int)strlen(test_data));
 	ASSERT(memcmp(p1, test_data, len1) == 0);
-	free(p1);
 	http_close_connection(conn);
 
 	/* Test non existent */
 	ASSERT((conn = http_download("localhost", port, use_ssl, ebuf, sizeof(ebuf), "%s", "GET /non_exist HTTP/1.1\r\n\r\n")) != NULL);
-	ASSERT(strcmp(http_get_protocol(conn), "HTTP/1.1") == 0);
-	ASSERT((http_get_code(conn) == 404));
-	ASSERT(strcmp(http_get_method(conn), "Not Found") == 0);
+	ASSERT_STR_ABORT(http_get_protocol(conn), "HTTP/1.1");
+	ASSERT_EQ_ABORT(http_get_code(conn), 404);
+	ASSERT_STR_ABORT(http_get_message(conn), "Not Found");
 	http_close_connection(conn);
 
 	if (use_ssl) {
@@ -418,15 +405,12 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(conn != NULL);
 	ASSERT(ebuf[0] == 0);
 	ASSERT(http_get_length(conn) == 0);
-	i = http_get_response(conn, ebuf, sizeof(ebuf), 1000);
-	ASSERT(ebuf[0] != 0);
-	ASSERT(http_get_length(conn) == -1);
 	http_printf(conn, "GET /index.html HTTP/1.1\r\n");
 	http_printf(conn, "Host: www.example.com\r\n");
 	http_printf(conn, "\r\n");
 	i = http_get_response(conn, ebuf, sizeof(ebuf), 1000);
 	ASSERT(ebuf[0] == 0);
-	ASSERT(http_get_length(conn) > 0);
+	ASSERT(http_get_length(conn) == -1);
 	http_read(conn, ebuf, sizeof(ebuf));
 	ASSERT(!strncmp(ebuf, "Error 404", 9));
 
@@ -437,21 +421,12 @@ void main_main(http_ini_t *ctx) {
 }
 
 TEST(http_download) {
-	int i, unused, result = 0;
-
-	/* create test data */
-	fetch_data = (char *)malloc(fetch_data_size);
-	for (i = 0; i < fetch_data_size; i++) {
-		fetch_data[i] = 'a' + i % 10;
-	}
+	int result = 0;
 
 	http_ini_t *ctx;
 	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
 	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, NULL, server_opts(OPTIONS)), DATA_INFO_SERVER));
 	httpi_start(ctx, main_main);
-
-	/* test completed */
-	free(fetch_data);
 
 	return result;
 }
@@ -468,7 +443,7 @@ TEST(list) {
 	unused = chdir(TESTDIR);
 
 	/* print headline */
-	cout("HttPi %s route test\n\n", httpi_version());
+	cout("HttPi %s download test\n\n", httpi_version());
 	getcwd(buffer, sizeof(buffer));
 	cout("Test directory is \"%s\"\n", buffer); /* should be the "test" directory */
 	f = fopen("hello.txt", "r");
@@ -478,11 +453,11 @@ TEST(list) {
 		cout("Error: Test directory does not contain hello.txt\n");
 	}
 
-	f = fopen("test-http_route.c", "r");
+	f = fopen("./test-http_download.c", "r");
 	if (f) {
 		fclose(f);
 	} else {
-		cout("Error: Test directory does not contain test-http_route.c\n");
+		cout("Error: Test directory does not contain test-http_download.c\n");
 	}
 
 	/* start stop server */

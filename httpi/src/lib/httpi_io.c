@@ -60,7 +60,7 @@ static int print_dir_entry(http_t *conn, struct de *de) {
 	}
 
 	if (de->file.is_directory) {
-		http_snprintf(conn,
+		http_snprintf(
 			NULL, /* Buffer is big enough */
 			size,
 			sizeof(size),
@@ -70,28 +70,28 @@ static int print_dir_entry(http_t *conn, struct de *de) {
 		/* We use (signed) cast below because MSVC 6 compiler cannot
 		 * convert unsigned __int64 to double. Sigh. */
 		if (de->file.size < 1024) {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* Buffer is big enough */
 				size,
 				sizeof(size),
 				"%d",
 				(int)de->file.size);
 		} else if (de->file.size < 0x100000) {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* Buffer is big enough */
 				size,
 				sizeof(size),
 				"%.1fk",
 				(double)de->file.size / 1024.0);
 		} else if (de->file.size < 0x40000000) {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* Buffer is big enough */
 				size,
 				sizeof(size),
 				"%.1fM",
 				(double)de->file.size / 1048576);
 		} else {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* Buffer is big enough */
 				size,
 				sizeof(size),
@@ -187,8 +187,7 @@ int remove_directory(http_t *conn, string_t dir) {
 				continue;
 			}
 
-			http_snprintf(
-				conn, &truncated, path, sizeof(path), "%s/%s", dir, dp->d_name);
+			http_snprintf(&truncated, path, sizeof(path), "%s/%s", dir, dp->d_name);
 
 			/* If we don't memset stat structure to zero, mtime will have
 			 * garbage and strftime() will segfault later on in
@@ -249,8 +248,7 @@ int scan_directory(http_t *conn,	string_t dir, void *data, int (*cb)(struct de *
 				continue;
 			}
 
-			http_snprintf(
-				conn, &truncated, path, sizeof(path), "%s/%s", dir, dp->d_name);
+			http_snprintf(&truncated, path, sizeof(path), "%s/%s", dir, dp->d_name);
 
 			/* If we don't memset stat structure to zero, mtime will have
 			 * garbage and strftime() will segfault later on in
@@ -450,46 +448,6 @@ void sockaddr_to_str(char *buf, size_t len, const union usa *usa) {
 	}
 }
 
-/* Return null terminated string `buf` of given maximum length. */
-void http_vsnprintf(int *truncated, string buf, size_t buflen, string_t fmt, va_list ap) {
-	int n;
-	bool ok;
-
-	if (is_empty(buf) || buflen < 1) return;
-
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-nonliteral"
-/* Using fmt as a non-literal is intended here, since it is mostly called
- * indirectly by http_snprintf */
-#endif
-	n = (int)vsnprintf(buf, buflen, fmt, ap);
-	ok = (n >= 0) && ((size_t)n < buflen);
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
-	if (ok) {
-		if (!is_empty(truncated))
-			*truncated = false;
-	} else {
-		if (!is_empty(truncated))
-			*truncated = true;
-		n = (int)buflen - 1;
-	}
-	buf[n] = '\0';
-}
-
-void http_snprintf(http_t *conn, int *truncated, string buf, size_t buflen, string_t fmt, ...) {
-	va_list ap;
-	(void)conn;
-
-	va_start(ap, fmt);
-	http_vsnprintf(truncated, buf, buflen, fmt, ap);
-	va_end(ap);
-}
-
 static int http_error_send(http_t *conn, int status, string_t fmt, va_list args) {
 	char errmsg_buf[BUF_LEN];
 	va_list ap;
@@ -549,7 +507,7 @@ static int http_error_send(http_t *conn, int status, string_t fmt, va_list args)
 				for (scope = 1; (scope <= 3) && !page_handler_found; scope++) {
 					switch (scope) {
 						case 1: /* Handler for specific error, e.g. 404 error */
-							http_snprintf(conn,
+							http_snprintf(
 								&truncated,
 								path_buf,
 								sizeof(path_buf) - 32,
@@ -560,7 +518,7 @@ static int http_error_send(http_t *conn, int status, string_t fmt, va_list args)
 						case 2: /* Handler for error group, e.g., 5xx error
 								 * handler
 								 * for all server errors (500-599) */
-							http_snprintf(conn,
+							http_snprintf(
 								&truncated,
 								path_buf,
 								sizeof(path_buf) - 32,
@@ -569,7 +527,7 @@ static int http_error_send(http_t *conn, int status, string_t fmt, va_list args)
 								status / 100);
 							break;
 						default: /* Handler for all errors */
-							http_snprintf(conn,
+							http_snprintf(
 								&truncated,
 								path_buf,
 								sizeof(path_buf) - 32,
@@ -680,7 +638,7 @@ void http_domain_header(http_t *conn) {
 		long max_age = atol(conn->domain->config[STRICT_HTTPS_MAX_AGE]);
 		if (max_age >= 0) {
 			char val[64];
-			http_snprintf(conn,
+			http_snprintf(
 				NULL,
 				val,
 				sizeof(val),
@@ -796,8 +754,9 @@ int http_printf(http_t *conn, string_t fmt, ...) {
 }
 
 void http_construct_etag(http_t *ctx, string buf, size_t buf_len, const struct file *filep) {
+	(void)ctx;
 	if (filep != NULL && buf != NULL && buf_len > 0) {
-		http_snprintf(ctx, NULL, buf, buf_len, "\"%lx.%" INT64_FMT "\"", (unsigned long)filep->last_modified, filep->size);
+		http_snprintf(NULL, buf, buf_len, "\"%lx.%" INT64_FMT "\"", (unsigned long)filep->last_modified, filep->size);
 	}
 }
 
@@ -828,9 +787,35 @@ string_t http_fgets(char *buf, size_t size, struct file *filep, char **p) {
 	}
 
 	if (filep->fp != NULL)
-		return fs_fgets(buf, (int)size, filep->fp);
+		return promise_fgets(filep->pf, buf, (int)size, filep->fp);
 
 	return NULL;
+}
+
+void discard_unread_request_data(http_t *conn) {
+	char buf[BUF_LEN];
+
+	while (http_read(conn, buf, sizeof(buf)) > 0)
+		;
+}
+
+static FORCEINLINE int _read_all(http_t *conn, char *buf, int len) {
+	int n, nread = 0;
+	while ((len > 0) && conn->ctx->status == HTTP_STATUS_RUNNING) {
+		n = tls_reader(socket2fd(conn->client->sock), buf + nread, len);
+		if (n < 0) {
+			if (nread == 0)
+				nread = n; /* Propagate the error */
+			break;
+		} else if (n == 0) {
+			break; /* No more data to read */
+		} else {
+			nread += n;
+			len -= n;
+		}
+	}
+
+	return nread;
 }
 
 static int _read_inner(http_t *conn, void *buf, size_t len) {
@@ -880,7 +865,8 @@ static int _read_inner(http_t *conn, void *buf, size_t len) {
 		}
 
 		/* We have returned all buffered data. Read new data from the remote socket. */
-		if ((n = tls_reader(socket2fd(conn->client->sock), (char *)buf, len64)) >= 0) {
+		if ((n = /*tls_reader(socket2fd(conn->client->sock), (char *)buf, len64)*/
+			_read_all(conn, (char *)buf, len64)) > 0) {
 			conn->req.consumed_content += n;
 			nread += n;
 		} else {
@@ -1053,6 +1039,10 @@ int http_read(http_t *conn, void_t buf, size_t len) {
 	return _read_inner(conn, buf, len);
 }
 
+int http_chunk_state(http_t *conn) {
+	return is_type((void_t)conn, DATA_HTTPINFO) ? conn->req.is_chunked : false;
+}
+
 int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len) {
 	char lenbuf[16];
 	size_t lenbuf_len;
@@ -1085,6 +1075,32 @@ int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len) {
 	return t;
 }
 
+FORCEINLINE int64_t _write_all(http_t *conn, string buf, int64_t len) {
+	int64_t n;
+	int64_t nwritten;
+
+	if (conn == NULL)
+		return -1;
+
+	nwritten = 0;
+	while (len > 0 && conn->ctx->status == HTTP_STATUS_RUNNING) {
+		n = tls_writer(socket2fd(conn->client->sock), buf + nwritten, len);
+		if (n < 0) {
+			if (nwritten == 0) {
+				nwritten = -1; /* Propagate the error */
+			}
+			break;
+		} else if (n == 0) {
+			break; /* No more data to write */
+		} else {
+			nwritten += n;
+			len -= n;
+		}
+	}
+
+	return nwritten;
+}
+
 int http_write(http_t *conn, const_t buf, size_t len) {
 	if (conn == NULL) {
 		return 0;
@@ -1094,23 +1110,14 @@ int http_write(http_t *conn, const_t buf, size_t len) {
 		return -1;
 	}
 
-	int timeout = 0;
 	/* Mark connection as "data sent" */
 	conn->req.state = 10;
 	if (conn->req.proto == PROTOCOL_HTTP2) {
 	//	http2_data_frame_head(conn, len, 0);
 	}
 
-	if (conn->ctx->host.config[REQUEST_TIMEOUT]) {
-		timeout = atoi(conn->ctx->host.config[REQUEST_TIMEOUT]) / 1000.0;
-	}
-
-	if (timeout <= 0.0) {
-		timeout = strtod(http_get_default_option(REQUEST_TIMEOUT), NULL)
-			/ 1000.0;
-	}
-
-	int total = tls_writer(socket2fd(conn->client->sock), (string)buf, len);
+	//int total = tls_writer(socket2fd(conn->client->sock), (string)buf, len);
+	int total = _write_all(conn, (string)buf, len);
 	if (total > 0) {
 		conn->req.num_bytes_sent += total;
 	}
@@ -1150,7 +1157,7 @@ int http_ok(http_t *conn, string_t mime_type, long long content_length) {
 	} else {
 		char len[32];
 		int trunc = 0;
-		http_snprintf(conn,
+		http_snprintf(
 			&trunc,
 			len,
 			sizeof(len),
@@ -1251,8 +1258,7 @@ void http_no_cache_header(http_t *conn) {
 	 * year to 31622400 seconds. For the moment, we just send whatever has
 	 * been configured, still the behavior for >1 year should be considered
 	 * as undefined. */
-	http_snprintf(
-		conn, NULL, val, sizeof(val), "max-age=%lu", (unsigned long)max_age);
+	http_snprintf(NULL, val, sizeof(val), "max-age=%lu", (unsigned long)max_age);
 	http_response_add(conn, "Cache-Control", val, -1);
 }
 
@@ -1420,7 +1426,7 @@ int read_message(http_t *conn, char *buf, int bufsiz, int *nread) {
 		}
 
 		n = tls_reader(socket2fd(conn->client->sock), buf + *nread, bufsiz - *nread);
-		if (n < 0) {
+		if (n <= 0) {
 			/* Receive error */
 			return -1;
 		}
@@ -1441,7 +1447,7 @@ int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 
 	*err = 0;
 	if (!conn) {
-		http_snprintf(conn,
+		http_snprintf(
 		            NULL, /* No truncation check for ebuf */
 		            ebuf,
 		            ebuf_len,
@@ -1453,7 +1459,7 @@ int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 
 	conn->req.request_len = read_message(conn, conn->req.buf, conn->req.buf_size, &conn->req.data_len);
 	if ((conn->req.request_len >= 0) && (conn->req.data_len < conn->req.request_len)) {
-		http_snprintf(conn,
+		http_snprintf(
 		            NULL, /* No truncation check for ebuf */
 		            ebuf,
 		            ebuf_len,
@@ -1464,7 +1470,7 @@ int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	}
 
 	if ((conn->req.request_len == 0) && (conn->req.data_len == conn->req.buf_size)) {
-		http_snprintf(conn,
+		http_snprintf(
 		            NULL, /* No truncation check for ebuf */
 		            ebuf,
 		            ebuf_len,
@@ -1476,7 +1482,7 @@ int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 
 	if (conn->req.request_len <= 0) {
 		if (conn->req.data_len > 0) {
-			http_snprintf(conn,
+			http_snprintf(
 			            NULL, /* No truncation check for ebuf */
 			            ebuf,
 			            ebuf_len,
@@ -1486,7 +1492,7 @@ int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 		} else {
 			/* Server did not recv anything -> just close the connection */
 			conn->req.must_close = 1;
-			http_snprintf(conn,
+			http_snprintf(
 			            NULL, /* No truncation check for ebuf */
 			            ebuf,
 			            ebuf_len,
@@ -1509,7 +1515,7 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	}
 
 	if (parse_http(conn->action, conn, conn->req.buf) <= 0) {
-		http_snprintf(conn,
+		http_snprintf(
 			NULL, /* No truncation check for ebuf */
 			ebuf,
 			ebuf_len,
@@ -1522,7 +1528,7 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	/* Message is a valid request or response */
 	if (conn->action == HTTP_REQUEST) {
 		if (!http_switch_domain(conn)) {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				ebuf,
 				ebuf_len,
@@ -1532,8 +1538,7 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 			return 0;
 		}
 
-		if (((cl = http_get_header(conn, "Accept-Encoding"))
-			!= NULL)
+		if (((cl = http_get_header(conn, "Accept-Encoding")) != NULL)
 			&& strstr(cl, "gzip")) {
 			conn->req.accept_gzip = 1;
 		}
@@ -1543,7 +1548,7 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 		!= NULL)
 		&& !str_is_case(cl, "identity")) {
 		if (!str_is_case(cl, "chunked")) {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				ebuf,
 				ebuf_len,
@@ -1560,7 +1565,7 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 		char *endptr = NULL;
 		conn->req.content_len = strtoll(cl, &endptr, 10);
 		if ((endptr == cl) || (conn->req.content_len < 0)) {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				ebuf,
 				ebuf_len,
@@ -1569,15 +1574,15 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 			*err = 411;
 			return 0;
 		}
-		/* Publish the content length back to the request info. */
-		conn->content_length = conn->req.content_len;
-
 		if (conn->action == HTTP_RESPONSE) {
 			/* TODO: we should also consider HEAD method */
 			if (conn->code == 304) {
-				conn->content_length = 0;
+				conn->req.content_len = 0;
 			}
 		}
+	} else if (str_is_case(conn->method, "POST") || str_is_case(conn->method, "PUT")) {
+		/* POST or PUT request without content length set */
+		conn->req.content_len = -1;
 	} else {
 		if (conn->action == HTTP_RESPONSE) {
 			/* There is no exception, see RFC7230. */
@@ -1586,18 +1591,20 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 				&& (conn->code <= 199))
 				|| (conn->code == 204)
 				|| (conn->code == 304)) {
-				conn->content_length = 0;
+				conn->req.content_len = 0;
 			} else {
-				conn->content_length = -1; /* unknown content length */
+				conn->req.content_len = -1; /* unknown content length */
 				if (conn->code >= 400)
 					return 0;
 			}
 		} else {
 			/* There is no exception, see RFC7230. */
-			conn->content_length = 0;
+			conn->req.content_len = 0;
 		}
 	}
 
+	/* Publish the content length back to the request info. */
+	conn->content_length = conn->req.content_len;
 	return 1;
 }
 
@@ -1611,31 +1618,9 @@ static void close_socket_gracefully(http_t *conn) {
 		return;
 	}
 
-	/*
-	 * Set linger option to avoid socket hanging out after close. This
-	 * prevent ephemeral port exhaust problem under high QPS. */
-	linger.l_onoff = 1;
-	linger.l_linger = 1;
-	getsockopt(conn->client->sock, SOL_SOCKET, SO_ERROR, (char *)&error_code, &opt_len);
-	if (error_code == ECONNRESET) {
-		/* Socket already closed by client/peer, close socket without linger */
-	} else {
-		if (conn->domain->config[LINGER_TIMEOUT]) {
-			linger_timeout = atoi(conn->domain->config[LINGER_TIMEOUT]);
-			linger.l_linger = (linger_timeout + 999) / 1000;
-		}
-
-		if (setsockopt(conn->client->sock, SOL_SOCKET, SO_LINGER, (char *)&linger, sizeof(linger)) != 0) {
-			http_log(DEBUG_ERROR, conn,
-				"%s: getsockopt(SOL_SOCKET SO_ERROR) failed: %s",
-				__func__,
-				ex_strerror(os_geterror()));
-		}
-	}
-
 	/* Send FIN to the client */
 	if (!conn->client->has_ssl)
-		shutdown(conn->client->sock, SHUT_WR);
+		shutdown(socket2fd(conn->client->sock), SHUT_WR);
 
 #if defined(_WIN32)
 	/* Read and discard pending incoming data. If we do not do that and
@@ -1647,9 +1632,57 @@ static void close_socket_gracefully(http_t *conn) {
 	discard_unread_request_data(conn);
 #endif
 
-	/* Now we know that our FIN is ACK-ed, safe to close */
-	tls_closer(conn->client->sock);
-	conn->client->sock = INVALID_SOCKET;
+	if (conn->domain->config[LINGER_TIMEOUT]) {
+		linger_timeout = atoi(conn->domain->config[LINGER_TIMEOUT]);
+	}
+
+	/* Set linger option according to configuration */
+	if (linger_timeout >= 0) {
+		/* Set linger option to avoid socket hanging out after close. This
+		 * prevent ephemeral port exhaust problem under high QPS. */
+		linger.l_onoff = 1;
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4244)
+#endif
+#if defined(GCC_DIAGNOSTIC)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+		/* Data type of linger structure elements may differ,
+		 * so we don't know what cast we need here.
+		 * Disable type conversion warnings. */
+		linger.l_linger = (linger_timeout + 999) / 1000;
+#if defined(GCC_DIAGNOSTIC)
+#pragma GCC diagnostic pop
+#endif
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+	} else {
+		linger.l_onoff = 0;
+		linger.l_linger = 0;
+	}
+
+	if (linger_timeout < -1) {
+		/* Default: don't configure any linger */
+	} else {
+		getsockopt(socket2fd(conn->client->sock), SOL_SOCKET, SO_ERROR, (char *)&error_code, &opt_len);
+#if defined(_WIN32)
+		if (error_code == WSAECONNRESET) {
+#else
+		if (error_code == ECONNRESET) {
+#endif
+			/* Socket already closed by client/peer, close socket without linger */
+		} else {
+			if (setsockopt(socket2fd(conn->client->sock), SOL_SOCKET, SO_LINGER, (char *)&linger, sizeof(linger)) != 0) {
+				http_log(DEBUG_ERROR, conn,
+					"%s: getsockopt(SOL_SOCKET SO_ERROR) failed: %s",
+					__func__,
+					ex_strerror(os_geterror()));
+			}
+		}
+	}
 }
 
 static void close_connection(http_t *conn) {
@@ -1661,11 +1694,14 @@ static void close_connection(http_t *conn) {
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
 	close_socket_gracefully(conn);
+	/* Now we know that our FIN is ACK-ed, safe to close */
+	tls_closer(conn->client->sock);
+	conn->client->sock = INVALID_SOCKET;
 	atomic_unlock(&conn->ctx->nonce_mutex);
 }
 
 void http_close_connection(http_t *conn) {
-	if ((conn == NULL) || (conn->ctx == NULL)) {
+	if ((conn == NULL)) {
 		return;
 	}
 
@@ -1689,6 +1725,8 @@ void http_close_connection(http_t *conn) {
 		|| conn->ctx->http_type == HTTP_INI_CLIENT) {
 		free(conn->client);
 		conn->client = null;
+		free(conn->req.buf);
+		free(conn->ctx);
 		free(conn);
 	}
 }
@@ -1768,8 +1806,9 @@ int http_fclose(struct file *filep) {
 		return EOF;
 	}
 
-	retval = fs_fclose(filep->fp);
+	retval = promise_fclose(filep->pf, filep->fp);
 	filep->fp = NULL;
+	filep->pf = NULL;
 
 	return retval;
 }
@@ -1795,21 +1834,28 @@ int http_stat(http_t *conn, string_t path, struct file *filep) {
 }
 
 bool http_is_file_opened(struct file *filep) {
-	return filep == NULL ? false : (filep->membuf != NULL || filep->fp != NULL);
+	return filep == NULL ? false : !is_empty(filep->membuf) || !is_empty(filep->fp);
 }
 
 bool http_fopen(http_ini_t *ctx, const http_t *conn, string_t path, string_t mode, struct file *filep) {
 	struct stat st;
+	bool found = false;
 
-	if (ctx == NULL || filep == NULL)
+	if (ctx == NULL || filep == NULL || mode == null)
 		return false;
 
 	memset(filep, 0, sizeof(*filep));
-	if (fs_stat(path, &st) == 0)
+	if (fs_stat(path, &st) == 0) {
 		filep->size = (uint64_t)st.st_size;
+		found = true;
+	}
 
 	if (!http_is_file_in_memory(ctx, (http_t *)conn, path, filep)) {
-		filep->fp = fs_fopen(path, mode);
+		if (!found && str_has(mode, "r"))
+			return false;
+
+		filep->pf = promise_fopen(path, mode);
+		filep->fp = (FILE *)promise_wait(filep->pf).object;
 	}
 
 	return http_is_file_opened(filep);
@@ -1881,7 +1927,7 @@ int64_t http_store_body(http_ini_t *ctx, http_t *conn, string_t path) {
 
 	ret = http_read(conn, buf, sizeof(buf));
 	while (ret > 0) {
-		n = (int)fs_fwrite(buf, 1, (size_t)ret, fi.fp);
+		n = (int)promise_fwrite(fi.pf, buf, 1, (size_t)ret, fi.fp);
 		if (n != ret) {
 			http_fclose(&fi);
 			http_remove_bad_file(ctx, conn, path);
@@ -1961,7 +2007,7 @@ static void http_log_access(http_t *conn) {
 		sockaddr_to_str(src_addr, sizeof(src_addr), &conn->client->rsa);
 		referer = header_val(conn, "Referer");
 		user_agent = header_val(conn, "User-Agent");
-		http_snprintf(conn,
+		http_snprintf(
 			NULL, /* Ignore truncation in access log */
 			log_buf,
 			sizeof(log_buf),
@@ -2044,13 +2090,9 @@ static int should_switch_to_protocol(http_t *conn) {
 }
 
 void http_process_connection(http_ini_t *ctx, http_t *conn) {
-	httpi_t *ri;
-	int keep_alive;
-	int discard_len;
-	bool was_error;
-	char ebuf[100];
+	int keep_alive, discard_len, reqerr;
+	char ebuf[100] = {0};
 	string_t uri, hostend;
-	int reqerr;
 	enum uri_type_t uri_type;
 	union {
 		const_t con;
@@ -2060,32 +2102,26 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 	if (ctx == NULL || conn == NULL)
 		return;
 
-	/* Is keep alive allowed by the server */
-	int keep_alive_enabled = str_is_case(conn->domain->config[ENABLE_KEEP_ALIVE], "yes");
-	ri = &conn->req;
-	if (!keep_alive_enabled)
-		conn->req.must_close = 1;
+	httpi_t *ri = &conn->req;
+	debug_info("Start processing connection from %s"CLR_LN, conn->req.remote_addr);
 
-	/* Important: on new connection, reset the receiving buffer. Credit
-	 * goes to crule42. */
-	conn->req.data_len = 0;
-	was_error = false;
 	do {
+		debug_info("calling get_request (%i times for this connection)"CLR_LN, conn->req.handled_requests + 1);
 		if (!get_request_response(conn, ebuf, sizeof(ebuf), &reqerr)) {
 			/*
 			 * The request sent by the client could not be understood by
 			 * the server, or it was incomplete or a timeout. Send an
 			 * error message and close the connection. */
 			if (reqerr > 0)
-				http_error(conn, reqerr, "%s", http_status_str(reqerr));
-			was_error = true;
+				http_error(conn, reqerr, "%s", ebuf);
 		} else if (strcmp(ri->http_version, "1.0") && strcmp(ri->http_version, "1.1")) {
-			http_log(DEBUG_ERROR, conn, "%s: bad HTTP version \"%s\"", __func__, ri->http_version);
-			http_error(conn, 505, "%s", http_status_str(505));
-			was_error = true;
+			/* HTTP/2 is not allowed here */
+			http_snprintf(NULL, /* No truncation check for ebuf */
+				ebuf, sizeof(ebuf), "Bad HTTP version: [%s]", ri->http_version);
+			http_error(conn, 505, "%s", ebuf);
 		}
 
-		if (!was_error) {
+		if (ebuf[0] == '\0') {
 			uri = http_get_uri(conn);
 			uri_type = http_get_uri_type(uri);
 			switch (uri_type) {
@@ -2104,16 +2140,17 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 						conn->req.local_uri = NULL;
 					break;
 				default:
-					http_log(DEBUG_ERROR, conn, "%s: invalid URI", __func__);
-					http_error(conn, 400, "%s", http_status_str(400));
-
+					http_snprintf(NULL, /* No truncation check for ebuf */
+						ebuf, sizeof(ebuf), "Invalid URI");
+					http_error(conn, 400, "%s", ebuf);
 					conn->req.local_uri = NULL;
-					was_error = true;
 					break;
 			}
 		}
 
-		if (!was_error) {
+		if (ebuf[0] != '\0') {
+			conn->req.proto = -1;
+		} else {
 			/* HTTP/1 allows protocol upgrade */
 			conn->req.proto = should_switch_to_protocol(conn);
 			if (conn->req.proto == PROTOCOL_HTTP2) {
@@ -2125,17 +2162,28 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 				 */
 				conn->req.proto = PROTOCOL_HTTP1;
 			}
+		}
 
-			if (conn->req.local_uri != NULL) {
+		debug_info("http: %s, error: %s"CLR_LN,
+			(ri->http_version ? ri->http_version : "none"),
+			(ebuf[0] ? ebuf : "none"));
+
+		if (ebuf[0] == '\0') {
+			if (conn->req.local_uri) {
 				/* handle request to local server */
 				http_handle_request(conn);
+				debug_info("%s", "handle_request done"CLR_LN);
 				http_log_access(conn);
 			} else {
 				/* TODO: handle non-local request (PROXY) */
 				conn->req.must_close = true;
 			}
-		} else
+		} else {
 			conn->req.must_close = true;
+		}
+
+		/* http2 response complete. Free header buffer */
+		//free_buffered_http2_response_header_list(conn);
 
 		if (ri->remote_user != NULL) {
 			ptr.con = ri->remote_user;
@@ -2147,37 +2195,47 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 			ri->remote_user = NULL;
 		}
 
-
 		/* NOTE(lsm): order is important here. should_keep_alive() call
 		 * is using parsed request, which will be invalid after memmove's below.
 		 * Therefore, memorize should_keep_alive() result now for later
 		 * use in loop exit condition. */
 		/* Enable it only if this request is completely discardable. */
 		keep_alive = ctx->status == HTTP_STATUS_RUNNING
-			&& should_keep_alive(conn)
-			&& (conn->req.content_len >= 0) && (conn->req.request_len > 0)
-			&& ((conn->req.is_chunked == 4) ||
-				(!conn->req.is_chunked && ((conn->req.consumed_content == conn->req.content_len) || ((conn->req.request_len + conn->req.content_len) <= conn->req.data_len))))
+			&& should_keep_alive(conn) && (conn->req.content_len >= 0)
+			&& (conn->req.request_len > 0)
+			&& ((conn->req.is_chunked == 4)
+				|| (!conn->req.is_chunked
+					&& ((conn->req.consumed_content == conn->req.content_len)
+						|| ((conn->req.request_len + conn->req.content_len) <= conn->req.data_len))))
 			&& (conn->req.proto == PROTOCOL_HTTP1);
 
-		/** Discard all buffered data for this request */
-		discard_len = ((conn->req.content_len >= 0) && (conn->req.request_len > 0)
-			&& ((conn->req.request_len + conn->req.content_len)
-				< (int64_t)conn->req.data_len))
-			? (int)(conn->req.request_len + conn->req.content_len)
-			: conn->req.data_len;
+		if (keep_alive) {
+			/* Discard all buffered data for this request */
+			discard_len =
+				((conn->req.request_len + conn->req.content_len) < conn->req.data_len)
+				? (int)(conn->req.request_len + conn->req.content_len)
+				: conn->req.data_len;
+			conn->req.data_len -= discard_len;
 
-		if (discard_len < 0)
+			if (conn->req.data_len > 0) {
+				debug_info("discard_len = %d"CLR_LN, discard_len);
+				memmove(conn->req.buf, conn->req.buf + discard_len, (size_t)conn->req.data_len);
+			}
+		}
+
+		if ((conn->req.data_len < 0) || (conn->req.data_len > conn->req.buf_size)) {
+			debug_info("internal error: data_len = %li, buf_size = %li"CLR_LN,
+				(long int)conn->req.data_len,
+				(long int)conn->req.buf_size);
 			break;
+		}
 
-		conn->req.data_len -= discard_len;
-		if (conn->req.data_len > 0)
-			memmove(conn->req.buf, conn->req.buf + discard_len, (size_t)conn->req.data_len);
-
-		if (conn->req.data_len < 0 || conn->req.data_len > conn->req.buf_size)
-			break;
 		conn->req.handled_requests++;
 	} while (keep_alive);
+
+	debug_info("Done processing connection from %s (%f sec)"CLR_LN,
+		conn->req.remote_addr, difftime(time(NULL), conn->req.conn_birth_time));
+	close_socket_gracefully(conn);
 }
 
 int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src) {
@@ -2229,12 +2287,21 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 	socklen_t len;
 	unsigned max_req_size =	(unsigned)atoi(http_get_default_option(MAX_REQUEST_SIZE));
 
-	/* Size of structures, aligned to 8 bytes */
-	size_t conn_size = ((sizeof(http_t) + 7) >> 3) << 3;
-	size_t ctx_size = ((sizeof(http_ini_t) + 7) >> 3) << 3;
-	size_t alloc_size = conn_size + ctx_size + max_req_size;
+	if (is_empty(client_options->host) || (client_options->port <= 0)
+		|| !is_valid_port((unsigned)client_options->port)) {
+		if (error != NULL) {
+			error->code = EINVAL;
+			http_snprintf(
+				NULL, /* No truncation check for ebuf */
+				error->text,
+				error->text_buffer_size,
+				"%s",
+				(is_empty(client_options->host) ? "NULL host" : "invalid port"));
+		}
 
-	conn = (http_t *)calloc(1, alloc_size);
+		return NULL;
+	}
+
 	if (error != NULL) {
 		error->code = 0;
 		error->code_sub = 0;
@@ -2243,11 +2310,11 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 		}
 	}
 
-	if (is_empty(conn)) {
+	if (is_empty(conn = (http_t *)calloc(1, sizeof(http_t)))) {
 		if (error != NULL) {
 			error->code = ENOMEM;
-			error->code_sub = (unsigned)alloc_size;
-			http_snprintf(NULL,
+			error->code_sub = (unsigned)sizeof(http_t);
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				error->text,
 				error->text_buffer_size,
@@ -2257,18 +2324,37 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 		return NULL;
 	}
 
-#if defined(GCC_DIAGNOSTIC)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-align"
-#endif /* defined(GCC_DIAGNOSTIC) */
+	if (is_empty(conn->ctx = (http_ini_t *)calloc(1, sizeof(http_ini_t)))) {
+		free(conn);
+		if (error != NULL) {
+			error->code = ENOMEM;
+			error->code_sub = (unsigned)sizeof(http_ini_t);
+			http_snprintf(
+				NULL, /* No truncation check for ebuf */
+				error->text,
+				error->text_buffer_size,
+				"calloc(): %s",
+				ex_strerror(os_geterror()));
+		}
+		return NULL;
+	}
 
-	/* conn_size is aligned to 8 bytes */
-	conn->ctx = (http_ini_t *)(((char *)conn) + conn_size);
-#if defined(GCC_DIAGNOSTIC)
-#pragma GCC diagnostic pop
-#endif /* defined(GCC_DIAGNOSTIC) */
+	if (is_empty(conn->req.buf = (char *)calloc(1, max_req_size + 1))) {
+		free(conn->ctx);
+		free(conn);
+		if (error != NULL) {
+			error->code = ENOMEM;
+			error->code_sub = (unsigned)max_req_size;
+			http_snprintf(
+				NULL, /* No truncation check for ebuf */
+				error->text,
+				error->text_buffer_size,
+				"calloc(): %s",
+				ex_strerror(os_geterror()));
+		}
+		return NULL;
+	}
 
-	conn->req.buf = (((char *)conn) + conn_size + ctx_size);
 	conn->req.buf_size = (int)max_req_size;
 	conn->ctx->http_type = HTTP_INI_CLIENT;
 	conn->domain = &(conn->ctx->host);
@@ -2289,8 +2375,8 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 	if (is_empty(conn->client = (http_socket *)calloc(1, sizeof(http_socket)))) {
 		if (error != NULL) {
 			error->code = ENOMEM;
-			error->code_sub = (unsigned)alloc_size;
-			http_snprintf(NULL,
+			error->code_sub = (unsigned)sizeof(http_socket);
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				error->text,
 				error->text_buffer_size,
@@ -2298,6 +2384,8 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 				ex_strerror(os_geterror()));
 		}
 		tls_closer(socket2fd(sock));
+		free(conn->req.buf);
+		free(conn->ctx);
 		free(conn);
 		return NULL;
 	}
@@ -2352,7 +2440,7 @@ http_t *http_download(string_t host, int port,
 	if (conn != NULL) {
 		i = http_vprintf(conn, fmt, ap);
 		if (i <= 0) {
-			http_snprintf(conn,
+			http_snprintf(
 				NULL, /* No truncation check for ebuf */
 				ebuf,
 				ebuf_len,
@@ -2361,7 +2449,7 @@ http_t *http_download(string_t host, int port,
 		} else {
 			/* make sure the buffer is clear */
 			conn->req.data_len = 0;
-			http_get_response(conn, ebuf, ebuf_len, -1);
+			http_get_response(conn, ebuf, ebuf_len, INFINITE);
 
 			/* TODO: here, the URI is the http response code */
 			conn->req.local_uri = conn->url_to;

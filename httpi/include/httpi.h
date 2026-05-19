@@ -63,14 +63,6 @@ struct error_data {
 	size_t text_buffer_size; /* size of buffer of "text" */
 };
 
-struct init_data {
-	/* callback function pointer */
-	const struct http_clb_s *callbacks;
-	/* data */
-	void_t user_data;
-	string_t *configuration_options;
-};
-
 struct client_options {
 	string_t host;
 	int port;
@@ -83,10 +75,6 @@ struct client_options {
 #endif
 
 #define server_opts(str_opts) ((const options_ini_t **)(str_opts))
-
-/* This structure needs to be passed to httpi_setup(),
- * to let `HttPi` know which callbacks to invoke. */
-typedef struct http_clb_s http_clb_t;
 
 /* Record of a port a server/client is listening on
  * Describes listening socket, or socket which was accept()-ed by the `main`
@@ -167,7 +155,7 @@ typedef void(*upload_form_cb)(http_t *, string_t file_name);
 
 /* This structure needs to be passed to httpi_setup(),
  * to let `HttPi` know which callbacks to invoke. */
-struct http_clb_s {
+typedef struct http_clb_s {
 	/* handle everything callback*/
 	request_cb handler;
 	log_msg_cb log_message;
@@ -176,6 +164,14 @@ struct http_clb_s {
 	http_error_cb http_error;
 	init_context_cb init_context;
 	upload_form_cb upload;
+} http_clb_t;
+
+struct init_data {
+	/* callback function pointer */
+	const http_clb_t *callbacks;
+	/* data */
+	void_t user_data;
+	string_t *configuration_options;
 };
 
 #ifdef __cplusplus
@@ -297,6 +293,16 @@ C_API string_t http_builtin_mime_type(string_t path);
  * Only use this function after sending a complete HTTP request or response
  * header with "Transfer-Encoding: chunked" set. */
 C_API int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len);
+
+/* Transfer-Encoding is chunked:
+ * - 0 = not chunked,
+ * - 1 = chunked, not yet, or some data read,
+ * - 2 = chunked, has error,
+ * - 3 = chunked, all data read except trailer,
+ * - 4 = chunked, all data read */
+C_API int http_chunk_state(http_t *conn);
+
+C_API int httpi_read(http_t *conn, void_t buf, size_t len);
 
 /* Initialize a new HTTP response
  * Parameters:

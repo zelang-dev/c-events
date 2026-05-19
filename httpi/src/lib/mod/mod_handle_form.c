@@ -302,8 +302,7 @@ static int http_upload_field_found(string_t key,
 		return FORM_FIELD_STORAGE_ABORT;
 	}
 
-	http_snprintf(fud->conn,
-		&truncated,
+	http_snprintf(&truncated,
 		path,
 		pathlen - 1,
 		"%s/%s",
@@ -345,7 +344,7 @@ int http_form_upload(http_t *conn, string_t destination_dir) {
 	string s;
 	char buf[BUF_LEN], path[PATH_MAX], tmp_path[PATH_MAX], fname[1024],
 		boundary[100];
-	FILE *fp;
+	struct file fp = STRUCT_FILE_INITIALIZER;
 	int bl, n, i, headers_len, boundary_len, eof, len = 0,
 		num_uploaded_files = 0;
 
@@ -450,9 +449,10 @@ int http_form_upload(http_t *conn, string_t destination_dir) {
 		/* We open the file with exclusive lock held. This guarantee us
 		 * there is no other thread can save into the same file
 		 * simultaneously. */
-		fp = NULL;
+		fp.pf = promise_fopen(tmp_path, "wb");
 		/* Open file in binary mode. */
-		if ((fp = fs_fopen(tmp_path, "wb")) == NULL) {
+		if ((fp.fp = (FILE *)promise_wait(fp.pf).object) == NULL) {
+			promise_clean(fp.pf);
 			break;
 		}
 
@@ -473,7 +473,7 @@ int http_form_upload(http_t *conn, string_t destination_dir) {
 				if (!memcmp(&buf[i], "\r\n--", 4) &&
 					!memcmp(&buf[i + 4], boundary, (size_t)boundary_len)) {
 					/* Found boundary, that's the end of file data. */
-					fs_fwrite(buf, 1, (size_t)i, fp);
+					promise_fwrite(fp.pf, buf, 1, (size_t)i, fp.fp);
 					eof = 1;
 					memmove(buf, &buf[i + bl], (size_t)(len - (i + bl)));
 					len -= i + bl;
@@ -481,13 +481,13 @@ int http_form_upload(http_t *conn, string_t destination_dir) {
 				}
 			}
 			if (!eof && len > bl) {
-				fs_fwrite(buf, 1, (size_t)(len - bl), fp);
+				promise_fwrite(fp.pf, buf, 1, (size_t)(len - bl), fp.fp);
 				memmove(buf, &buf[len - bl], (size_t)bl);
 				len = bl;
 			}
 			n = http_read(conn, buf + len, sizeof(buf) - ((size_t)(len)));
 		} while (!eof && (n > 0));
-		fs_fclose(fp);
+		promise_fclose(fp.pf, fp.fp);
 		if (eof) {
 			fs_unlink(path);
 			fs_rename(tmp_path, path);
@@ -639,7 +639,7 @@ int http_handle_form_request(http_t *conn, form_data_handler_t *fdh) {
 				file_size = 0;
 				if (fstore.fp != NULL) {
 					size_t n = (size_t)
-						fs_fwrite((void_t)val, 1, (size_t)vallen, fstore.fp);
+						promise_fwrite(fstore.pf, (void_t)val, 1, (size_t)vallen, fstore.fp);
 					if ((n != (size_t)vallen) || (ferror(fstore.fp))) {
 						http_log(DEBUG_ERROR, conn,
 							"%s: Cannot write file %s",
@@ -840,7 +840,7 @@ int http_handle_form_request(http_t *conn, form_data_handler_t *fdh) {
 
 				if (fstore.fp) {
 					size_t n = (size_t)
-						fs_fwrite((void_t)val, 1, (size_t)vallen, fstore.fp);
+						promise_fwrite(fstore.pf, (void_t)val, 1, (size_t)vallen, fstore.fp);
 					if ((n != (size_t)vallen) || (ferror(fstore.fp))) {
 						http_log(DEBUG_ERROR, conn,
 							"%s: Cannot write file %s",
@@ -1304,7 +1304,7 @@ int http_handle_form_request(http_t *conn, form_data_handler_t *fdh) {
 					if (fstore.fp) {
 
 						/* Store the content of the buffer. */
-						n = fs_fwrite((void_t)hend, 1, towrite, fstore.fp);
+						n = promise_fwrite(fstore.pf, (void_t)hend, 1, towrite, fstore.fp);
 						if ((n != towrite) || (ferror(fstore.fp))) {
 							http_log(DEBUG_ERROR, conn,
 								"%s: Cannot write file %s",
@@ -1374,7 +1374,7 @@ int http_handle_form_request(http_t *conn, form_data_handler_t *fdh) {
 
 			if (field_storage == FORM_FIELD_STORAGE_STORE) {
 				if (fstore.fp) {
-					n = (size_t)fs_fwrite((void_t)hend, 1, towrite, fstore.fp);
+					n = (size_t)promise_fwrite(fstore.pf, (void_t)hend, 1, towrite, fstore.fp);
 					if ((n != towrite) || (ferror(fstore.fp))) {
 						http_log(DEBUG_ERROR, conn,
 							"%s: Cannot write file %s",

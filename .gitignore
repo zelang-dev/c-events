@@ -57,3 +57,4 @@ frontmatter.json
 built/
 *.crt
 *.key
+*.local

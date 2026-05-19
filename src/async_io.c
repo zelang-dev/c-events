@@ -15,7 +15,7 @@ fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol
 	union usa usa;
 	struct sockaddr_un u_sa = {0};
 	usa.sa = *sa;
-	socklen_t sn;
+	socklen_t sn = 0;
 	uds_t uds = (protocol == -1) || sa->sa_family == AF_UNIX
 		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
 		: null;
@@ -444,7 +444,7 @@ EVENTS_INLINE int async_fs_read(future *thrd, int fd, void *buf, uint32_t count)
 }
 
 EVENTS_INLINE int fs_read(int fd, void *buf, uint32_t count) {
-	return async_fs_read(futures_pool(), fd, buf, count);
+	return queue_get(queue_work(futures_pool(), _os_read, 3, casting(fd), buf, casting(count))).integer;
 }
 
 EVENTS_INLINE int async_fs_write(future *thrd, int fd, const void *buf, uint32_t count) {
@@ -740,6 +740,10 @@ EVENTS_INLINE int async_getentropy(void *buf, size_t buflen) {
 	return queue_get(queue_work(futures_pool(), _getentropy, 2, buf, casting(buflen))).integer;
 }
 
+static EVENTS_INLINE void *_os__fprintf(param_t args) {
+	return casting(fprintf(args[0].object, "%s", args[1].const_char_ptr));
+}
+
 static EVENTS_INLINE void *_os_fprintf(param_t args) {
 	if (str_is_empty(args[0].const_char_ptr))
 		return null;
@@ -791,7 +795,8 @@ EVENTS_INLINE int async_fwrite(const char *path, const char *mode,
 }
 
 static EVENTS_INLINE void *_os_fwrite(param_t args) {
-	return casting(fwrite((const void *)args[0].object, args[1].max_size, args[2].max_size, (FILE *)args[3].object));
+	return casting(fwrite((const void *)args[0].object,
+		args[1].max_size, args[2].max_size, (FILE *)args[3].object));
 }
 
 EVENTS_INLINE size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream) {
@@ -806,7 +811,7 @@ static EVENTS_INLINE void *_os_fopen(param_t args) {
 }
 
 EVENTS_INLINE FILE *fs_fopen(const char *path, const char *mode) {
-	return (FILE *)queue_get(queue_work(futures_pool(), _os_fopen, 2)).object;
+	return (FILE *)queue_get(promise_fopen(path, mode)).object;
 }
 
 static EVENTS_INLINE void *_os_fread(param_t args) {
@@ -840,4 +845,35 @@ static EVENTS_INLINE void *_os_fgets(param_t args) {
 
 EVENTS_INLINE char *fs_fgets(char *buf, int count, FILE *stream) {
 	return queue_get(queue_work(futures_pool(), _os_fgets, 3, buf, casting(count), stream)).char_ptr;
+}
+
+EVENTS_INLINE int promise_read(promise *p, int fd, void *buf, uint32_t count) {
+	return promise_wait(promise_work(p, _os_read, 3, casting(fd), buf, casting(count))).integer;
+}
+
+EVENTS_INLINE char *promise_fgets(promise *p, char *buf, int count, FILE *stream) {
+	return promise_wait(promise_work(p, _os_fgets, 3, buf, casting(count), stream)).char_ptr;
+}
+
+EVENTS_INLINE int promise_fgetc(promise *p, FILE *stream) {
+	return promise_wait(promise_work(p, _os_fgetc, 1, stream)).integer;
+}
+
+EVENTS_INLINE int promise_fclose(promise *p, FILE *stream) {
+	int r = promise_wait(promise_work(p, _os_fclose, 1, stream)).integer;
+	promise_clean(p);
+	return r;
+}
+
+EVENTS_INLINE promise *promise_fopen(const char *path, const char *mode) {
+	return queue_work(futures_pool(), _os_fopen, 2, path, mode);
+}
+
+EVENTS_INLINE size_t promise_fwrite(promise *p, void *buf, size_t items_size, size_t items_count, FILE *stream) {
+	return promise_wait(promise_work(p, _os_fwrite, 4, buf,
+		casting(items_size), casting(items_count), stream)).integer;
+}
+
+EVENTS_INLINE int promise_fprintf(promise *p, FILE *stream, const char *fmt) {
+	return promise_wait(promise_work(p, _os__fprintf, 2, stream, fmt)).integer;
 }
