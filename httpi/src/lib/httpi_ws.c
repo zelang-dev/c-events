@@ -723,10 +723,6 @@ static void_t websocket_client_thread(param_t data) {
 		ctx->worker_taskid = task_id();
 		task_name("ws-client #%d", ctx->worker_taskid);
 
-		if (ctx->callbacks.init_context) {
-			ctx->callbacks.init_context(cdata->conn->ctx);
-		}
-
 		http_read_websocket(ctx, conn, cdata->data_handler, cdata->callback_data);
 		debug_info("%s", "Websocket client task exited\n");
 		if (cdata->close_handler != NULL) {

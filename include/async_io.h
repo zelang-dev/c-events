@@ -165,11 +165,15 @@ typedef client_cb uds_unix_cb;
 
 
 #ifndef null
-#	define null	NULL
+#	define null			NULL
+#endif
+
+#ifndef ERR_BUF
+#	define ERR_BUF		100
 #endif
 
 #ifndef MAX_PATH
-#	define MAX_PATH          260
+#	define MAX_PATH		260
 #endif
 
 #ifndef ARRAY_SIZE

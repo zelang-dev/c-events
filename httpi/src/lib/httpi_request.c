@@ -507,35 +507,18 @@ static int http_get_request_handler(http_t *conn,
 		string_t uri = request_info->local_uri;
 		size_t urilen = strlen(uri);
 		struct http_cb_info *tmp_rh;
-		int step, matched;
 
-		if (!conn || !conn->ctx || !conn->domain) {
+		if (!conn || !conn->ctx) {
 			return 0;
 		}
 
 		atomic_lock(&conn->ctx->nonce_mutex);
-		for (step = 0; step < 3; step++) {
-			for (tmp_rh = conn->domain->handlers; tmp_rh != NULL;
-				tmp_rh = tmp_rh->next) {
-				if (tmp_rh->handler_type != handler_type) {
-					continue;
-				}
-				if (step == 0) {
-					/* first try for an exact match */
-					matched = (tmp_rh->uri_len == urilen)
-						&& (strcmp(tmp_rh->uri, uri) == 0);
-				} else if (step == 1) {
-					/* next try for a partial match, we will accept uri/something */
-					matched =
-						(tmp_rh->uri_len < urilen)
-						&& (uri[tmp_rh->uri_len] == '/')
-						&& (memcmp(tmp_rh->uri, uri, tmp_rh->uri_len) == 0);
-				} else {
-					/* finally try for pattern match */
-					matched =
-						http_match_prefix(tmp_rh->uri, tmp_rh->uri_len, uri) > 0;
-				}
-				if (matched) {
+
+		/* first try for an exact match */
+		for (tmp_rh = conn->ctx->handlers; tmp_rh != NULL;
+			tmp_rh = tmp_rh->next) {
+			if (tmp_rh->handler_type == handler_type) {
+				if (urilen == tmp_rh->uri_len && !strcmp(tmp_rh->uri, uri)) {
 					if (handler_type == WEBSOCKET_HANDLER) {
 						*subprotocols = tmp_rh->subprotocols;
 						*connect_handler = tmp_rh->connect_handler;
@@ -543,14 +526,56 @@ static int http_get_request_handler(http_t *conn,
 						*data_handler = tmp_rh->data_handler;
 						*close_handler = tmp_rh->close_handler;
 					} else if (handler_type == REQUEST_HANDLER) {
-						if (tmp_rh->removing) {
-							/* Treat as none found */
-							step = 2;
-							break;
-						}
 						*handler = tmp_rh->handler;
-						/* Acquire handler and give it back */
-						tmp_rh->refcount++;
+						*handler_info = tmp_rh;
+					} else { /* AUTH_HANDLER */
+						*auth_handler = tmp_rh->auth_handler;
+					}
+					*cbdata = tmp_rh->cbdata;
+					atomic_unlock(&conn->ctx->nonce_mutex);
+					return 1;
+				}
+			}
+		}
+
+		/* next try for a partial match, we will accept uri/something */
+		for (tmp_rh = conn->ctx->handlers; tmp_rh != NULL;
+			tmp_rh = tmp_rh->next) {
+			if (tmp_rh->handler_type == handler_type) {
+				if (tmp_rh->uri_len < urilen && uri[tmp_rh->uri_len] == '/'
+					&& memcmp(tmp_rh->uri, uri, tmp_rh->uri_len) == 0) {
+					if (handler_type == WEBSOCKET_HANDLER) {
+						*subprotocols = tmp_rh->subprotocols;
+						*connect_handler = tmp_rh->connect_handler;
+						*ready_handler = tmp_rh->ready_handler;
+						*data_handler = tmp_rh->data_handler;
+						*close_handler = tmp_rh->close_handler;
+					} else if (handler_type == REQUEST_HANDLER) {
+						*handler = tmp_rh->handler;
+						*handler_info = tmp_rh;
+					} else { /* AUTH_HANDLER */
+						*auth_handler = tmp_rh->auth_handler;
+					}
+					*cbdata = tmp_rh->cbdata;
+					atomic_unlock(&conn->ctx->nonce_mutex);
+					return 1;
+				}
+			}
+		}
+
+		/* finally try for pattern match */
+		for (tmp_rh = conn->ctx->handlers; tmp_rh != NULL;
+			tmp_rh = tmp_rh->next) {
+			if (tmp_rh->handler_type == handler_type) {
+				if (http_match_prefix(tmp_rh->uri, tmp_rh->uri_len, uri) > 0) {
+					if (handler_type == WEBSOCKET_HANDLER) {
+						*subprotocols = tmp_rh->subprotocols;
+						*connect_handler = tmp_rh->connect_handler;
+						*ready_handler = tmp_rh->ready_handler;
+						*data_handler = tmp_rh->data_handler;
+						*close_handler = tmp_rh->close_handler;
+					} else if (handler_type == REQUEST_HANDLER) {
+						*handler = tmp_rh->handler;
 						*handler_info = tmp_rh;
 					} else { /* AUTH_HANDLER */
 						*auth_handler = tmp_rh->auth_handler;
@@ -1554,7 +1579,7 @@ void http_send_file_data(http_t *conn, struct file *filep,
 				}
 
 				/* Read from file, exit the loop on error */
-				if ((num_read = fs_read(fileno(filep->fp), buf, to_read)) <= 0)
+				if ((num_read = promise_read(filep->pf, fileno(filep->fp), buf, to_read)) <= 0)
 					break;
 
 				/* Send read bytes to the client, exit the loop on error */
@@ -2128,16 +2153,6 @@ static int should_decode_query_string(const http_t *conn) {
 	return (str_is_case(conn->domain->config[DECODE_QUERY_STRING], "yes"));
 }
 
-/* Decrement recount of handler. conn must not be NULL, handler_info may be NULL */
-static void release_handler_ref(http_t *conn, struct http_cb_info *handler_info) {
-	if (handler_info != NULL) {
-		/* Use context lock for ref counter */
-		atomic_lock(&conn->ctx->nonce_mutex);
-		handler_info->refcount--;
-		atomic_unlock(&conn->ctx->nonce_mutex);
-	}
-}
-
 static int push_all(http_ini_t *ctx, struct file *fp, string_t buf, int len) {
 	double timeout = -1.0;
 	int n, nwritten = 0;
@@ -2403,6 +2418,13 @@ static void delete_file(http_t *conn, string_t path) {
 	}
 }
 
+static uint32_t get_remote_ip(http_t *conn) {
+	if (!conn) {
+		return 0;
+	}
+	return ntohl(*(const uint32_t *)&conn->client->rsa.sin.sin_addr);
+}
+
 void http_handle_request(http_t *conn) {
 	httpi_t *ri = &conn->req;
 	char path[UTF8_PATH_MAX];
@@ -2473,14 +2495,14 @@ void http_handle_request(http_t *conn) {
 	 * ri->local_uri_raw still points to memory allocated in
 	 * worker_thread_run(). ri->local_uri is private to the request so we
 	 * don't have to use preallocated memory here. */
-	//tmp = str_dup(ri->local_uri);
-	//if (!tmp) {
-	//	/* Out of memory. We cannot do anything reasonable here. */
-	//	return;
-	//}
+	tmp = str_dup(ri->local_uri);
+	if (!tmp) {
+		/* Out of memory. We cannot do anything reasonable here. */
+		return;
+	}
 
-	remove_double_dots_slashes((string)ri->local_uri);
-	//ri->local_uri = tmp;
+	remove_double_dots_slashes(tmp);
+	ri->local_uri = tmp;
 
 	/* Only compute if later code can actually use it */
 	/* Cache URI length once; recompute only if the buffer changes later. */
@@ -2490,7 +2512,7 @@ void http_handle_request(http_t *conn) {
 	debug_info("REQUEST: %s %s"CLR_LN, conn->method, ri->local_uri);
 
 	/* 2. if this ip has limited speed, set it for this connection */
-	//conn->throttle = set_throttle(conn->domain->config[THROTTLE], &conn->client->rsa, ri->local_uri);
+	conn->req.throttle = set_throttle(conn->domain->config[THROTTLE], get_remote_ip(conn), ri->local_uri);
 
 	/* 3. call a "handle everything" callback, if registered */
 	if (conn->ctx->callbacks.handler != NULL) {
@@ -2688,8 +2710,6 @@ no_callback_resource:
 		&auth_callback_data,
 		NULL)) {
 		if (!auth_handler(conn, auth_callback_data)) {
-			/* Callback handler will not be used anymore. Release it */
-			release_handler_ref(conn, handler_info);
 			debug_info("%s", "auth handler rejected request"CLR_LN);
 			return;
 		}
@@ -2731,9 +2751,6 @@ no_callback_resource:
 		 * correspond to a file. Check authorization. */
 		if (!str_is_empty(path) && !check_authorization(conn, path)) {
 			send_authorization_request(conn, NULL);
-
-			/* Callback handler will not be used anymore. Release it */
-			release_handler_ref(conn, handler_info);
 			debug_info("%s", "access authorization required"CLR_LN);
 			return;
 		}
@@ -2750,10 +2767,6 @@ no_callback_resource:
 		}
 		if (!is_websocket_request) {
 			i = callback_handler(conn, callback_data);
-
-			/* Callback handler will not be used anymore. Release it */
-			release_handler_ref(conn, handler_info);
-
 			if (i > 0) {
 				/* Do nothing, callback has served the request. Store
 				 * then return value as status code for the log and discard

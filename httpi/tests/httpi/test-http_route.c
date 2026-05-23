@@ -272,7 +272,7 @@ TEST(http_route) {
 		http_route(ctx, uri, request_test_handler, (void *)(intptr_t)i);
 	}
 
-	conn = http_download( "localhost", atoi(HTTP_PORT), 0, ebuf, sizeof(ebuf), "%s", request);
+	conn = http_download( "localhost", atoi(HTTP_PORT), 0, "%s", request);
 	ASSERT(conn != NULL);
 	delay(10000);
 	http_close_connection(conn);

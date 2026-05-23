@@ -260,8 +260,6 @@ struct ws_subprotocols_s {
 struct http_cb_info {
 	/* handler type */
 	int handler_type;
-	int removing;
-	unsigned int refcount;
 	size_t uri_len;
 	/* Name/Pattern of the URI. */
 	char *uri;
@@ -322,7 +320,7 @@ struct file {
 	string_t membuf; /* Non-NULL if file data is in memory */
 };
 
-#define STRUCT_FILE_INITIALIZER {0, 0, (uint64_t)0, (time_t)0, NULL, NULL}
+#define STRUCT_FILE_INITIALIZER {0, 0, (uint64_t)0, (time_t)0, NULL, NULL, NULL}
 
 /* `HttPi` server `ini` context options, an array of records passed in when a context is created */
 struct ini_option {
@@ -331,6 +329,13 @@ struct ini_option {
 	int type;
 	/* value of the option */
 	string_t default_value;
+};
+
+struct error_data {
+	unsigned code;           /* error code (number) */
+	unsigned code_sub;       /* error sub code (number) */
+	string text;              /* buffer for error text */
+	size_t text_buffer_size; /* size of buffer of "text" */
 };
 
 /*
@@ -513,9 +518,8 @@ struct httpi_s {
 	/* Transfer-Encoding is chunked:
 	 * 0 = not chunked,
 	 * 1 = chunked, not yet, or some data read,
-	 * 2 = chunked, has error,
-	 * 3 = chunked, all data read except trailer,
-	 * 4 = chunked, all data read */
+	 * 2 = chunked, all data read,
+	 * 3 = chunked, has error */
 	int is_chunked;
 	/* Port at client side */
 	int remote_port;
@@ -532,6 +536,12 @@ struct httpi_s {
 	int websocket_deflate_flush;
 	/* Number of requests handled by this connection */
 	int handled_requests;
+	/* Throttling, bytes/sec. <= 0 means no throttle */
+	int throttle;
+	/* Bytes sent this second */
+	int last_throttle_bytes;
+	/* Last time throttled data was sent */
+	time_t last_throttle_time;
 	/* Time (since system start) when the request was received */
 	uint64_t req_time;
 	/* Time (wall clock) when connection was established */
@@ -765,6 +775,13 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
 int read_message(http_t *conn, char *buf, int bufsiz, int *nread);
 
 int get_message(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
+
+/*
+ * Check whether full request is buffered. Return:
+ * -1  if request is malformed
+ *  0  if request is not yet fully buffered
+ * >0  actual request length, including last \r\n\r\n */
+int get_http_header_len(string_t buf, int buflen);
 
 /*
  * Set the port options for a context.

@@ -433,6 +433,8 @@ C_API void task_exception_set(void *);
 C_API void task_scope_set(ex_memory_t *);
 C_API ex_memory_t *task_scope(void);
 C_API ptrdiff_t task_code(void);
+C_API void *task_erred(tasks_t *t, int code);
+C_API char *task_erred_str(void);
 
 /* Set tasks `user_data`, a ~per~ `task` storage place,
 use for a `this` like object behavior. */

@@ -810,6 +810,7 @@ static FORCEINLINE int _read_all(http_t *conn, char *buf, int len) {
 		} else if (n == 0) {
 			break; /* No more data to read */
 		} else {
+			conn->req.consumed_content += n;
 			nread += n;
 			len -= n;
 		}
@@ -865,15 +866,25 @@ static int _read_inner(http_t *conn, void *buf, size_t len) {
 		}
 
 		/* We have returned all buffered data. Read new data from the remote socket. */
-		if ((n = /*tls_reader(socket2fd(conn->client->sock), (char *)buf, len64)*/
-			_read_all(conn, (char *)buf, len64)) > 0) {
-			conn->req.consumed_content += n;
+		if ((n = _read_all(conn, (char *)buf, len64)) >= 0) {
 			nread += n;
 		} else {
 			nread = ((nread > 0) ? nread : n);
 		}
 	}
 	return (int)nread;
+}
+
+static char http_getc(http_t *conn) {
+	char c;
+	if (conn == NULL) {
+		return 0;
+	}
+	conn->req.content_len++;
+	if (_read_inner(conn, &c, 1) <= 0) {
+		return (char)0;
+	}
+	return c;
 }
 
 int http_read(http_t *conn, void_t buf, size_t len) {
@@ -887,150 +898,84 @@ int http_read(http_t *conn, void_t buf, size_t len) {
 
 	if (conn->req.is_chunked) {
 		size_t all_read = 0;
+
 		while (len > 0) {
-			if (conn->req.is_chunked >= 3) {
+			if (conn->req.is_chunked == 2) {
 				/* No more data left to read */
 				return 0;
 			}
-			if (conn->req.is_chunked != 1) {
+
+			if (conn->req.is_chunked == 3) {
 				/* Has error */
 				return -1;
 			}
 
-			if (conn->req.consumed_content != conn->req.content_len) {
-				/* copy from the current chunk */
-				int read_ret = _read_inner(conn, (char *)buf + all_read, len);
+			if (conn->req.chunk_remainder) {
+				/* copy from the remainder of the last received chunk */
+				long read_ret;
+				size_t read_now =
+					((conn->req.chunk_remainder > len) ? (len)
+						: (conn->req.chunk_remainder));
 
+				conn->req.content_len += (int)read_now;
+				read_ret = _read_inner(conn, (char *)buf + all_read, read_now);
 				if (read_ret < 1) {
 					/* read error */
-					conn->req.is_chunked = 2;
+					conn->req.is_chunked = 3;
 					return -1;
 				}
 
 				all_read += (size_t)read_ret;
+				conn->req.chunk_remainder -= (size_t)read_ret;
 				len -= (size_t)read_ret;
-
-				if (conn->req.consumed_content == conn->req.content_len) {
+				if (conn->req.chunk_remainder == 0) {
 					/* Add data bytes in the current chunk have been read,
 					 * so we are expecting \r\n now. */
-					char x[2];
-					conn->req.content_len += 2;
-					if ((_read_inner(conn, x, 2) != 2) || (x[0] != '\r')
-						|| (x[1] != '\n')) {
+					char x1 = http_getc(conn);
+					char x2 = http_getc(conn);
+					if ((x1 != '\r') || (x2 != '\n')) {
 						/* Protocol violation */
-						conn->req.is_chunked = 2;
+						conn->req.is_chunked = 3;
 						return -1;
 					}
 				}
-
 			} else {
 				/* fetch a new chunk */
-				size_t i;
+				int i = 0;
 				char lenbuf[64];
-				char *end = NULL;
+				char *end = 0;
 				unsigned long chunkSize = 0;
 
-				for (i = 0; i < (sizeof(lenbuf) - 1); i++) {
-					conn->req.content_len++;
-					if (_read_inner(conn, lenbuf + i, 1) != 1) {
-						lenbuf[i] = 0;
-					}
-
-					if ((i > 0) && (lenbuf[i] == ';')) {
-						// chunk extension --> skip chars until next CR
-						//
-						// RFC 2616, 3.6.1 Chunked Transfer Coding
-						// (https://www.rfc-editor.org/rfc/rfc2616#page-25)
-						//
-						// chunk          = chunk-size [ chunk-extension ] CRLF
-						//                  chunk-data CRLF
-						// ...
-						// chunk-extension= *( ";" chunk-ext-name [ "="
-						// chunk-ext-val ] )
-						do
-							++conn->req.content_len;
-						while (_read_inner(conn, lenbuf + i, 1) == 1
-							&& lenbuf[i] != '\r');
-					}
-
-					if ((i > 0) && (lenbuf[i] == '\r')
-						&& (lenbuf[i - 1] != '\r')) {
+				for (i = 0; i < ((int)sizeof(lenbuf) - 1); i++) {
+					lenbuf[i] = http_getc(conn);
+					if (i > 0 && lenbuf[i] == '\r' && lenbuf[i - 1] != '\r') {
 						continue;
 					}
-
-					if ((i > 1) && (lenbuf[i] == '\n')
-						&& (lenbuf[i - 1] == '\r')) {
+					if (i > 1 && lenbuf[i] == '\n' && lenbuf[i - 1] == '\r') {
 						lenbuf[i + 1] = 0;
 						chunkSize = strtoul(lenbuf, &end, 16);
 						if (chunkSize == 0) {
 							/* regular end of content */
-							conn->req.is_chunked = 3;
+							conn->req.is_chunked = 2;
 						}
 						break;
 					}
-					if (!isxdigit((unsigned char)lenbuf[i])) {
+					if (!isxdigit(lenbuf[i])) {
 						/* illegal character for chunk length */
-						conn->req.is_chunked = 2;
+						conn->req.is_chunked = 3;
 						return -1;
 					}
 				}
 				if ((end == NULL) || (*end != '\r')) {
 					/* chunksize not set correctly */
-					conn->req.is_chunked = 2;
+					conn->req.is_chunked = 3;
 					return -1;
 				}
-				if (conn->req.is_chunked == 3) {
-					/* try discarding trailer for keep-alive */
-
-					// We found the last chunk (length 0) including the
-					// CRLF that terminates that chunk. Now follows a possibly
-					// empty trailer and a final CRLF.
-					//
-					// see RFC 2616, 3.6.1 Chunked Transfer Coding
-					// (https://www.rfc-editor.org/rfc/rfc2616#page-25)
-					//
-					// Chunked-Body   = *chunk
-					// 	                last-chunk
-					// 	                trailer
-					// 	                CRLF
-					// ...
-					// last-chunk     = 1*("0") [ chunk-extension ] CRLF
-					// ...
-					// trailer        = *(entity-header CRLF)
-
-					int crlf_count = 2; // one CRLF already determined
-					while (crlf_count < 4 && conn->req.is_chunked == 3) {
-						++conn->req.content_len;
-						if (_read_inner(conn, lenbuf, 1) == 1) {
-							if ((crlf_count == 0 || crlf_count == 2)) {
-								if (lenbuf[0] == '\r')
-									++crlf_count;
-								else
-									crlf_count = 0;
-							} else {
-								// previous character was a CR
-								// --> next character must be LF
-
-								if (lenbuf[0] == '\n')
-									++crlf_count;
-								else
-									conn->req.is_chunked = 2;
-							}
-						} else
-							// premature end of trailer
-							conn->req.is_chunked = 2;
-					}
-
-					if (conn->req.is_chunked == 2)
-						return -1;
-					else
-						conn->req.is_chunked = 4;
-
+				if (chunkSize == 0) {
 					break;
 				}
 
-				/* append a new chunk */
-				conn->req.content_len += (int64_t)chunkSize;
+				conn->req.chunk_remainder = chunkSize;
 			}
 		}
 
@@ -1102,6 +1047,8 @@ FORCEINLINE int64_t _write_all(http_t *conn, string buf, int64_t len) {
 }
 
 int http_write(http_t *conn, const_t buf, size_t len) {
+	int n = 0, allowed = 0, total = 0;
+	time_t now = 0;
 	if (conn == NULL) {
 		return 0;
 	}
@@ -1116,8 +1063,39 @@ int http_write(http_t *conn, const_t buf, size_t len) {
 	//	http2_data_frame_head(conn, len, 0);
 	}
 
-	//int total = tls_writer(socket2fd(conn->client->sock), (string)buf, len);
-	int total = _write_all(conn, (string)buf, len);
+	if (conn->req.throttle > 0) {
+		if ((now = time(NULL)) != conn->req.last_throttle_time) {
+			conn->req.last_throttle_time = now;
+			conn->req.last_throttle_bytes = 0;
+		}
+
+		allowed = conn->req.throttle - conn->req.last_throttle_bytes;
+		if (allowed > (int64_t)len) {
+			allowed = (int64_t)len;
+		}
+
+		if ((total = _write_all(conn, (string)buf, (int64_t)allowed)) == allowed) {
+			buf = (string)buf + total;
+			conn->req.last_throttle_bytes += total;
+			while (total < (int64_t)len && conn->ctx->status == HTTP_STATUS_RUNNING) {
+				allowed = (conn->req.throttle > ((int64_t)len - total))
+					? (int64_t)len - total
+					: conn->req.throttle;
+				if ((n = _write_all(conn, (string)buf, (int64_t)allowed)) != allowed) {
+					break;
+				}
+
+				delay(1000);
+				conn->req.last_throttle_bytes = allowed;
+				conn->req.last_throttle_time = time(NULL);
+				buf = (string)buf + n;
+				total += n;
+			}
+		}
+	} else {
+		total = _write_all(conn, (string)buf, len);
+	}
+
 	if (total > 0) {
 		conn->req.num_bytes_sent += total;
 	}
@@ -1373,7 +1351,7 @@ void http_log(enum http_dbg debug_level, http_t *conn, string_t fmt, ...) {
  * -1  if request is malformed
  *  0  if request is not yet fully buffered
  * >0  actual request length, including last \r\n\r\n */
-static int get_http_header_len(string_t buf, int buflen) {
+int get_http_header_len(string_t buf, int buflen) {
 	int i;
 	for (i = 0; i < buflen; i++) {
 		/* Do an unsigned comparison in some conditions below */
@@ -1403,6 +1381,19 @@ static int get_http_header_len(string_t buf, int buflen) {
 	}
 
 	return 0;
+}
+
+string http_read_until(http_t *conn, int *size) {
+	char buf[Kb(4)], *data = NULL;
+	int len = 0;
+	*size = 0;
+	while ((len = http_read(conn, buf, sizeof(buf))) > 0) {
+		*size += len;
+		data = realloc(data, *size);
+		memcpy(data + *size - len, buf, len);
+	}
+
+	return data;
 }
 
 int read_message(http_t *conn, char *buf, int bufsiz, int *nread) {
@@ -2422,16 +2413,15 @@ http_t *http_connect_client(string_t host, int port,
 	return http_connect_client_impl(&opts, use_ssl, &error);
 }
 
-http_t *http_download(string_t host, int port,
-	int use_ssl, string ebuf, size_t ebuf_len, string_t fmt, ...) {
+http_t *http_download(string_t host, int port, int use_ssl, string_t fmt, ...) {
 	http_t *conn = null;
 	va_list ap;
 	int i;
 	int reqerr;
 
-	if (ebuf_len > 0) {
-		ebuf[0] = '\0';
-	}
+	string ebuf = task_erred_str();
+	size_t ebuf_len = ERR_BUF;
+	ebuf[0] = '\0';
 
 	va_start(ap, fmt);
 
@@ -2466,6 +2456,106 @@ http_t *http_download(string_t host, int port,
 	return conn;
 }
 
+int http_upload(http_t *conn, string_t destination_dir) {
+	char path[PATH_MAX], tmp_path[PATH_MAX], fname[1024];
+	struct file fp = STRUCT_FILE_INITIALIZER;
+	int bl, len = 0, num_uploaded_files = 0;
+	string s, buf = null;
+
+	/* Request looks like this:
+	 *
+	 * POST /upload HTTP/1.1
+	 * Host: 127.0.0.1:8080
+	 * Content-Length: 244894
+	 * Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryRVr
+	 *
+	 * ------WebKitFormBoundaryRVr
+	 * Content-Disposition: form-data; name="file"; filename="accum.png"
+	 * Content-Type: image/png
+	 *
+	 * <89>PNG
+	 * <PNG DATA>
+	 * ------WebKitFormBoundaryRVr */
+
+	/* Extract boundary string from the Content-Type header */
+	if (http_get_header(conn, "Content-Type") == NULL || conn->boundary == NULL) {
+		return num_uploaded_files;
+	}
+
+	bl = strlen(conn->boundary);
+	/* Do some sanity checks for boundary lengths. */
+	if (bl > 70 || bl < 4) {
+		/* From RFC 2046:
+		 * Boundary delimiters must not appear within the
+		 * encapsulated material, and must be no longer
+		 * than 70 characters, not counting the two
+		 * leading hyphens. A boundary string of less than 4 bytes makes no sense either. */
+
+		 /* Requests with long boundaries are not RFC compliant, maybe they
+		  * are intended attacks to interfere with this algorithm. */
+		conn->req.must_close = 1;
+		return num_uploaded_files;
+	}
+
+	buf = http_read_until(conn, &len);
+	/* Get headers for this part of the multipart message */
+	conn->body = buf;
+	conn->content_length = len;
+	parse_multipart(conn);
+	foreach(names in http_multi_names(conn)) {
+		string name = names.char_ptr;
+		if (http_multi_is_file(conn, name)) {
+			fname[1023] = 0;
+			snprintf(fname, sizeof(fname) - 1, "%s", http_multi_filename(conn, name));
+			/* Construct destination file name. Do not allow paths to have
+		 	 * slashes. */
+			if ((s = strrchr(fname, '/')) == NULL &&
+				(s = strrchr(fname, '\\')) == NULL) {
+				s = fname;
+			} else {
+				s++;
+			}
+
+			/* There data is written to a temporary file first. */
+			/* Different users should use a different destination_dir. */
+			snprintf(path, sizeof(path) - 1, "%s%s%s", destination_dir, SYS_DIRSEP, s);
+			strcpy(tmp_path, path);
+			strcat(tmp_path, "~");
+
+			/* We open the file with exclusive lock held. This guarantee us
+			 * there is no other thread can save into the same file
+			 * simultaneously. */
+			fp.pf = promise_fopen(tmp_path, "wb");
+			/* File opened in binary mode. */
+			if ((fp.fp = (FILE *)promise_wait(fp.pf).object) == NULL)
+				break;
+
+			void_t data = http_multi_body(conn, name);
+			size_t sdata = http_multi_length(conn, name);
+			if ((int)promise_fwrite(fp.pf, data, 1, sdata - 2, fp.fp) > 0) {
+				promise_fclose(fp.pf, fp.fp);
+				fs_unlink(path);
+				fs_rename(tmp_path, path);
+				num_uploaded_files++;
+				if (conn && conn->ctx && conn->ctx->callbacks.upload != NULL)
+					conn->ctx->callbacks.upload(conn, path);
+			} else {
+				promise_fclose(fp.pf, fp.fp);
+				fs_unlink(tmp_path);
+			}
+			fp.pf = null;
+			fp.fp = null;
+		}
+	}
+
+	if (fp.pf)
+		promise_clean(fp.pf);
+
+	free(buf);
+	conn->body = null;
+	return num_uploaded_files;
+}
+
 void http_set_handler(http_ini_t *ctx,
 	string_t uri, enum route_type_t handler_type,
 	bool is_delete_request, route_cb handler,
@@ -2475,23 +2565,24 @@ void http_set_handler(http_ini_t *ctx,
 	auth_cb auth_handler, void_t cbdata) {
 	struct http_cb_info *tmp_rh, **lastref;
 	size_t urilen = strlen(uri);
-	struct ini_domain_s *dom_ctx = &ctx->host;
 
 	if (handler_type == WEBSOCKET_HANDLER) {
 		if (handler != NULL) {
 			return;
 		}
-		if (!is_delete_request && (connect_handler == NULL)
-			&& (ready_handler == NULL) && (data_handler == NULL)
-			&& (close_handler == NULL)) {
+		if (!is_delete_request && connect_handler == NULL
+		    && ready_handler == NULL
+		    && data_handler == NULL
+		    && close_handler == NULL) {
 			return;
 		}
 		if (auth_handler != NULL) {
 			return;
 		}
 	} else if (handler_type == REQUEST_HANDLER) {
-		if ((connect_handler != NULL) || (ready_handler != NULL)
-			|| (data_handler != NULL) || (close_handler != NULL)) {
+		if (connect_handler != NULL || ready_handler != NULL
+		    || data_handler != NULL
+		    || close_handler != NULL) {
 			return;
 		}
 		if (!is_delete_request && (handler == NULL)) {
@@ -2500,48 +2591,34 @@ void http_set_handler(http_ini_t *ctx,
 		if (auth_handler != NULL) {
 			return;
 		}
-	} else if (handler_type == AUTH_HANDLER) {
+	} else {
 		if (handler != NULL) {
 			return;
 		}
-		if ((connect_handler != NULL) || (ready_handler != NULL)
-			|| (data_handler != NULL) || (close_handler != NULL)) {
+		if (connect_handler != NULL || ready_handler != NULL
+		    || data_handler != NULL
+		    || close_handler != NULL) {
 			return;
 		}
 		if (!is_delete_request && (auth_handler == NULL)) {
 			return;
 		}
-	} else {
-		/* Unknown handler type. */
+	}
+
+	if (!ctx) {
 		return;
 	}
 
-	if (!ctx || !dom_ctx) {
-		/* no context available */
-		return;
-	}
-
-	atomic_lock(&ctx->host.nonce_mutex);
+	atomic_lock(&ctx->nonce_mutex);
 
 	/* first try to find an existing handler */
-	do {
-		lastref = &(dom_ctx->handlers);
-		for (tmp_rh = dom_ctx->handlers; tmp_rh != NULL;
-			tmp_rh = tmp_rh->next) {
-			if (tmp_rh->handler_type == handler_type
-				&& (urilen == tmp_rh->uri_len) && !strcmp(tmp_rh->uri, uri)) {
+	lastref = &(ctx->handlers);
+	for (tmp_rh = ctx->handlers; tmp_rh != NULL; tmp_rh = tmp_rh->next) {
+		if (tmp_rh->handler_type == handler_type) {
+			if (urilen == tmp_rh->uri_len && !strcmp(tmp_rh->uri, uri)) {
 				if (!is_delete_request) {
 					/* update existing handler */
 					if (handler_type == REQUEST_HANDLER) {
-						/* Wait for end of use before updating */
-						if (tmp_rh->refcount) {
-							atomic_unlock(&ctx->host.nonce_mutex);
-							yield();
-							atomic_lock(&ctx->host.nonce_mutex);
-							/* tmp_rh might have been freed, search again. */
-							break;
-						}
-						/* Ok, the handler is no more use -> Update it */
 						tmp_rh->handler = handler;
 					} else if (handler_type == WEBSOCKET_HANDLER) {
 						tmp_rh->subprotocols = subprotocols;
@@ -2555,55 +2632,41 @@ void http_set_handler(http_ini_t *ctx,
 					tmp_rh->cbdata = cbdata;
 				} else {
 					/* remove existing handler */
-					if (handler_type == REQUEST_HANDLER) {
-						/* Wait for end of use before removing */
-						if (tmp_rh->refcount) {
-							tmp_rh->removing = 1;
-							atomic_unlock(&ctx->host.nonce_mutex);
-							yield();
-							atomic_lock(&ctx->host.nonce_mutex);
-							/* tmp_rh might have been freed, search again. */
-							break;
-						}
-						/* Ok, the handler is no more used */
-					}
 					*lastref = tmp_rh->next;
 					free(tmp_rh->uri);
 					free(tmp_rh);
 				}
-				atomic_unlock(&ctx->host.nonce_mutex);
+				atomic_unlock(&ctx->nonce_mutex);
 				return;
 			}
-			lastref = &(tmp_rh->next);
 		}
-	} while (tmp_rh != NULL);
+		lastref = &(tmp_rh->next);
+	}
 
 	if (is_delete_request) {
 		/* no handler to set, this was a remove request to a non-existing
 		 * handler */
-		atomic_unlock(&ctx->host.nonce_mutex);
+		atomic_unlock(&ctx->nonce_mutex);
 		return;
 	}
 
 	tmp_rh = (struct http_cb_info *)calloc(1, sizeof(struct http_cb_info));
 	if (tmp_rh == NULL) {
-		atomic_unlock(&ctx->host.nonce_mutex);
+		atomic_unlock(&ctx->nonce_mutex);
 		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
 		return;
 	}
 
 	tmp_rh->uri = str_dup_ex(uri);
-	if (tmp_rh->uri == NULL) {
-		atomic_unlock(&ctx->host.nonce_mutex);
-		tmp_rh = free_ex(tmp_rh);
+	if (!tmp_rh->uri) {
+		atomic_unlock(&ctx->nonce_mutex);
+		free(tmp_rh);
 		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
 		return;
 	}
 
 	tmp_rh->uri_len = urilen;
 	if (handler_type == REQUEST_HANDLER) {
-		tmp_rh->refcount = 0;
-		tmp_rh->removing = 0;
 		tmp_rh->handler = handler;
 	} else if (handler_type == WEBSOCKET_HANDLER) {
 		tmp_rh->subprotocols = subprotocols;
@@ -2619,7 +2682,7 @@ void http_set_handler(http_ini_t *ctx,
 	tmp_rh->next = NULL;
 
 	*lastref = tmp_rh;
-	atomic_unlock(&ctx->host.nonce_mutex);
+	atomic_unlock(&ctx->nonce_mutex);
 }
 
 FORCEINLINE void http_route(http_ini_t *ctx, string_t uri, route_cb handler, void_t cbdata) {

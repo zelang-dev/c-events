@@ -795,8 +795,13 @@ EVENTS_INLINE int async_fwrite(const char *path, const char *mode,
 }
 
 static EVENTS_INLINE void *_os_fwrite(param_t args) {
-	return casting(fwrite((const void *)args[0].object,
-		args[1].max_size, args[2].max_size, (FILE *)args[3].object));
+	FILE *fi = (FILE *)args[3].object;
+	int count = fwrite((const void *)args[0].object, args[1].max_size, args[2].max_size, fi);
+	if (count > 0)
+		fflush(fi);
+
+	return casting(count);
+
 }
 
 EVENTS_INLINE size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream) {
@@ -860,7 +865,10 @@ EVENTS_INLINE int promise_fgetc(promise *p, FILE *stream) {
 }
 
 EVENTS_INLINE int promise_fclose(promise *p, FILE *stream) {
-	int r = promise_wait(promise_work(p, _os_fclose, 1, stream)).integer;
+	int r = DATA_INVALID;
+	if (!is_empty(stream))
+		r = promise_wait(promise_work(p, _os_fclose, 1, stream)).integer;
+
 	promise_clean(p);
 	return r;
 }

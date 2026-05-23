@@ -458,6 +458,7 @@ struct events_task_s {
 	void *args;
 	void *user_data;
 	values_t *results;
+	char err_buf[ERR_BUF + 1];
 	char name[MAX_PATH];
 };
 
@@ -590,7 +591,6 @@ tasks_t *task_derive(void *memory, size_t heapsize, bool is_thread);
 void task_delete(tasks_t *co);
 void task_switch(tasks_t *co);
 uint32_t task_push(tasks_t *t, bool has_result);
-void *task_erred(tasks_t *t, int code);
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping);
 int results_tid(uint32_t rid);
 

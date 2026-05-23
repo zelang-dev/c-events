@@ -280,6 +280,8 @@ promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...) {
 
 			f->args = args;
 			f->func = fn;
+			f->result->extended = null;
+			f->result->value.integer = 0;
 			f->result->is_array = false;
 			atomic_flag_clear(&f->mutex);
 			atomic_flag_clear(&f->done);

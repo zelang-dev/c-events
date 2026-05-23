@@ -594,7 +594,8 @@ bool http_set_ini_option(http_ini_t *ctx, string_t option, string_t value) {
 		debug_info("warning: %s: duplicate option"CLR_LN, option);
 	}
 
-	ctx->host.config[idx] = str_dup(value);
+	ctx->host.config[idx] = (string)value;
+	//ctx->host.config[idx] = str_dup(value);
 	debug_info("[%s] -> [%s]"CLR_LN, option, value);
 	return true;
 }

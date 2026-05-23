@@ -244,7 +244,7 @@ TEST(httpi_https_start) {
 	http_clb_t cb = http_callbacks(null, test_log_message, null, null, null, null);
 
 	/* Initialize the library */
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, server_opts(OPTIONS)), DATA_INFO_SERVER));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, server_opts(OPTIONS)), DATA_HTTP_SERVER));
 
 	/* Start the server */
 	httpi_start(ctx, main_main);

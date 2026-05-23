@@ -1211,6 +1211,10 @@ void *task_erred(tasks_t *t, int code) {
 	return null;
 }
 
+EVENTS_INLINE char *task_erred_str(void) {
+	return active_task()->err_buf;
+}
+
 EVENTS_INLINE void task_exception_set(void *err) {
 	if (!is_empty(active_task()->scope) && is_ptr_usable(active_task()->scope))
 		active_task()->scope->err = err;

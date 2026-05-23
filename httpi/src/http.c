@@ -417,11 +417,13 @@ void parse_multipart(http_t *this) {
 		bool found;
 
 		snprintf(scrape, ARRAY_SIZE, "--%s", this->boundary);
-		if (!is_empty(value = http_get_header(this, "Content-Length"))) {
-			this->content_length = atoi(value);
-			boundary = (string *)mem_split_ex(this->body, this->content_length, this->boundary, &count);
+		if (this->content_length == -1) {
+			if (!is_empty(value = http_get_header(this, "Content-Length"))) {
+				this->content_length = atoi(value);
+			}
 		}
 
+		boundary = (string *)mem_split_ex(this->body, this->content_length, this->boundary, &count);
 		if (is_empty(boundary))
 			return;
 
@@ -558,7 +560,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 	this->raw_pos = s_pos;
 	this->raw[s_pos] = '\0';
 	messages = this->raw;
-	this->body = trim(trim_at(messages, s_pos + this->is_valid));
+	this->body = trim_at(messages, s_pos + this->is_valid);
 	lines = str_has(messages, "\n") ? str_split_ex(messages, "\n", &count) : nullptr;
 	this->raw[this->raw_pos] = (this->is_valid == 2) ? '\n' : '\r';
 	if (count >= 0) {
@@ -610,7 +612,9 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 						this->query_string = trim_at(this->url_to, (s_pos));
 						parameters = trim_at(this->url_to, (s_pos + 1));
 						// parse the parameters
-						parse_str(this, parameters, "&", nullptr);
+						if (str_has(parameters, "&"))
+							parse_str(this, parameters, "&", nullptr);
+
 						this->url_to[s_pos] = '?';
 					}
 					snprintf(this->protocol, sizeof(this->protocol), "%s", trim(params2));

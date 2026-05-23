@@ -1,0 +1,37 @@
+name: CentOS Stream 9+
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-centos:
+    name: CentOS
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    container: quay.io/centos/centos:stream9
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Prepare
+        run: |
+          dnf install git make cmake gcc gcc-c++ binutils glibc-devel autoconf libtool bison automake libxml2-devel libatomic pkg-config openssl-devel sudo which -y
+      - name: Find openssl
+        run: |
+            whereis openssl
+            export OPENSSL_ROOT_DIR=/usr/bin/openssl
+            export OPENSSL_INCLUDE_DIR=/usr/include/openssl
+            export OPENSSL_CRYPTO_LIBRARY=/usr/lib64/libcrypto.so.3
+            export OPENSSL_SSL_LIBRARY=/usr/lib64/libssl.so.3
+      - name: Configure & build
+        run: |
+            mkdir build
+            cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Debug -DOPENSSL_ROOT_DIR=/usr/bin/openssl -DOPENSSL_INCLUDE_DIR=/usr/include/openssl -DOPENSSL_CRYPTO_LIBRARY=/usr/lib64/libcrypto.so.3 -DOPENSSL_SSL_LIBRARY=/usr/lib64/libssl.so.3
+            cmake --build .
+      - name: Run tests
+        run: |
+            cd build
+            ctest -C Debug --output-on-failure -F

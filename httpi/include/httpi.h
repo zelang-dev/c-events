@@ -1,9 +1,9 @@
 #ifndef _HTTPI_H_
 #define _HTTPI_H_
 
-#define HTTPI_VERSION "0.8.0"
+#define HTTPI_VERSION "0.1.0"
 #define HTTPI_VERSION_MAJOR (0)
-#define HTTPI_VERSION_MINOR (8)
+#define HTTPI_VERSION_MINOR (1)
 #define HTTPI_VERSION_PATCH (0)
 
 #include <map.h>
@@ -54,13 +54,6 @@ enum http_dbg {
 	DEBUG_WARNING = 0x30,
 	/* All error, warning and informational messages are generated */
 	DEBUG_INFO = 0x40
-};
-
-struct error_data {
-	unsigned code;           /* error code (number) */
-	unsigned code_sub;       /* error sub code (number) */
-	string text;              /* buffer for error text */
-	size_t text_buffer_size; /* size of buffer of "text" */
 };
 
 struct client_options {
@@ -138,13 +131,6 @@ typedef string_t(*file_open_cb)(http_t *conn, string_t path, size_t *data_len);
  * - 0: callback already handled the error. */
 typedef int (*http_error_cb)(http_t *, int status);
 
-/* Called after `HttPi` context has been created,
- * before requests are processed.
- *
- * Parameters:
- * - ctx: `server` handle */
-typedef void (*init_context_cb)(const http_ini_t *ctx);
-
 /* Called when `httpi` has uploaded a file to a temporary directory as a
  * result of `http_upload()` call.
  *
@@ -162,7 +148,6 @@ typedef struct http_clb_s {
 	log_access_cb log_access;
 	file_open_cb open_file;
 	http_error_cb http_error;
-	init_context_cb init_context;
 	upload_form_cb upload;
 } http_clb_t;
 
@@ -223,6 +208,7 @@ C_API int http_get_request_link(http_t *conn, string buf, size_t buflen);
  * - < 0   read error. No more data could be read from the connection.
  * - > 0   number of bytes read into the buffer. */
 C_API int http_read(http_t *conn, void_t buf, size_t len);
+C_API string http_read_until(http_t *conn, int *size);
 
 /* Send contents of the file without HTTP headers.
  * The code must send a valid HTTP response header before using this function.
@@ -296,13 +282,10 @@ C_API int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len);
 
 /* Transfer-Encoding is chunked:
  * - 0 = not chunked,
- * - 1 = chunked, not yet, or some data read,
- * - 2 = chunked, has error,
- * - 3 = chunked, all data read except trailer,
- * - 4 = chunked, all data read */
+ * 1 = chunked, not yet read, or some data read,
+ * 2 = chunked, all data read,
+ * 3 = chunked, has error */
 C_API int http_chunk_state(http_t *conn);
-
-C_API int httpi_read(http_t *conn, void_t buf, size_t len);
 
 /* Initialize a new HTTP response
  * Parameters:
@@ -418,8 +401,7 @@ C_API http_t *http_connect_client(string_t host, int port,
  * `http_download` is equivalent to calling `http_connect_client` followed by
  * `http_printf` and `http_get_response`. Using these three functions directly may
  *  allow more control as compared to using `http_download`. */
-C_API http_t *http_download(string_t host, int port,
-	int use_ssl, string ebuf, size_t ebuf_len, string_t fmt, ...);
+C_API http_t *http_download(string_t host, int port, int use_ssl, string_t fmt, ...);
 
 /* Process form data.
  *
@@ -520,7 +502,7 @@ C_API http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 void httpi_start(http_ini_t *ctx, http_main_cb start);
 
 /* Add an additional domain to an already running web server. */
-C_API int http_add_domain(http_ini_t *ctx, string_t *options, struct error_data *error);
+C_API int http_add_domain(http_ini_t *ctx, string_t *options);
 
 /*
  * Stores in incoming body for future processing.

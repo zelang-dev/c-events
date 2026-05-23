@@ -1080,7 +1080,7 @@ static void start_httpi(int argc, char *argv[]) {
 			die("Invalid options");
 		}
 
-		j = http_add_domain(g_ctx, (string_t *)options, null);
+		j = http_add_domain(g_ctx, (string_t *)options);
 		if (j < 0) {
 			die("Error loading domain file %s: %i", g_add_domain[i], j);
 		} else {
