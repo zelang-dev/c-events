@@ -547,7 +547,6 @@ C_API int http_websocket_client_write(http_t *conn, websocket_type opcode, strin
  * - host: host to connect to, i.e. "echo.websocket.org" or "192.168.1.1" or "localhost"
  * - port: server port
  * - use_ssl: make a secure connection to server
- * - error_buffer, error_buffer_size: buffer for an error message
  * - path: server path you are trying to connect to, i.e. if connection to localhost/app, path should be "/app"
  * - origin: value of the Origin HTTP header
  * - data_func: callback that should be used when data is received from the server
@@ -555,22 +554,18 @@ C_API int http_websocket_client_write(http_t *conn, websocket_type opcode, strin
  *
  *  Return:
  * - On success, valid `http_t` object.
- * - On error, NULL. Se error_buffer for details. */
-C_API http_t *http_connect_websocket_client(string_t host, int port, int use_ssl,
-	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
+ * - On error, NULL. See `task_erred_str()` for details. */
+C_API http_t *http_connect_websocket_client(string_t host, int port, int use_ssl, string_t path, string_t origin,
 	ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
 
 C_API http_t *http_connect_websocket_client_extensions(string_t host, int port, int use_ssl,
-	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
-	string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
+	string_t path, string_t origin, string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
 
 C_API http_t *http_connect_websocket_client_secure(struct client_options *client_options,
-	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
-	ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
+	string_t path, string_t origin, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
 
 C_API http_t *http_connect_websocket_client_secure_extensions(struct client_options *client_options,
-	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
-	string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
+	string_t path, string_t origin, string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
 
 #ifdef __cplusplus
 }

@@ -238,7 +238,6 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 		foreach(sockets in ctx->server_sockets) {
 			http_socket *socket = (http_socket *)sockets.object;
 			events_del(socket->sock);
-			tls_closer(socket2fd(socket->sock));
 			/* For unix domain sockets, the socket name represents a file that has
 			 * to be deleted. */
 			/* See https://stackoverflow.com/questions/15716302/so-reuseaddr-and-af-unix */
@@ -246,11 +245,13 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 				&& (socket->sock != INVALID_SOCKET))
 				(void)remove(socket->lsa.sun.sun_path);
 
-			socket->sock = INVALID_SOCKET;
 			if (http_atexit_ctrl_c_flag)
 				events_task_unwind(socket->task);
 			else if (!is_empty(socket->task))
 				resume(socket->task);
+
+			tls_closer(socket2fd(socket->sock));
+			socket->sock = INVALID_SOCKET;
 
 			free(socket);
 		}
@@ -588,9 +589,6 @@ static void http_server_task(param_t args) {
 			accept_handler(http_handler, socket2fd(conn->client->sock));
 		}
 	}
-
-	if (listener->has_ssl)
-		tls_config_free(tls_get_config(socket2fd(listener->sock)));
 }
 
 int http_server(http_ini_t *ctx) {
@@ -616,7 +614,6 @@ static void *http_main_task(param_t args) {
 	if (!is_empty(start))
 		start((http_ini_t *)args[0].object);
 
-	yield();
 	return 0;
 }
 

@@ -195,8 +195,8 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				memcpy(data, buf + header_len, len);
 				error = 0;
 				while ((uint64_t)len < data_len && !task_is_canceled()) {
-					n = tls_reader(socket2fd(conn->client->sock), (string)(data + len), (int)(data_len - len));
-					if (n <= 0) {
+					n = _read_inner(conn, (void_t)(data + len), (data_len - len));
+					if (n < 0) {
 						error = 1;
 						break;
 					} else if (n > 0) {
@@ -240,20 +240,19 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			exit_by_callback = 0;
 			if (enable_ping_pong && ((mop & 0xF) == WS_OPS_PONG)) {
 				/* filter PONG messages */
+				debug_info("PONG from %s:%u", conn->req.remote_addr, conn->req.remote_port);
 				/* No unanswered PINGs left */
 				ping_count = 0;
-				debug_info("PONG from %s:%u", conn->req.remote_addr, conn->req.remote_port);
 			} else if (enable_ping_pong
 				&& ((mop & 0xF) == WS_OPS_PING)) {
 		 			/* reply PING messages */
-					ret = http_websocket_write(conn, WS_OPS_PONG, (string_t)data, (size_t)data_len);
 					debug_info("Reply PING from %s:%u",	conn->req.remote_addr, conn->req.remote_port);
+					ret = http_websocket_write(conn, WS_OPS_PONG, (string_t)data, (size_t)data_len);
 				if (ret <= 0) {
 					/* Error: send failed */
 					debug_info("Reply PONG failed (%i)", ret);
 					break;
 				}
-
 			} else {
 				/* Exit the loop if callback signals to exit (server side),
 				 * or "connection close" opcode received (client side). */
@@ -352,11 +351,17 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			}
 
 			if (exit_by_callback) {
+				debug_info("Callback requests to close connection from %s:%u",
+					conn->req.remote_addr,
+					conn->req.remote_port);
 				break;
 			}
 
 			if ((mop & 0xf) == WS_OPS_CLOSE) {
 				/* Opcode == 8, connection close */
+				debug_info("Message requests to close connection from %s:%u",
+					conn->req.remote_addr,
+					conn->req.remote_port);
 				break;
 			}
 
@@ -364,10 +369,10 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 		} else {
 			/* Read from the socket into the next available location in the
 			 * message queue. */
-			n = tls_reader(socket2fd(conn->client->sock), conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
-			if (n <= -2) {
+			n = _read_inner(conn, conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
+			if (n <= 0) {
 				/* Error, no bytes read */
-				http_log(DEBUG_WARNING, null, "PULL from %s:%u failed",
+				debug_info("PULL from %s:%u failed",
 					conn->req.remote_addr,
 					conn->req.remote_port);
 				break;
@@ -381,7 +386,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				if (ctx->status == HTTP_STATUS_RUNNING 	&& (!conn->req.must_close)) {
 					if (ping_count > MAX_UNANSWERED_PING) {
 						/* Stop sending PING */
-						http_log(DEBUG_WARNING, null, "Too many (%i) unanswered ping from %s:%u "
+						debug_info("Too many (%i) unanswered ping from %s:%u "
 							"- closing connection",
 							ping_count,
 							conn->req.remote_addr,
@@ -391,10 +396,13 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 
 					if (enable_ping_pong) {
 						/* Send Websocket PING message */
+						debug_info("PING to %s:%u",
+							conn->req.remote_addr,
+							conn->req.remote_port);
 						ret = http_websocket_write(conn, WS_OPS_PING, NULL,	0);
 						if (ret <= 0) {
 							/* Error: send failed */
-							http_log(DEBUG_WARNING, null, "Send PING failed (%i)", ret);
+							debug_info("Send PING failed (%i)", ret);
 							break;
 						}
 						ping_count++;
@@ -403,19 +411,17 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				/* Timeout: should retry */
 				/* TODO: get timeout def */
 			}
-
-			/* Error, no bytes read */
-			if (n <= 0)
-				break;
-
-			conn->req.data_len += n;
 		}
-
 		if (task_is_canceled())
 			break;
 	}
 
+	/* Leave data processing loop */
 	task_name("webworker #%d", task_id());
+	conn->req.in_websocket_handling = 0;
+	debug_info("Websocket connection %s:%u left data processing loop",
+	            conn->req.remote_addr,
+	            conn->req.remote_port);
 }
 
 void http_websocket_request(http_ini_t *ctx,
@@ -607,6 +613,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 	Bytef *deflated = 0;
 	int use_deflate, retval = -1;
 
+	//atomic_lock(&conn->req.mutex);
 	// Deflate websocket messages over 100kb
 	if (use_deflate = (data_len > Kb(100)) && conn->req.accept_gzip) {
 		if (!conn->req.websocket_deflate_initialized) {
@@ -675,6 +682,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 		}
 	}
 
+	//atomic_unlock(&conn->req.mutex);
 	return retval;
 }
 
@@ -718,7 +726,7 @@ static void_t websocket_client_thread(param_t data) {
 	http_ini_t *ctx;
 	http_t *conn;
 
-	if (!is_empty(cdata = cdata) && !is_empty(conn = cdata->conn) && !is_empty(ctx = conn->ctx)) {
+	if (!is_empty(cdata) && !is_empty(conn = cdata->conn) && !is_empty(ctx = conn->ctx)) {
 		ctx->status = HTTP_STATUS_RUNNING;
 		ctx->worker_taskid = task_id();
 		task_name("ws-client #%d", ctx->worker_taskid);
@@ -919,6 +927,7 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 
 	/* Now upgrade to ws/wss client context */
 	conn->ctx->user_data = user_data;
+	atomic_flag_clear(&conn->req.mutex);
 	conn->ctx->http_type = HTTP_INI_WEBSOCKET;
 
 	/* Start a ~threaded~ `task` to read the websocket client connection
@@ -937,8 +946,6 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 http_t *http_connect_websocket_client(string_t host,
 	int port,
 	int use_ssl,
-	string error_buffer,
-	size_t error_buffer_size,
 	string_t path,
 	string_t origin,
 	ws_data_cb data_func,
@@ -949,6 +956,8 @@ http_t *http_connect_websocket_client(string_t host,
 	client_options.host = host;
 	client_options.port = port;
 
+	string error_buffer = task_erred_str();
+	size_t error_buffer_size = ERR_BUF;
 	return http_connect_websocket_client_impl(&client_options,
 		use_ssl,
 		error_buffer,
@@ -961,13 +970,14 @@ http_t *http_connect_websocket_client(string_t host,
 		user_data);
 }
 
-http_t *http_connect_websocket_client_secure(struct client_options *client_options,
-	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
+http_t *http_connect_websocket_client_secure(struct client_options *client_options, string_t path, string_t origin,
 	ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
 	if (!client_options) {
 		return NULL;
 	}
 
+	string error_buffer = task_erred_str();
+	size_t error_buffer_size = ERR_BUF;
 	return http_connect_websocket_client_impl(client_options,
 		1,
 		error_buffer,
@@ -981,13 +991,15 @@ http_t *http_connect_websocket_client_secure(struct client_options *client_optio
 }
 
 http_t *http_connect_websocket_client_extensions(string_t host, int port, int use_ssl,
-	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
-	string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
+	string_t path, string_t origin, string_t extensions, ws_data_cb data_func,
+	ws_close_cb close_func, void_t user_data) {
 	struct client_options client_options;
 	memset(&client_options, 0, sizeof(client_options));
 	client_options.host = host;
 	client_options.port = port;
 
+	string error_buffer = task_erred_str();
+	size_t error_buffer_size = ERR_BUF;
 	return http_connect_websocket_client_impl(&client_options,
 		use_ssl,
 		error_buffer,
@@ -1001,12 +1013,14 @@ http_t *http_connect_websocket_client_extensions(string_t host, int port, int us
 }
 
 http_t *http_connect_websocket_client_secure_extensions(struct client_options *client_options,
-	string error_buffer, size_t error_buffer_size, string_t path, string_t origin,
-	string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
+	string_t path, string_t origin, string_t extensions, ws_data_cb data_func,
+	ws_close_cb close_func, void_t user_data) {
 	if (!client_options) {
 		return NULL;
 	}
 
+	string error_buffer = task_erred_str();
+	size_t error_buffer_size = ERR_BUF;
 	return http_connect_websocket_client_impl(client_options,
 		1,
 		error_buffer,

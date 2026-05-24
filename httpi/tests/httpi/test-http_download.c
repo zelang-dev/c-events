@@ -395,6 +395,8 @@ void main_main(http_ini_t *ctx) {
 
 	http_close_connection(conn);
 
+	delay(1000);
+
 	/* Stop the test server */
 	http_stop(ctx);
 }

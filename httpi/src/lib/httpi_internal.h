@@ -569,6 +569,9 @@ struct httpi_s {
 	z_stream websocket_inflate_state;
 	/* Client's IP address. */
 	char remote_addr[48];
+	/* Used to ensure atomic transmissions
+	 * for websockets */
+	atomic_flag mutex;
 };
 
 struct http_s {
@@ -897,7 +900,7 @@ void http_websocket_deflate_negotiate(http_t *conn);
 int http_websocket_deflate_init(http_t *conn, int server);
 /* Processes a websocket request on a connection. */
 void http_websocket_request(http_ini_t *ctx, http_t *conn, int is_callback_resource, struct ws_subprotocols_s *subprotocols,
-	ws_connect_cb ws_connect_handler, ws_ready_cb ws_ready_handler, ws_data_cb ws_data_handler, ws_close_cb ws_close_handler, void *cbData);
+	ws_connect_cb ws_connect_handler, ws_ready_cb ws_ready_handler, ws_data_cb ws_data_handler, ws_close_cb ws_close_handler, void_t cbData);
 
 /* Make first character uppercase in string/word, remainder lowercase,
 a word is represented by separator character provided. */
@@ -934,6 +937,11 @@ http_t *fake_conn(http_t *fc, http_ini_t *ctx);
 /* Use to mask data when writing data over a websocket client connection. */
 void mask_data(string_t _in, size_t in_len, uint32_t masking_key, string out);
 
+/* Read from IO channel - opened file descriptor, socket.
+ * Return value:
+ *  >=0 .. number of bytes successfully read
+ *   -1 .. timeout, error */
+int _read_inner(http_t *conn, void *buf, size_t len);
 /*
  * Parse UTC date-time string, and return the corresponding time_t value.
  * This function is used in the if-modified-since calculations */

@@ -187,6 +187,7 @@ static int begin_request_handler_cb(http_t *conn) {
 	if (!strcmp(http_get_url(conn), "/upload")) {
 		ASSERT(http_get_query(conn) != NULL);
 		ASSERT(http_upload(conn, ".") == atoi(http_get_query(conn)));
+		return 1;
 	}
 
 	return 0;
@@ -199,19 +200,6 @@ static int log_message_cb(const http_t *conn, string_t msg)
 	return 0;
 }
 
-int (*begin_request)(http_t *);
-void (*end_request)(const http_t *, int reply_status_code);
-int (*log_message)(const http_t *, string_t message);
-int (*init_ssl)(void *ssl_context, void *user_data);
-int (*websocket_connect)(const http_t *);
-void (*websocket_ready)(http_t *);
-int (*websocket_data)(http_t *, int bits, char *data, size_t data_len);
-void (*connection_close)(http_t *);
-string_t (*open_file)(const http_t *, string_t path, size_t *data_len);
-void (*init_lua)(http_t *, void *lua_context);
-void (*upload)(http_t *, string_t file_name);
-
-static struct http_clb_s CALLBACKS;
 static string_t OPTIONS[] = {
     "document_root",
     ".",
@@ -226,19 +214,6 @@ static string_t OPTIONS[] = {
     NULL,
 };
 
-static char *read_conn(http_t *conn, int *size) {
-	char buf[100], *data = NULL;
-	int len;
-	*size = 0;
-	while ((len = http_read(conn, buf, sizeof(buf))) > 0) {
-		*size += len;
-		data = realloc(data, *size);
-		ASSERT(data != NULL);
-		memcpy(data + *size - len, buf, len);
-	}
-	return data;
-}
-
 static int websocket_data_handler(const http_t *conn, int flags, char *data, size_t data_len, void *cbdata)
 {
 	(void)conn;
@@ -249,25 +224,25 @@ static int websocket_data_handler(const http_t *conn, int flags, char *data, siz
 	return 1;
 }
 
-TEST_WITH(http_connect_websocket_client, use_ssl) {
+void main_main(http_ini_t *ctx) {
+	bool use_ssl = false;
 	http_t *conn;
-	char ebuf[100];
 	int port;
 	http_ini_t *ctx;
+
+	use_ca_certificate("cert.pem");
+	tls_selfserver_set();
 
 	if (use_ssl)
 		port = atoi(HTTPS_PORT);
 	else
 		port = atoi(HTTP_PORT);
-	ASSERT((ctx = httpi_setup(0, &CALLBACKS, NULL, server_opts(OPTIONS))) != NULL);
 
 	/* Try to connect to our own server */
 	/* Invalid port test */
 	conn = http_connect_websocket_client("localhost",
 	                                   0,
 	                                   use_ssl,
-	                                   ebuf,
-	                                   sizeof(ebuf),
 	                                   "/",
 	                                   "http://localhost",
 	                                   (ws_data_cb)websocket_data_handler,
@@ -280,8 +255,6 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 	conn = http_connect_websocket_client("localhost",
 	                                   port,
 	                                   use_ssl,
-	                                   ebuf,
-	                                   sizeof(ebuf),
 	                                   "/",
 	                                   "http://localhost",
 	                                   (ws_data_cb)websocket_data_handler,
@@ -299,8 +272,6 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 	conn = http_connect_websocket_client("websocket.org",
 	                                   port,
 	                                   use_ssl,
-	                                   ebuf,
-	                                   sizeof(ebuf),
 	                                   "/",
 	                                   "http://websocket.org",
 	                                   (ws_data_cb)websocket_data_handler,
@@ -312,8 +283,6 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 	conn = http_connect_websocket_client("echo.websocket.org",
 	                                   0,
 	                                   use_ssl,
-	                                   ebuf,
-	                                   sizeof(ebuf),
 	                                   "/",
 	                                   "http://websocket.org",
 	                                   (ws_data_cb)websocket_data_handler,
@@ -325,8 +294,6 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 	conn = http_connect_websocket_client("echo.websocket.org",
 	                                   port,
 	                                   use_ssl,
-	                                   ebuf,
-	                                   sizeof(ebuf),
 	                                   "/",
 	                                   "http://websocket.org",
 	                                   (ws_data_cb)websocket_data_handler,
@@ -334,26 +301,19 @@ TEST_WITH(http_connect_websocket_client, use_ssl) {
 	                                   NULL);
 	ASSERT(conn != NULL);
 
+	delay(2000);
+
 	http_stop(ctx);
 	return 0;
 }
 
-TEST(main_main) {
-	int i, unused, result = 0;
+TEST(http_connect_websocket_client) {
+	int result = 0;
 
-	/* create test data */
-	fetch_data = (char *)malloc(fetch_data_size);
-	for (i = 0; i < fetch_data_size; i++) {
-		fetch_data[i] = 'a' + i % 10;
-	}
-
+	http_ini_t *ctx;
 	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
-
-	EXEC_TEST_WITH(http_connect_websocket_client, 0);
-	EXEC_TEST_WITH(http_connect_websocket_client, 1);
-
-	/* test completed */
-	free(fetch_data);
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, NULL, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+	httpi_start(ctx, main_main);
 
 	return result;
 }
@@ -370,7 +330,7 @@ TEST(list) {
 	unused = chdir(TESTDIR);
 
 	/* print headline */
-	cout("HttPi %s route test\n\n", httpi_version());
+	cout("HttPi %s websocket test\n\n", httpi_version());
 	getcwd(buffer, sizeof(buffer));
 	cout("Test directory is \"%s\"\n", buffer); /* should be the "test" directory */
 	f = fopen("hello.txt", "r");
@@ -380,15 +340,15 @@ TEST(list) {
 		cout("Error: Test directory does not contain hello.txt\n");
 	}
 
-	f = fopen("test-http_route.c", "r");
+	f = fopen("./test-http_connect_ws.c", "r");
 	if (f) {
 		fclose(f);
 	} else {
-		cout("Error: Test directory does not contain test-http_route.c\n");
+		cout("Error: Test directory does not contain test-http_connect_ws.c\n");
 	}
 
 	/* start stop server */
-	EXEC_TEST(main_main);
+	EXEC_TEST(http_connect_websocket_client);
 
 	unused = chdir("../build");
 #if defined(_WIN32) || defined(_WIN64)

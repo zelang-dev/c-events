@@ -276,9 +276,11 @@ void main_main(http_ini_t *ctx) {
 		post_data_len, post_data)) != NULL);
 	free(post_data);
 	ASSERT(http_read(conn, buf, sizeof(buf)) == (int)strlen(upload_ok_message));
-	delay(5000);
+	delay(1000);
 	ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);
 	http_close_connection(conn);
+
+	delay(3000);
 
 	/* Stop the server */
 	http_stop(ctx);

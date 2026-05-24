@@ -819,7 +819,7 @@ static FORCEINLINE int _read_all(http_t *conn, char *buf, int len) {
 	return nread;
 }
 
-static int _read_inner(http_t *conn, void *buf, size_t len) {
+int _read_inner(http_t *conn, void *buf, size_t len) {
 	int64_t content_len, n, buffered_len, nread;
 	int64_t len64 =
 		(int64_t)((len > INT_MAX) ? INT_MAX : len); /* since the return value is

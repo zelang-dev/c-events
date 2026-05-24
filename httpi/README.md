@@ -1,4 +1,4 @@
-# HttPi - a dual Web client/server and JavaScript processor
+# Httpi - a dual Web client/server and JavaScript processor
 
 This *subproject* is a **WIP** implementation that follows up on [LibHTTP](https://github.com/lammertb/libhttp), and [CivetWeb](https://github.com/civetweb/civetweb), forks of [Mongoose](https://github.com/cesanta/mongoose). With ideas from [quickwebserver](https://github.com/QuickJS-Web-project/quickwebserver).
 
