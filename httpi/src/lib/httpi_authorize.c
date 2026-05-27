@@ -686,7 +686,7 @@ static int modify_passwords_file_ha1(string_t fname,
 	}
 
 	/* Check if the file exists, and get file size */
-	if (0 == fs_stat(fname, &st)) {
+	if (0 == stat(fname, &st)) {
 		int temp_buf_len;
 		if (st.st_size > 10485760) {
 			/* Some funster provided a >10 MB text file */
@@ -705,17 +705,15 @@ static int modify_passwords_file_ha1(string_t fname,
 
 		memset(&fp, 0, sizeof(fp));
 		/* File exists. Read it into a memory buffer. */
-		fp.pf = promise_fopen(fname, "r");
-		fp.fp = (FILE *)promise_wait(fp.pf).object;
+		fp.fp = fopen(fname, "r");
 		if (fp.fp == NULL) {
 			/* Cannot read file. No permission? */
 			free(temp_file);
-			promise_clean(fp.pf);
 			return 0;
 		}
 
 		/* Read content and store in memory */
-		while ((promise_fgets(fp.pf, line, sizeof(line), fp.fp) != NULL)
+		while ((fgets(line, sizeof(line), fp.fp) != NULL)
 			&& ((temp_file_offs + 600) < temp_buf_len)) {
 		 /* file format is "user:domain:hash\n" */
 			if (sscanf(line, "%255[^:]:%255[^:]:%255s", u, d, h) != 3) {
@@ -735,7 +733,7 @@ static int modify_passwords_file_ha1(string_t fname,
 						domain,
 						ha1);
 					if (i < 1) {
-						promise_fclose(fp.pf, fp.fp);
+						fclose(fp.fp);
 						free(temp_file);
 						return 0;
 					}
@@ -746,22 +744,20 @@ static int modify_passwords_file_ha1(string_t fname,
 				/* Copy existing user, including password hash */
 				i = sprintf(temp_file + temp_file_offs, "%s:%s:%s\n", u, d, h);
 				if (i < 1) {
-					promise_fclose(fp.pf, fp.fp);
+					fclose(fp.fp);
 					free(temp_file);
 					return 0;
 				}
 				temp_file_offs += i;
 			}
 		}
-		promise_fclose(fp.pf, fp.fp);
+		fclose(fp.fp);
 	}
 
 	/* Create new file */
-	fp.pf = promise_fopen(fname, "w");
-	fp.fp = (FILE *)promise_wait(fp.pf).object;
+	fp.fp = fopen(fname, "w");
 	if (!fp.fp) {
 		free(temp_file);
-		promise_clean(fp.pf);
 		return 0;
 	}
 
@@ -774,7 +770,7 @@ static int modify_passwords_file_ha1(string_t fname,
 
 	if ((temp_file != NULL) && (temp_file_offs > 0)) {
 		/* Store buffered content of old file */
-		if (promise_fwrite(fp.pf, temp_file, 1, (size_t)temp_file_offs, fp.fp)
+		if (fwrite(temp_file, 1, (size_t)temp_file_offs, fp.fp)
 			!= (size_t)temp_file_offs) {
 			result = 0;
 		}
@@ -784,13 +780,13 @@ static int modify_passwords_file_ha1(string_t fname,
 	if ((ha1 != NULL) && (!found)) {
 		char ha1_buf[PATH_MAX] = {0};
 		snprintf(ha1_buf, sizeof(ha1_buf), "%s:%s:%s\n", user, domain, ha1);
-		if (promise_fprintf(fp.pf, fp.fp, ha1_buf) < 6) {
+		if (fprintf(fp.fp, ha1_buf) < 6) {
 			result = 0;
 		}
 	}
 
 	/* All data written */
-	if (promise_fclose(fp.pf, fp.fp) != 0) {
+	if (fclose(fp.fp) != 0) {
 		result = 0;
 	}
 

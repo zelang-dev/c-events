@@ -890,6 +890,82 @@ void memsort(void *data, size_t elemcount, size_t elemsize,
 	}
 }
 
+#if defined(_WIN32) || defined(_WIN64)
+int vasprintf(char **str, const char *fmt, va_list ap) {
+    va_list ap_copy;
+    int formattedLength, actualLength;
+    size_t requiredSize;
+
+    // be paranoid
+    *str = NULL;
+
+    // copy va_list, as it is used twice
+    va_copy(ap_copy, ap);
+
+    // compute length of formatted string, without NULL terminator
+    formattedLength = _vscprintf(fmt, ap_copy);
+    va_end(ap_copy);
+
+    // bail out on error
+    if (formattedLength < 0) {
+        return -1;
+    }
+
+    // allocate buffer, with NULL terminator
+    requiredSize = ((size_t)formattedLength) + 1;
+    *str = (char *)events_malloc(requiredSize);
+
+    // bail out on failed memory allocation
+    if (*str == NULL) {
+        errno = ENOMEM;
+        return -1;
+    }
+
+    // write formatted string to buffer, use security hardened _s function
+    actualLength = vsnprintf_s(*str, requiredSize, requiredSize - 1, fmt, ap);
+
+    // again, be paranoid
+    if (actualLength != formattedLength) {
+        events_free(*str);
+        *str = NULL;
+        errno = EOTHER;
+        return -1;
+    }
+
+    return formattedLength;
+}
+
+int asprintf(char **str, const char *fmt, ...)
+{
+    int result;
+
+    va_list ap;
+    va_start(ap, fmt);
+    result = vasprintf(str, fmt, ap);
+    va_end(ap);
+
+    return result;
+}
+#endif
+
+char *mem_printf(int *count, const char *fmt, ...) {
+	va_list values;
+	int len;
+	char *tmp_str;
+
+    va_start(values, fmt);
+    len = vasprintf(&tmp_str, fmt, values);
+    va_end(values);
+
+	if (EXPECTED(len > 0) && defer_free(tmp_str)) {
+		if (count)
+			*count = len;
+		return tmp_str;
+	}
+
+    return NULL;
+}
+
 EVENTS_INLINE int str_pos(const char *text, char *pattern) {
 	if (is_empty(text) || is_empty(pattern))
 		return -1;

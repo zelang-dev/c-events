@@ -399,97 +399,97 @@ void http_interpret_uri(http_t *conn,
 	if (!tmp_str) {
 		/* Out of memory */
 		goto interpret_cleanup;
-		memcpy(tmp_str, filename, tmp_str_len + 1);
+	}
 
-		/* Check config, if index scripts may have sub-resources */
-		allow_substitute_script_subresources = str_is_case(conn->domain->config[ALLOW_INDEX_SCRIPT_SUB_RES],
-			"yes");
-		if (*is_webdav_request) {
-			/* TO BE DEFINED: Should scripts handle special WebDAV methods lile
-			 * PROPFIND for their subresources? */
-			/* allow_substitute_script_subresources = 0; */
-		}
+	memcpy(tmp_str, filename, tmp_str_len + 1);
 
-		sep_pos = tmp_str_len;
-		while (sep_pos > 0) {
-			sep_pos--;
-			if (tmp_str[sep_pos] == '/') {
-				int is_script = 0, does_exist = 0;
+	/* Check config, if index scripts may have sub-resources */
+	allow_substitute_script_subresources = str_is_case(conn->domain->config[ALLOW_INDEX_SCRIPT_SUB_RES], "yes");
+	if (*is_webdav_request) {
+		/* TO BE DEFINED: Should scripts handle special WebDAV methods lile
+		 * PROPFIND for their subresources? */
+		/* allow_substitute_script_subresources = 0; */
+	}
 
-				tmp_str[sep_pos] = 0;
-				if (tmp_str[0]) {
-					is_script = extention_matches_script(conn, tmp_str);
-					does_exist = http_stat(conn, tmp_str, filestat);
-				}
+	sep_pos = tmp_str_len;
+	while (sep_pos > 0) {
+		sep_pos--;
+		if (tmp_str[sep_pos] == '/') {
+			int is_script = 0, does_exist = 0;
 
-				if (does_exist && is_script) {
-					filename[sep_pos] = 0;
-					memmove(filename + sep_pos + 2,
-						filename + sep_pos + 1,
-						strlen(filename + sep_pos + 1) + 1);
-					conn->path = filename + sep_pos + 1;
-					filename[sep_pos + 1] = '/';
-					*is_script_resource = 1;
-					*is_found = 1;
-					break;
-				}
+			tmp_str[sep_pos] = 0;
+			if (tmp_str[0]) {
+				is_script = extention_matches_script(conn, tmp_str);
+				does_exist = http_stat(conn, tmp_str, filestat);
+			}
 
-				if (allow_substitute_script_subresources) {
-					if (substitute_index_file(
-						conn, tmp_str, tmp_str_len + UTF8_PATH_MAX, filestat)) {
-					/* some intermediate directory has an index file */
-						if (extention_matches_script(conn, tmp_str)) {
-							size_t script_name_len = strlen(tmp_str);
-							/* subres_name read before this memory locatio will be
-							overwritten */
-							char *subres_name = filename + sep_pos;
-							size_t subres_name_len = strlen(subres_name);
-							debug_info("Substitute script %s serving path %s"CLR_LN, tmp_str, filename);
+			if (does_exist && is_script) {
+				filename[sep_pos] = 0;
+				memmove(filename + sep_pos + 2,
+					filename + sep_pos + 1,
+					strlen(filename + sep_pos + 1) + 1);
+				conn->path = filename + sep_pos + 1;
+				filename[sep_pos + 1] = '/';
+				*is_script_resource = 1;
+				*is_found = 1;
+				break;
+			}
 
-							/* this index file is a script */
-							if ((script_name_len + subres_name_len + 2)
-								>= filename_buf_len) {
-								free(tmp_str);
-								goto interpret_cleanup;
-							}
+			if (allow_substitute_script_subresources) {
+				if (substitute_index_file(
+					conn, tmp_str, tmp_str_len + UTF8_PATH_MAX, filestat)) {
+				/* some intermediate directory has an index file */
+					if (extention_matches_script(conn, tmp_str)) {
+						size_t script_name_len = strlen(tmp_str);
+						/* subres_name read before this memory locatio will be
+						overwritten */
+						char *subres_name = filename + sep_pos;
+						size_t subres_name_len = strlen(subres_name);
+						debug_info("Substitute script %s serving path %s"CLR_LN, tmp_str, filename);
 
-							conn->path = filename + script_name_len + 1; /* new target */
-							memmove(conn->path, subres_name, subres_name_len);
-							conn->path[subres_name_len] = 0;
-							memcpy(filename, tmp_str, script_name_len + 1);
-
-							*is_script_resource = 1;
-							*is_found = 1;
-							break;
-						} else {
-							debug_info("Substitute file %s serving path %s"CLR_LN, tmp_str, filename);
-
-							/* non-script files will not have sub-resources */
-							filename[sep_pos] = 0;
-							conn->path = 0;
-							*is_script_resource = 0;
-							*is_found = 0;
-							break;
+						/* this index file is a script */
+						if ((script_name_len + subres_name_len + 2)
+							>= filename_buf_len) {
+							free(tmp_str);
+							goto interpret_cleanup;
 						}
+
+						conn->path = filename + script_name_len + 1; /* new target */
+						memmove(conn->path, subres_name, subres_name_len);
+						conn->path[subres_name_len] = 0;
+						memcpy(filename, tmp_str, script_name_len + 1);
+
+						*is_script_resource = 1;
+						*is_found = 1;
+						break;
+					} else {
+						debug_info("Substitute file %s serving path %s"CLR_LN, tmp_str, filename);
+
+						/* non-script files will not have sub-resources */
+						filename[sep_pos] = 0;
+						conn->path = 0;
+						*is_script_resource = 0;
+						*is_found = 0;
+						break;
 					}
 				}
-
-				tmp_str[sep_pos] = '/';
 			}
+
+			tmp_str[sep_pos] = '/';
 		}
-
-		free(tmp_str);
-		return;
-
-	/* Reset all outputs */
-interpret_cleanup:
-		memset(filestat, 0, sizeof(*filestat));
-		*filename = 0;
-		*is_found = 0;
-		*is_script_resource = 0;
-		*is_websocket_request = 0;
-		*is_put_or_delete_request = 0;
 	}
+
+	free(tmp_str);
+	return;
+
+/* Reset all outputs */
+interpret_cleanup:
+	memset(filestat, 0, sizeof(*filestat));
+	*filename = 0;
+	*is_found = 0;
+	*is_script_resource = 0;
+	*is_websocket_request = 0;
+	*is_put_or_delete_request = 0;
 }
 
 static int http_get_request_handler(http_t *conn,

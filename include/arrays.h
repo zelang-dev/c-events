@@ -224,8 +224,7 @@ C_API bool is_ptr_usable(void *self);
  * from https://github.com/bel2125/sort_r
  *
  * We cannot use qsort_r here. For a detailed reason, see
- * https://stackoverflow.com/questions/39560773/different-declarations-of-qsort-r-on-mac-and-linux
- */
+ * https://stackoverflow.com/questions/39560773/different-declarations-of-qsort-r-on-mac-and-linux */
 C_API void memsort(void *data, size_t elemcount, size_t elemsize,
 	int (*compfunc)(const void *data1, const void *data2, void *userarg), void *userarg);
 C_API int mempos(const unsigned char *src, size_t src_length,
@@ -233,6 +232,7 @@ C_API int mempos(const unsigned char *src, size_t src_length,
 C_API int mempos_str(const char *msg, size_t msg_len, char *pattern);
 C_API void **mem_split_ex(const void *src, size_t src_len, const char *delim, int *count);
 C_API int mem_subcount(const void *src, size_t src_len, char *pattern);
+C_API char *mem_printf(int *count, const char *fmt, ...);
 
 #ifdef _WIN32
 C_API void *memmem(const void *haystack, size_t haystack_len,

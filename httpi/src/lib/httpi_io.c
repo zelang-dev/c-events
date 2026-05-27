@@ -1949,6 +1949,57 @@ FORCEINLINE bool http_get_random(uint64_t *out) {
 	return true;
 }
 
+int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap) {
+	va_list ap_copy;
+	int len;
+
+	va_copy(ap_copy, ap);
+	len = vsnprintf(NULL, 0, fmt, ap_copy);
+	va_end(ap_copy);
+	if ((size_t)(len) >= prealloc_size) {
+		/*
+		 * The pre-allocated buffer not large enough.
+		 * Allocate a new buffer.
+		 */
+		*out_buf = malloc((size_t)(len)+1);
+		if (is_empty(*out_buf)) {
+			/*
+			 * Allocation failed. Return -1 as "out of memory" error.
+			 */
+			return -1;
+		}
+
+		/*
+		 * Buffer allocation successful. Store the string there.
+		 */
+		va_copy(ap_copy, ap);
+		vsnprintf(*out_buf, (size_t)(len)+1, fmt, ap_copy);
+		va_end(ap_copy);
+	} else {
+		/*
+		 * The pre-allocated buffer is large enough.
+		 * Use it to store the string and return the address.
+		 */
+		va_copy(ap_copy, ap);
+		vsnprintf(prealloc_buf, prealloc_size, fmt, ap_copy);
+		va_end(ap_copy);
+
+		*out_buf = prealloc_buf;
+	}
+
+	return len;
+}
+
+int alloc_printf(string *out_buf, string buf, size_t size, string_t fmt, ...) {
+	va_list ap;
+	int ret = 0;
+	va_start(ap, fmt);
+	ret = alloc_vprintf(out_buf, buf, size, fmt, ap);
+	va_end(ap);
+
+	return ret;
+}
+
 void_t free_ex(void_t memory) {
 	if (!is_empty(memory))
 		free(memory);

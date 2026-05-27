@@ -210,10 +210,7 @@ void main_main(http_ini_t *ctx) {
 
 	/* Upload one file */
 	ASSERT((file_data = read_file("./passfile", &file_len)) != NULL);
-	post_data = NULL;
-	post_data_len = alloc_printf(&post_data,
-		NULL,
-		0,
+	post_data = mem_printf(&post_data_len,
 		"--%s\r\n"
 		"Content-Disposition: form-data; "
 		"name=\"file\"; "
@@ -235,7 +232,6 @@ void main_main(http_ini_t *ctx) {
 		"boundary=%s\r\n\r\n"
 		"%.*s", post_data_len, boundary,
 		post_data_len, post_data)) != NULL);
-	free(post_data);
 	ASSERT(http_read(conn, buf, sizeof(buf)) == (int)strlen(upload_ok_message));
 	ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);
 	http_close_connection(conn);
@@ -243,8 +239,7 @@ void main_main(http_ini_t *ctx) {
 	/* Upload two files */
 	ASSERT((file_data = read_file("./CMakeLists.txt", &file_len)) != NULL);
 	ASSERT((file2_data = read_file("./hello_gz_unzipped.txt", &file2_len)) != NULL);
-	post_data = NULL;
-	post_data_len = alloc_printf(&post_data, null, 0,
+	post_data = mem_printf(&post_data_len,
 		/* First file */
 		"--%s\r\n"
 		"Content-Disposition: form-data; "
@@ -274,7 +269,6 @@ void main_main(http_ini_t *ctx) {
 		"boundary=%s\r\n\r\n"
 		"%.*s", post_data_len, boundary,
 		post_data_len, post_data)) != NULL);
-	free(post_data);
 	ASSERT(http_read(conn, buf, sizeof(buf)) == (int)strlen(upload_ok_message));
 	delay(1000);
 	ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);

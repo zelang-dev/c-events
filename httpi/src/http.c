@@ -287,57 +287,6 @@ string url_decode(string str) {
 	return str;
 }
 
-int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap) {
-	va_list ap_copy;
-	int len;
-
-	va_copy(ap_copy, ap);
-	len = vsnprintf(NULL, 0, fmt, ap_copy);
-	va_end(ap_copy);
-	if ((size_t)(len) >= prealloc_size) {
-		/*
-		 * The pre-allocated buffer not large enough.
-		 * Allocate a new buffer.
-		 */
-		*out_buf = malloc((size_t)(len)+1);
-		if (is_empty(*out_buf)) {
-			/*
-			 * Allocation failed. Return -1 as "out of memory" error.
-			 */
-			return -1;
-		}
-
-		/*
-		 * Buffer allocation successful. Store the string there.
-		 */
-		va_copy(ap_copy, ap);
-		vsnprintf(*out_buf, (size_t)(len)+1, fmt, ap_copy);
-		va_end(ap_copy);
-	} else {
-		/*
-		 * The pre-allocated buffer is large enough.
-		 * Use it to store the string and return the address.
-		 */
-		va_copy(ap_copy, ap);
-		vsnprintf(prealloc_buf, prealloc_size, fmt, ap_copy);
-		va_end(ap_copy);
-
-		*out_buf = prealloc_buf;
-	}
-
-	return len;
-}
-
-int alloc_printf(string *out_buf, string buf, size_t size, string_t fmt, ...) {
-	va_list ap;
-	int ret = 0;
-	va_start(ap, fmt);
-	ret = alloc_vprintf(out_buf, buf, size, fmt, ap);
-	va_end(ap);
-
-	return ret;
-}
-
 hash_http_t *http_extract_var(string_t query, string delim, string sep) {
 	hash_http_t *this = null;
 	if (!str_is_empty(query) && defer_free(this = hash_create_auto(ARRAY_SIZE))) {
@@ -1166,7 +1115,6 @@ FORCEINLINE string http_cookie_path(http_t *this, string name) {
 	return is_empty(cookie) ? nullptr : cookie->path;
 }
 
-/* Return null terminated string `buf` of given maximum length. */
 void http_vsnprintf(int *truncated, string buf, size_t buflen, string_t fmt, va_list ap) {
 	int n;
 	bool ok;

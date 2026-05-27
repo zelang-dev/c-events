@@ -1,4 +1,5 @@
 set(TARGETS_LIST
+ test-http_auth
  test-http_connect
  test-http_download
  test-http_upload

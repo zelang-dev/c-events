@@ -801,6 +801,9 @@ int is_valid_port(unsigned long port);
  * return buffer. If buffer is to small, allocate large enough buffer on heap,
  * and return allocated buffer. */
 int alloc_vprintf(string *out_buf, string prealloc_buf, size_t prealloc_size, string_t fmt, va_list ap);
+int alloc_printf(string *out_buf, string buf, size_t size, string_t fmt, ...);
+/* Return null terminated string `buf` of given maximum length. */
+void http_vsnprintf(int *truncated, string buf, size_t buflen, string_t fmt, va_list ap);
 
 /* Perform case-insensitive match of string against pattern
  *

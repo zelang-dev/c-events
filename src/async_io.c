@@ -845,7 +845,7 @@ EVENTS_INLINE int fs_fgetc(FILE *stream) {
 }
 
 static EVENTS_INLINE void *_os_fgets(param_t args) {
-	return fgets(args[0].char_ptr, args[1].integer, (FILE *)args[3].object);
+	return fgets(args[0].char_ptr, args[1].integer, (FILE *)args[2].object);
 }
 
 EVENTS_INLINE char *fs_fgets(char *buf, int count, FILE *stream) {
