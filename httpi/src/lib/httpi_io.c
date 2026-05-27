@@ -2269,7 +2269,7 @@ int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_s
 	return func_ret;
 }
 
-http_t *http_connect_client_impl(const struct client_options *client_options,
+http_t *http_connect_impl(const struct client_options *client_options,
 	int use_ssl, struct error_data *error) {
 	http_t *conn = NULL;
 	fds_t sock;
@@ -2398,7 +2398,7 @@ http_t *http_connect_client_impl(const struct client_options *client_options,
 	return conn;
 }
 
-http_t *http_connect_client(string_t host, int port,
+http_t *http_connect(string_t host, int port,
 	int use_ssl, string error_buffer, size_t error_buffer_size) {
 	struct client_options opts;
 	struct error_data error;
@@ -2410,7 +2410,7 @@ http_t *http_connect_client(string_t host, int port,
 	memset(&opts, 0, sizeof(opts));
 	opts.host = host;
 	opts.port = port;
-	return http_connect_client_impl(&opts, use_ssl, &error);
+	return http_connect_impl(&opts, use_ssl, &error);
 }
 
 http_t *http_download(string_t host, int port, int use_ssl, string_t fmt, ...) {
@@ -2426,7 +2426,7 @@ http_t *http_download(string_t host, int port, int use_ssl, string_t fmt, ...) {
 	va_start(ap, fmt);
 
 	/* open a connection */
-	conn = http_connect_client(host, port, use_ssl, ebuf, ebuf_len);
+	conn = http_connect(host, port, use_ssl, ebuf, ebuf_len);
 	if (conn != NULL) {
 		i = http_vprintf(conn, fmt, ap);
 		if (i <= 0) {

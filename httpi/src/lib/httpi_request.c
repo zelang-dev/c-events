@@ -41,7 +41,8 @@ static int extention_matches_script(http_t *conn, string_t filename) {
 		return 1;
 	}
 
-	inc = CGI2_EXTENSIONS - CGI_EXTENSIONS;
+	inc = CGI_EXTENSIONS;
+	//inc = CGI2_EXTENSIONS - CGI_EXTENSIONS;
 	max = PUT_DELETE_PASSWORDS_FILE - CGI_EXTENSIONS;
 	for (cgi_config_idx = 0; cgi_config_idx < max; cgi_config_idx += inc) {
 		if ((conn->domain->config[CGI_EXTENSIONS + cgi_config_idx] != NULL)
@@ -1899,14 +1900,19 @@ static void do_ssi_exec(http_t *conn, char *tag) {
 		http_log(DEBUG_ERROR, conn, "Bad SSI #exec: [%s]", tag);
 	} else {
 		cmd[1023] = 0;
+		file.pf = alloc_promise();
 		if ((file.fp = popen(cmd, "r")) == NULL) {
 			http_log(DEBUG_ERROR, conn,
 				"Cannot SSI #exec: [%s]: %s",
 				cmd,
 				ex_strerror(os_geterror()));
+			free(file.pf);
+			file.pf = null;
 		} else {
 			http_send_file_data(conn, &file, 0, INT64_MAX, 0); /* send static file */
-			pclose(file.fp);
+			promise_pclose(file.pf, file.fp);
+			file.pf = null;
+			file.fp = null;
 		}
 	}
 }
@@ -2062,7 +2068,8 @@ void handle_file_based_request(http_t *conn,
 		return;
 	}
 
-	inc = CGI2_EXTENSIONS - CGI_EXTENSIONS;
+	inc = CGI_EXTENSIONS;
+	//inc = CGI2_EXTENSIONS - CGI_EXTENSIONS;
 	max = PUT_DELETE_PASSWORDS_FILE - CGI_EXTENSIONS;
 	for (cgi_config_idx = 0; cgi_config_idx < max; cgi_config_idx += inc) {
 		if (conn->domain->config[CGI_EXTENSIONS + cgi_config_idx] != NULL) {
@@ -2817,7 +2824,7 @@ no_callback_resource:
 				ws_close_handler,
 				callback_data);
 		}
-		debug_info("%s", "request callback handling done"CLR_LN);
+		debug_info("%s", "callback handling done"CLR_LN);
 		return;
 	}
 
@@ -2827,8 +2834,17 @@ no_callback_resource:
 			//http2_must_use_http1(conn);
 			debug_info("%s", "must use HTTP/1.x"CLR_LN);
 			//return;
-		}
-		if (is_script_resource) {
+		} else if (!is_script_resource) {
+			http_websocket_request(conn->ctx,
+				conn,
+				is_callback_resource,
+				subprotocols,
+				ws_connect_handler,
+				ws_ready_handler,
+				ws_data_handler,
+				ws_close_handler,
+				callback_data);
+		} else if (is_script_resource) {
 			/* Check if the script file is in a path, allowed for script files.
 			* This can be used if uploading files is possible not only for the server
 			* admin, and the upload mechanism does not check the file extension.

@@ -380,7 +380,7 @@ void main_main(http_ini_t *ctx) {
 
 	/* Test new API */
 	ebuf[0] = 1;
-	conn = http_connect_client("localhost", port, use_ssl, ebuf, sizeof(ebuf));
+	conn = http_connect("localhost", port, use_ssl, ebuf, sizeof(ebuf));
 	ASSERT(conn != NULL);
 	ASSERT(ebuf[0] == 0);
 	ASSERT(http_get_length(conn) == 0);

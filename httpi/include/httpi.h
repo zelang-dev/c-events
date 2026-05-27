@@ -164,8 +164,6 @@ extern "C"
 {
 #endif
 
-C_API string_t httpi_version(void);
-
 /* Get the list of ports that `HttPi` is listening on.
    The parameter `size` is the size of the ports array in elements.
    The caller is responsibility to allocate the required memory.
@@ -361,7 +359,7 @@ C_API string_t http_suggest_connection_header(http_t *conn);
  * - On error/timeout, < 0 */
 C_API int http_get_response(http_t *conn, string ebuf, size_t ebuf_len, int timeout);
 
-/* Close the connection opened by `http_download()` or `http_connect_client()`. */
+/* Close the connection opened by `http_download()` or `http_connect()`. */
 C_API void http_close_connection(http_t *conn);
 
 /* Connect to a TCP server as a client (can be used to connect to a HTTP server)
@@ -375,7 +373,7 @@ C_API void http_close_connection(http_t *conn);
  *  Return:
  * - On success, valid `http_t` object.
  * - On error, NULL. Se error_buffer for details. */
-C_API http_t *http_connect_client(string_t host, int port,
+C_API http_t *http_connect(string_t host, int port,
 	int use_ssl, string error_buffer, size_t error_buffer_size);
 
 /* Download data from the remote web server.
@@ -383,35 +381,22 @@ C_API http_t *http_connect_client(string_t host, int port,
  * - host: host name to connect to, e.g. "foo.com", or "10.12.40.1".
  * - port: port number, e.g. 80.
  * - use_ssl: whether to use SSL connection.
- * - error_buffer, error_buffer_size: error message placeholder.
  * - request_fmt,...: HTTP request.
  *
  *  Return:
  * - On success, valid pointer to the new connection, suitable for `http_read()`.
- * - On error, NULL. error_buffer contains error message.
+ * - On error, NULL. `task_erred_str()` contains error message.
  *
  *  Example:
  *
  ```c
- 	 char ebuf[100];
- 	 http_t *conn;
- 	 conn = http_download("google.com", 80, 0, ebuf, sizeof(ebuf),
- 						"%s", "GET / HTTP/1.0\r\nHost: google.com\r\n\r\n");
+ 	 http_t *conn = http_download("google.com", 80, 0,"%s",
+ 						"GET / HTTP/1.0\r\nHost: google.com\r\n\r\n");
  ```
- * `http_download` is equivalent to calling `http_connect_client` followed by
+ * `http_download` is equivalent to calling `http_connect` followed by
  * `http_printf` and `http_get_response`. Using these three functions directly may
  *  allow more control as compared to using `http_download`. */
 C_API http_t *http_download(string_t host, int port, int use_ssl, string_t fmt, ...);
-
-/* Process form data.
- *
- * Returns the number of fields handled, or < 0 in case of an error.
- * Note: It is possible that several fields are already handled successfully
- * (e.g., stored into files), before the request handling is stopped with an
- * error. In this case a number < 0 is returned as well.
- * In any case, it is the duty of the caller to remove files once they are
- * no longer required. */
-C_API int http_handle_form_request(http_t *conn, form_data_handler_t *fdh);
 
 /* File upload functionality.
  * Each uploaded file gets saved into a temporary file and event is sent.
@@ -489,18 +474,6 @@ C_API string_t http_get_option(http_ini_t *ctx, string_t name);
 
 C_API bool http_set_ini_option(http_ini_t *ctx, string_t option, string_t value);
 
-/* The main `setup` entry point for the `HttPi` server. */
-C_API http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
-	void_t user_data, const options_ini_t **options);
-
-/* Create/execute the `main task` ~coroutine~ `entry/start` point for `HttPi` server.
- *
- * - This will also create additional `tasks` base on number of
- * ~Server~ sockets created for `accept/listen` handling.
- * - All `accepted` connections, will create a coroutine `task` handled in
- * separate ~thread pool~ aka `Green Thread` for immediately execution. */
-void httpi_start(http_ini_t *ctx, http_main_cb start);
-
 /* Add an additional domain to an already running web server. */
 C_API int http_add_domain(http_ini_t *ctx, string_t *options);
 
@@ -555,17 +528,38 @@ C_API int http_websocket_client_write(http_t *conn, websocket_type opcode, strin
  *  Return:
  * - On success, valid `http_t` object.
  * - On error, NULL. See `task_erred_str()` for details. */
-C_API http_t *http_connect_websocket_client(string_t host, int port, int use_ssl, string_t path, string_t origin,
+C_API http_t *http_websocket_connect(string_t host, int port, int use_ssl, string_t path, string_t origin,
 	ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
 
-C_API http_t *http_connect_websocket_client_extensions(string_t host, int port, int use_ssl,
+C_API http_t *http_websocket_connect_extensions(string_t host, int port, int use_ssl,
 	string_t path, string_t origin, string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
 
-C_API http_t *http_connect_websocket_client_secure(struct client_options *client_options,
+C_API http_t *http_websocket_connect_secure(struct client_options *client_options,
 	string_t path, string_t origin, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
 
-C_API http_t *http_connect_websocket_client_secure_extensions(struct client_options *client_options,
+C_API http_t *http_websocket_connect_secure_extensions(struct client_options *client_options,
 	string_t path, string_t origin, string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data);
+
+C_API void http_user_data_set(const http_t *const_conn, void_t data);
+C_API void_t http_user_data(const http_t *conn);
+C_API httpi_t *http_request_info(const http_t *conn);
+
+/* The main `setup` entry point for the `HttPi` server. */
+C_API http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
+	void_t user_data, const options_ini_t **options);
+
+/* Create/execute the `main task` ~coroutine~ `entry/start` point for `HttPi` server.
+ *
+ * - This will also create additional `tasks` base on number of
+ * ~Server~ sockets created for `accept/listen` handling.
+ * - All `accepted` connections, will create a coroutine `task` handled in
+ * separate ~thread pool~ aka `Green Thread` for immediately execution. */
+C_API void httpi_start(http_ini_t *ctx, http_main_cb start);
+
+C_API string_t httpi_version(void);
+C_API http_ini_t *httpi_context(http_t *conn);
+C_API void_t httpi_user_data(http_ini_t *ctx);
+C_API void_t httpi_user_context_data(http_t *conn);
 
 #ifdef __cplusplus
 }

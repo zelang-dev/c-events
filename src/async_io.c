@@ -877,6 +877,30 @@ EVENTS_INLINE promise *promise_fopen(const char *path, const char *mode) {
 	return queue_work(futures_pool(), _os_fopen, 2, path, mode);
 }
 
+static EVENTS_INLINE void *_os_popen(param_t args) {
+	if (str_is_empty(args[0].const_char_ptr) || str_is_empty(args[1].const_char_ptr))
+		return null;
+
+	return popen(args[0].const_char_ptr, args[1].const_char_ptr);
+}
+
+EVENTS_INLINE promise *promise_popen(const char *path, const char *mode) {
+	return queue_work(futures_pool(), _os_popen, 2, path, mode);
+}
+
+static EVENTS_INLINE void *_os_pclose(param_t args) {
+	return casting(pclose((FILE *)args[0].object));
+}
+
+EVENTS_INLINE int promise_pclose(promise *p, FILE *stream) {
+	int r = DATA_INVALID;
+	if (!is_empty(stream))
+		r = promise_wait(promise_work(p, _os_pclose, 1, stream)).integer;
+
+	promise_clean(p);
+	return r;
+}
+
 EVENTS_INLINE size_t promise_fwrite(promise *p, void *buf, size_t items_size, size_t items_count, FILE *stream) {
 	return promise_wait(promise_work(p, _os_fwrite, 4, buf,
 		casting(items_size), casting(items_count), stream)).integer;

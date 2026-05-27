@@ -280,6 +280,7 @@ C_API void promise_erred(promise *p, ex_context_t err);
 C_API void promise_free(ex_memory_t *scope, void *data);
 C_API values_t promise_wait(promise *p);
 C_API void promise_clean(promise *p);
+C_API promise *alloc_promise(void);
 C_API promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...);
 C_API promise *promise_fopen(const char *path, const char *mode);
 C_API int promise_read(promise *p, int fd, void *buf, uint32_t count);
@@ -288,6 +289,8 @@ C_API char *promise_fgets(promise *p, char *buf, int count, FILE *stream);
 C_API size_t promise_fwrite(promise *p, void *buf, size_t items_size, size_t items_count, FILE *stream);
 C_API int promise_fprintf(promise *p, FILE *stream, const char *fmt);
 C_API int promise_fclose(promise *p, FILE *stream);
+C_API promise *promise_popen(const char *path, const char *mode);
+C_API int promise_pclose(promise *p, FILE *stream);
 
 /*
 Checks if the a ~future~ refers to a shared state aka `promise`, and `running`.

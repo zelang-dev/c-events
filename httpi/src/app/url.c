@@ -829,7 +829,7 @@ static int run_client(string_t url_arg) {
 	cout("Resource: %s\n", resource);
 
 	/* Connect to host */
-	conn = http_connect_client(host, (int)port, is_ssl, ebuf, sizeof(ebuf));
+	conn = http_connect(host, (int)port, is_ssl, ebuf, sizeof(ebuf));
 	if (conn) {
 		/* Connecting to server worked */
 		char buf[1024] = {0};
@@ -2306,11 +2306,12 @@ static void change_password_file(void) {
 
 
 static BOOL sysinfo_reload(struct dlg_proc_param *prm) {
-	static char *buf = 0;
+	static char *buf = null;
 	int cl, rl;
 
 	cl = http_get_context_info(g_ctx, NULL, 0);
-	free(buf);
+	if (!is_empty(buf))
+		free(buf);
 	cl += 510;
 	buf = (char *)malloc(cl + 1);
 	rl = http_get_context_info(g_ctx, buf, cl);

@@ -2,9 +2,10 @@ set(TARGETS_LIST
  test-http_connect
  test-http_download
  test-http_upload
- test-httpi_setup
+ test-http_websocket_connect
  test-httpi_http_server
  test-httpi_https_server
+ test-httpi_setup
  test-httpi_units
 )
 

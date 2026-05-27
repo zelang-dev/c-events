@@ -37,13 +37,13 @@ static const options_ini_t config_options[] = {
 	{"cgi_interpreter", INI_TYPE_FILE, NULL},
 	{"cgi_interpreter_args", INI_TYPE_STRING, NULL},
 	{"cgi_buffering", INI_TYPE_BOOLEAN, "yes"},
-
+/*
 	{"cgi2_pattern", INI_TYPE_EXT_PATTERN, NULL},
 	{"cgi2_environment", INI_TYPE_STRING_LIST, NULL},
 	{"cgi2_interpreter", INI_TYPE_FILE, NULL},
 	{"cgi2_interpreter_args", INI_TYPE_STRING, NULL},
 	{"cgi2_buffering", INI_TYPE_BOOLEAN, "yes"},
-
+*/
 	{"put_delete_auth_file", INI_TYPE_FILE, NULL},
 	{"protect_uri", INI_TYPE_STRING_LIST, NULL},
 	{"authentication_domain", INI_TYPE_STRING, "mydomain.com"},
@@ -1656,6 +1656,40 @@ int http_get_context_info(const http_ini_t *ctx, char *buffer, int buflen) {
 		*buffer = 0;
 	}
 	return 0;
+}
+
+FORCEINLINE void http_user_data_set(const http_t *const_conn, void_t data) {
+	if (const_conn != NULL) {
+		http_t *conn = (http_t *)const_conn;
+		conn->req.conn_data = data;
+	}
+}
+
+FORCEINLINE void_t http_user_data(const http_t *conn) {
+	if (conn != NULL) {
+		return conn->req.conn_data;
+	}
+	return NULL;
+}
+
+FORCEINLINE httpi_t *http_request_info(const http_t *conn) {
+	if (conn != NULL) {
+		return (httpi_t *)&conn->req;
+	}
+
+	return NULL;
+}
+
+FORCEINLINE http_ini_t *httpi_context(http_t *conn) {
+	return (conn == NULL) ? (http_ini_t *)NULL : (conn->ctx);
+}
+
+FORCEINLINE void_t httpi_user_data(http_ini_t *ctx) {
+	return (ctx == NULL) ? NULL : ctx->user_data;
+}
+
+FORCEINLINE void_t httpi_user_context_data(http_t *conn) {
+	return httpi_user_data(httpi_context(conn));
 }
 
 FORCEINLINE string_t httpi_version(void) {

@@ -40,7 +40,7 @@ static void minimal_http_https_client_impl(const char *server,
 	int64_t data_read;
 	int r;
 
-	client = http_connect_client(
+	client = http_connect(
 		server, port, use_ssl, client_err_buf, sizeof(client_err_buf));
 
 	if ((client == NULL) || (0 != strcmp(client_err_buf, ""))) {

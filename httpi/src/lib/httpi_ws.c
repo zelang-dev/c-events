@@ -46,7 +46,7 @@ static int http_send_websocket_handshake(http_t *conn, string_t websock_key) {
 		return 0;
 	}
 
-	debug_info("%s", "Send websocket handshake");
+	debug_info("%s", "Send websocket handshake"CLR_LN);
 
 	SHA1_Init(&sha_ctx);
 	SHA1_Update(&sha_ctx, (unsigned char *)buf, (uint32_t)strlen(buf));
@@ -110,7 +110,6 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 		enable_ping_pong = str_is_case(conn->domain->config[ENABLE_WEBSOCKET_PING_PONG], "yes");
 	}
 
-	data = mem;
 	if (conn->domain->config[WEBSOCKET_TIMEOUT]) {
 		timeout = (double)atoi(conn->domain->config[WEBSOCKET_TIMEOUT]) / 1000.0;
 	}
@@ -120,7 +119,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	}
 
 	/* Enter data processing loop */
-	debug_info("Websocket connection %s:%u start data processing loop",
+	debug_info("Websocket connection %s:%u start data processing loop"CLR_LN,
 		conn->req.remote_addr,
 		conn->req.remote_port);
 	conn->req.in_websocket_handling = 1;
@@ -131,7 +130,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	while (ctx->status == HTTP_STATUS_RUNNING && (!conn->req.must_close)) {
 		header_len = 0;
 		if (conn->req.data_len < conn->req.request_len) {
-			debug_info("%s: websocket error: data len less than request len, closing connection", __func__);
+			debug_info("%s: websocket error: data len less than request len, closing connection"CLR_LN, __func__);
 			break;
 		}
 
@@ -240,17 +239,17 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			exit_by_callback = 0;
 			if (enable_ping_pong && ((mop & 0xF) == WS_OPS_PONG)) {
 				/* filter PONG messages */
-				debug_info("PONG from %s:%u", conn->req.remote_addr, conn->req.remote_port);
+				debug_info("PONG from %s:%u"CLR_LN, conn->req.remote_addr, conn->req.remote_port);
 				/* No unanswered PINGs left */
 				ping_count = 0;
 			} else if (enable_ping_pong
 				&& ((mop & 0xF) == WS_OPS_PING)) {
 		 			/* reply PING messages */
-					debug_info("Reply PING from %s:%u",	conn->req.remote_addr, conn->req.remote_port);
+					debug_info("Reply PING from %s:%u"CLR_LN,	conn->req.remote_addr, conn->req.remote_port);
 					ret = http_websocket_write(conn, WS_OPS_PONG, (string_t)data, (size_t)data_len);
 				if (ret <= 0) {
 					/* Error: send failed */
-					debug_info("Reply PONG failed (%i)", ret);
+					debug_info("Reply PONG failed (%i)"CLR_LN, ret);
 					break;
 				}
 			} else {
@@ -351,7 +350,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			}
 
 			if (exit_by_callback) {
-				debug_info("Callback requests to close connection from %s:%u",
+				debug_info("Callback requests to close connection from %s:%u"CLR_LN,
 					conn->req.remote_addr,
 					conn->req.remote_port);
 				break;
@@ -359,7 +358,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 
 			if ((mop & 0xf) == WS_OPS_CLOSE) {
 				/* Opcode == 8, connection close */
-				debug_info("Message requests to close connection from %s:%u",
+				debug_info("Message requests to close connection from %s:%u"CLR_LN,
 					conn->req.remote_addr,
 					conn->req.remote_port);
 				break;
@@ -372,7 +371,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			n = _read_inner(conn, conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
 			if (n <= 0) {
 				/* Error, no bytes read */
-				debug_info("PULL from %s:%u failed",
+				debug_info("PULL from %s:%u failed"CLR_LN,
 					conn->req.remote_addr,
 					conn->req.remote_port);
 				break;
@@ -387,7 +386,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 					if (ping_count > MAX_UNANSWERED_PING) {
 						/* Stop sending PING */
 						debug_info("Too many (%i) unanswered ping from %s:%u "
-							"- closing connection",
+							"- closing connection"CLR_LN,
 							ping_count,
 							conn->req.remote_addr,
 							conn->req.remote_port);
@@ -396,13 +395,13 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 
 					if (enable_ping_pong) {
 						/* Send Websocket PING message */
-						debug_info("PING to %s:%u",
+						debug_info("PING to %s:%u"CLR_LN,
 							conn->req.remote_addr,
 							conn->req.remote_port);
 						ret = http_websocket_write(conn, WS_OPS_PING, NULL,	0);
 						if (ret <= 0) {
 							/* Error: send failed */
-							debug_info("Send PING failed (%i)", ret);
+							debug_info("Send PING failed (%i)"CLR_LN, ret);
 							break;
 						}
 						ping_count++;
@@ -419,7 +418,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	/* Leave data processing loop */
 	task_name("webworker #%d", task_id());
 	conn->req.in_websocket_handling = 0;
-	debug_info("Websocket connection %s:%u left data processing loop",
+	debug_info("Websocket connection %s:%u left data processing loop"CLR_LN,
 	            conn->req.remote_addr,
 	            conn->req.remote_port);
 }
@@ -613,7 +612,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 	Bytef *deflated = 0;
 	int use_deflate, retval = -1;
 
-	//atomic_lock(&conn->req.mutex);
+	atomic_lock(&conn->req.mutex);
 	// Deflate websocket messages over 100kb
 	if (use_deflate = (data_len > Kb(100)) && conn->req.accept_gzip) {
 		if (!conn->req.websocket_deflate_initialized) {
@@ -682,7 +681,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 		}
 	}
 
-	//atomic_unlock(&conn->req.mutex);
+	atomic_unlock(&conn->req.mutex);
 	return retval;
 }
 
@@ -732,7 +731,7 @@ static void_t websocket_client_thread(param_t data) {
 		task_name("ws-client #%d", ctx->worker_taskid);
 
 		http_read_websocket(ctx, conn, cdata->data_handler, cdata->callback_data);
-		debug_info("%s", "Websocket client task exited\n");
+		debug_info("%s", "Websocket client task exited"CLR_LN);
 		if (cdata->close_handler != NULL) {
 			cdata->close_handler(cdata->conn, cdata->callback_data);
 		}
@@ -742,8 +741,7 @@ static void_t websocket_client_thread(param_t data) {
 		ctx->status = HTTP_STATUS_TERMINATED;
 	}
 
-	free_ex(cdata);
-	return 0;
+	return free_ex(cdata);
 }
 
 static void generate_websocket_magic(string magic25) {
@@ -759,7 +757,7 @@ static void generate_websocket_magic(string magic25) {
 	str_encode64(buffer, magic25, dst_len);
 }
 
-static http_t *http_connect_websocket_client_impl(struct client_options *client_options,
+static http_t *http_websocket_connect_impl(struct client_options *client_options,
 	int use_ssl,
 	string error_buffer,
 	size_t error_buffer_size,
@@ -792,7 +790,7 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 #endif
 
 	/* Establish the client connection and request upgrade */
-	conn = http_connect_client_impl(client_options, use_ssl, &error);
+	conn = http_connect_impl(client_options, use_ssl, &error);
 
 	/* Connection object will be null if something goes wrong */
 	if (conn == NULL) {
@@ -907,7 +905,7 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 				"Unexpected server reply");
 		}
 
-		debug_info("Websocket client connect error: %s\r\n", error_buffer);
+		debug_info("Websocket client connect error: %s, status: %s"CLR_LN, error_buffer, http_status_str(conn->code));
 		http_close_connection(conn);
 		return NULL;
 	}
@@ -943,7 +941,7 @@ static http_t *http_connect_websocket_client_impl(struct client_options *client_
 	return conn;
 }
 
-http_t *http_connect_websocket_client(string_t host,
+http_t *http_websocket_connect(string_t host,
 	int port,
 	int use_ssl,
 	string_t path,
@@ -958,7 +956,7 @@ http_t *http_connect_websocket_client(string_t host,
 
 	string error_buffer = task_erred_str();
 	size_t error_buffer_size = ERR_BUF;
-	return http_connect_websocket_client_impl(&client_options,
+	return http_websocket_connect_impl(&client_options,
 		use_ssl,
 		error_buffer,
 		error_buffer_size,
@@ -970,7 +968,7 @@ http_t *http_connect_websocket_client(string_t host,
 		user_data);
 }
 
-http_t *http_connect_websocket_client_secure(struct client_options *client_options, string_t path, string_t origin,
+http_t *http_websocket_connect_secure(struct client_options *client_options, string_t path, string_t origin,
 	ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
 	if (!client_options) {
 		return NULL;
@@ -978,7 +976,7 @@ http_t *http_connect_websocket_client_secure(struct client_options *client_optio
 
 	string error_buffer = task_erred_str();
 	size_t error_buffer_size = ERR_BUF;
-	return http_connect_websocket_client_impl(client_options,
+	return http_websocket_connect_impl(client_options,
 		1,
 		error_buffer,
 		error_buffer_size,
@@ -990,7 +988,7 @@ http_t *http_connect_websocket_client_secure(struct client_options *client_optio
 		user_data);
 }
 
-http_t *http_connect_websocket_client_extensions(string_t host, int port, int use_ssl,
+http_t *http_websocket_connect_extensions(string_t host, int port, int use_ssl,
 	string_t path, string_t origin, string_t extensions, ws_data_cb data_func,
 	ws_close_cb close_func, void_t user_data) {
 	struct client_options client_options;
@@ -1000,7 +998,7 @@ http_t *http_connect_websocket_client_extensions(string_t host, int port, int us
 
 	string error_buffer = task_erred_str();
 	size_t error_buffer_size = ERR_BUF;
-	return http_connect_websocket_client_impl(&client_options,
+	return http_websocket_connect_impl(&client_options,
 		use_ssl,
 		error_buffer,
 		error_buffer_size,
@@ -1012,7 +1010,7 @@ http_t *http_connect_websocket_client_extensions(string_t host, int port, int us
 		user_data);
 }
 
-http_t *http_connect_websocket_client_secure_extensions(struct client_options *client_options,
+http_t *http_websocket_connect_secure_extensions(struct client_options *client_options,
 	string_t path, string_t origin, string_t extensions, ws_data_cb data_func,
 	ws_close_cb close_func, void_t user_data) {
 	if (!client_options) {
@@ -1021,7 +1019,7 @@ http_t *http_connect_websocket_client_secure_extensions(struct client_options *c
 
 	string error_buffer = task_erred_str();
 	size_t error_buffer_size = ERR_BUF;
-	return http_connect_websocket_client_impl(client_options,
+	return http_websocket_connect_impl(client_options,
 		1,
 		error_buffer,
 		error_buffer_size,

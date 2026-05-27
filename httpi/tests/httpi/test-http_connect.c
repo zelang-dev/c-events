@@ -39,7 +39,7 @@ static void minimal_http_https_client_impl(const char *server,
 	int64_t data_read;
 	int r;
 
-	client = http_connect_client(server, port, use_ssl, client_err_buf, sizeof(client_err_buf));
+	client = http_connect(server, port, use_ssl, client_err_buf, sizeof(client_err_buf));
 	ASSERT_EQ_ABORT(is_type(client, DATA_HTTPINFO), true);
 	if (0 != strcmp(client_err_buf, "")) {
 		cerr("%s connection to server [%s] port [%u] failed: [%s]",
@@ -129,7 +129,7 @@ void main_main(param_t args) {
 		NULL /* no check */);
 }
 
-TEST(http_connect_client) {
+TEST(http_connect) {
 	return events_start(1024, main_main, null);
 }
 
@@ -140,7 +140,7 @@ TEST(list) {
 	cout("HttPi %s minimal client test\n\n", httpi_version());
 
 	/* start stop server */
-	EXEC_TEST(http_connect_client);
+	EXEC_TEST(http_connect);
 
 	return result;
 }

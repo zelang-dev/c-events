@@ -34,18 +34,6 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 		}                                                                      \
 	} while (0)
 
-#define HTTP_PORT "8080"
-#ifdef NO_SSL
-#define HTTPS_PORT HTTP_PORT
-#define LISTENING_ADDR "127.0.0.1:" HTTP_PORT
-#else
-#define HTTP_REDIRECT_PORT "8088"
-#define HTTPS_PORT "8443"
-#define LISTENING_ADDR                                                         \
-	"127.0.0.1:" HTTP_PORT ",127.0.0.1:" HTTP_REDIRECT_PORT "r"                \
-	",127.0.0.1:" HTTPS_PORT "s"
-#endif
-
 static char *read_file(string_t path, int *size) {
 	FILE *fp;
 	struct stat st;
@@ -65,19 +53,6 @@ static char *fetch_data;
 static string_t inmemory_file_data = "hi there";
 static string_t upload_filename = "upload_test.txt";
 static string_t upload_ok_message = "upload successful";
-static string_t OPTIONS[] = {
-	"document_root",
-	".",
-	"listening_ports",
-	LISTENING_ADDR,
-	"enable_keep_alive",
-	"yes",
-#ifndef NO_SSL
-	"ssl_certificate",
-	"../resources/ssl_cert.pem",
-#endif
-	NULL,
-};
 
 static string_t open_file_cb(http_t *conn, string_t path, size_t *size)
 {
@@ -91,34 +66,28 @@ static string_t open_file_cb(http_t *conn, string_t path, size_t *size)
 
 static void upload_cb(http_t *conn, string_t path) {
 	char *p1, *p2;
-	int len1, len2;
+	int len1 = 0, len2 = 0;
 
 	if (atoi(http_get_query(conn)) == 1) {
 		ASSERT(!strcmp(path, "./upload_test.txt"));
-		ASSERT((p1 = read_file("../src/app/url.c", &len1)) != NULL);
+		ASSERT((p1 = read_file("./passfile", &len1)) != NULL);
 		ASSERT((p2 = read_file(path, &len2)) != NULL);
 		ASSERT(len1 == len2);
-		ASSERT(memcmp(p1, p2, len1) == 0);
-		free_ex(p1);
-		free_ex(p2);
-		remove(upload_filename);
+		ASSERT(memcmp(p1, p2, 112) == 0);
+		fs_unlink(path);
 	} else if (atoi(http_get_query(conn)) == 2) {
 		if (!strcmp(path, "./upload_test.txt")) {
-			ASSERT((p1 = read_file("include/httpi.h", &len1)) != NULL);
+			ASSERT((p1 = read_file("./CMakeLists.txt", &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
-			ASSERT(memcmp(p1, p2, len1) == 0);
-			free_ex(p1);
-			free_ex(p2);
-			remove(upload_filename);
+			ASSERT(memcmp(p1, p2, 168) == 0);
+			fs_unlink(path);
 		} else if (!strcmp(path, "./upload_test2.txt")) {
-			ASSERT((p1 = read_file("README.md", &len1)) != NULL);
+			ASSERT((p1 = read_file("./hello_gz_unzipped.txt", &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
 			ASSERT(memcmp(p1, p2, len1) == 0);
-			free_ex(p1);
-			free_ex(p2);
-			remove(upload_filename);
+			fs_unlink(path);
 		} else {
 			ASSERT(0);
 		}
@@ -136,21 +105,21 @@ static int begin_request_handler_cb(http_t *conn) {
 	long to_write, write_now;
 	int bytes_read, bytes_written;
 
-	ASSERT(((req_len == -1) && (s_req_len == NULL)) ||
-	       ((s_req_len != NULL) && (req_len = atol(s_req_len))));
+	ASSERT(((req_len == 0 || req_len == -1) && (s_req_len == NULL)) ||
+		((s_req_len != NULL) && (req_len = atol(s_req_len))));
 
-	if (!strncmp(http_get_uri(conn), "/data/", 6)) {
-		if (!strcmp(http_get_uri(conn) + 6, "all")) {
+	string val = http_get_path(conn);
+	if (!strncmp(val, "/data/", 6)) {
+		if (!strcmp(trim_at(val, 6), "all")) {
 			to_write = fetch_data_size;
 		} else {
-			to_write = atol(http_get_url(conn) + 6);
+			to_write = atol(trim_at(val, 6));
 		}
 		http_printf(conn,
-		          "HTTP/1.1 200 OK\r\n"
-		          "Connection: close\r\n"
-		          "Content-Length: %li\r\n"
-		          "Content-Type: text/plain\r\n\r\n",
-		          to_write);
+			"HTTP/1.1 200 OK\r\n"
+			"Connection: close\r\n"
+			"Content-Length: %li\r\n"
+			"Content-Type: text/plain\r\n\r\n", to_write);
 		while (to_write > 0) {
 			write_now = to_write > fetch_data_size ? fetch_data_size : to_write;
 			bytes_written = http_write(conn, fetch_data, write_now);
@@ -161,45 +130,45 @@ static int begin_request_handler_cb(http_t *conn) {
 			}
 			to_write -= bytes_written;
 		}
-		http_close_connection(conn);
 		return 1;
 	}
 
-	if (!strcmp(http_get_url(conn), "/content_length")) {
+	if (str_is(val, "/content_length")) {
 		if (req_len > 0) {
 			data = malloc(req_len);
-			assert(data != NULL);
+			defer_free(data);
+			ASSERT(data != NULL);
 			bytes_read = http_read(conn, data, req_len);
 			ASSERT(bytes_read == req_len);
 
 			http_printf(conn,
-			          "HTTP/1.1 200 OK\r\n"
-			          "Connection: close\r\n"
-			          "Content-Length: %d\r\n" /* The official definition */
-			          "Content-Type: text/plain\r\n\r\n",
-			          bytes_read);
+				"HTTP/1.1 200 OK\r\n"
+				"Connection: close\r\n"
+				"Content-Length: %d\r\n" /* The official definition */
+				"Content-Type: text/plain\r\n\r\n",
+				bytes_read);
 			http_write(conn, data, bytes_read);
-			free_ex(data);
 		} else {
 			data = malloc(1024);
-			assert(data != NULL);
+			defer_free(data);
+			ASSERT(data != NULL);
 			bytes_read = http_read(conn, data, 1024);
 
 			http_printf(conn,
-			          "HTTP/1.1 200 OK\r\n"
-			          "Connection: close\r\n"
-			          "Content-Type: text/plain\r\n\r\n");
-			http_write(conn, data, bytes_read);
-
-			free_ex(data);
+				"HTTP/1.1 200 OK\r\n"
+				"Connection: close\r\n"
+				"Content-Type: text/plain\r\n\r\n");
+			if (bytes_read > 0)
+				http_write(conn, data, bytes_read);
 		}
-		http_close_connection(conn);
+
 		return 1;
 	}
 
-	if (!strcmp(http_get_url(conn), "/upload")) {
+	if (str_is(val, "/upload")) {
 		ASSERT(http_get_query(conn) != NULL);
 		ASSERT(http_upload(conn, ".") == atoi(http_get_query(conn)));
+		return 1;
 	}
 
 	return 0;
@@ -212,88 +181,850 @@ static int log_message_cb(const http_t *conn, string_t msg)
 	return 0;
 }
 
-static int request_test_handler(http_t *conn, void *cbdata) {
-	int i;
-	char chunk_data[32];
+/****************************************************************************/
+/* WEBSOCKET SERVER                                                         */
+/****************************************************************************/
+static const char *websocket_welcome_msg = "websocket welcome\n";
+static const size_t websocket_welcome_msg_len = 18 /* strlen(websocket_welcome_msg) */;
+static const char *websocket_goodbye_msg = "websocket bye\n";
+static const size_t websocket_goodbye_msg_len = 14 /* strlen(websocket_goodbye_msg) */;
 
-	ASSERT(cbdata == (void *)7);
-	strcpy(chunk_data, "123456789A123456789B123456789C");
+static int websock_server_connect(http_t *conn, void *udata) {
+	(void)conn;
 
-	http_printf(conn,
-	          "HTTP/1.1 200 OK\r\n"
-	          "Transfer-Encoding: chunked\r\n"
-	          "Content-Type: text/plain\r\n\r\n");
+	ASSERT((void *)udata == (void *)(ptrdiff_t)7531);
+	cerr("Server: Websocket connected\n");
 
-	for (i = 0; i < 20; i++) {
-		http_printf(conn, "%x\r\n", i);
-		http_write(conn, chunk_data, i);
-		http_printf(conn, "\r\n");
+	return 0; /* return 0 to accept every connection */
+}
+
+static void websock_server_ready(http_t *conn, void *udata) {
+	ASSERT((void *)udata == (void *)(ptrdiff_t)7531);
+	ASSERT((void *)conn != (void *)NULL);
+	cerr("Server: Websocket ready\n");
+	/* Send websocket welcome message */
+	http_websocket_text(conn, websocket_welcome_msg, websocket_welcome_msg_len);
+	cerr("Server: Websocket ready X\n");
+}
+
+
+#define long_ws_buf_len_16 (500)
+#define long_ws_buf_len_64 (70000)
+static char long_ws_buf[long_ws_buf_len_64];
+
+static int websock_server_data(http_t *conn,
+	int bits,
+	char *data,
+	size_t data_len,
+	void *udata) {
+	(void)bits;
+
+	ASSERT((void *)udata == (void *)(ptrdiff_t)7531);
+	cerr("Server: Got %u bytes from the client\n", (unsigned)data_len);
+
+	if (data_len == 3 && !memcmp(data, "bye", 3)) {
+		/* Send websocket goodbye message */
+		http_websocket_text(conn,
+			websocket_goodbye_msg,
+			websocket_goodbye_msg_len);
+	} else if (data_len == 5 && !memcmp(data, "data1", 5)) {
+		http_websocket_text(conn, "ok1", 3);
+	} else if (data_len == 5 && !memcmp(data, "data2", 5)) {
+		http_websocket_text(conn, "ok 2", 4);
+	} else if (data_len == 5 && !memcmp(data, "data3", 5)) {
+		http_websocket_text(conn, "ok - 3", 6);
+	} else if (data_len == long_ws_buf_len_16) {
+		ASSERT(memcmp(data, long_ws_buf, long_ws_buf_len_16) == 0);
+		http_websocket_binary(conn,
+			long_ws_buf,
+			long_ws_buf_len_16);
+	} else if (data_len == long_ws_buf_len_64) {
+		ASSERT(memcmp(data, long_ws_buf, long_ws_buf_len_64) == 0);
+		http_websocket_binary(conn,
+			long_ws_buf,
+			long_ws_buf_len_64);
+	} else {
+
+#if defined(__MINGW32__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunreachable-code"
+#endif
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunreachable-code"
+#endif
+		panicking("Got unexpected message from websocket client");
+		return 0;
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+#if defined(__MINGW32__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+	}
+	return 1; /* return 1 to keep the connection open */
+}
+
+static void websock_server_close(http_t *conn, void *udata) {
+#if !defined(__MACH__) && !defined(__APPLE__)
+	ASSERT((void *)udata == (void *)(ptrdiff_t)7531);
+	cerr("Server: Close connection\n");
+
+	/* Can not send a websocket goodbye message here -
+	 * the connection is already closed */
+#endif
+
+	(void)conn;
+	(void)udata;
+}
+
+/****************************************************************************/
+/* WEBSOCKET CLIENT                                                         */
+/****************************************************************************/
+struct tclient_data {
+	void *data;
+	size_t len;
+	int closed;
+	int clientId;
+};
+
+static int websocket_client_data_handler(http_t *conn,
+	int flags,
+	char *data,
+	size_t data_len,
+	void *user_data) {
+	http_ini_t *ctx = httpi_context(conn);
+	struct tclient_data *pclient_data =
+		(struct tclient_data *)httpi_user_data(ctx);
+
+	ASSERT(user_data == (void *)pclient_data);
+
+	ASSERT(pclient_data != NULL);
+	ASSERT(flags > 128);
+	ASSERT(flags < 128 + 16);
+	ASSERT((flags == (int)(128 | WS_OPS_BINARY))
+		|| (flags == (int)(128 | WS_OPS_TEXT)));
+
+	if (flags == (int)(128 | WS_OPS_TEXT)) {
+		cerr(
+			"Client %i received %lu bytes text data from server: %.*s\n",
+			pclient_data->clientId,
+			(unsigned long)data_len,
+			(int)data_len,
+			data);
+	} else {
+		cerr("Client %i received %lu bytes binary data from\n",
+			pclient_data->clientId,
+			(unsigned long)data_len);
 	}
 
-	http_printf(conn, "0\r\n\r\n");
+	pclient_data->data = malloc(data_len);
+	ASSERT(pclient_data->data != NULL);
+	memcpy(pclient_data->data, data, data_len);
+	pclient_data->len = data_len;
 
 	return 1;
 }
 
-TEST(http_route) {
-	char ebuf[100];
-	http_ini_t *ctx;
-	http_t *conn;
-	char uri[64];
-	int i;
-	string_t request = "GET /U7 HTTP/1.0\r\n\r\n";
+static void websocket_client_close_handler(http_t *conn, void *user_data) {
+	http_ini_t *ctx = httpi_context(conn);
+	struct tclient_data *pclient_data = (struct tclient_data *)httpi_user_data(ctx);
 
-	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
-	ctx = httpi_setup(0, NULL, NULL, server_opts(OPTIONS));
-	ASSERT(ctx != NULL);
+#if !defined(__MACH__) && !defined(__APPLE__)
+	ASSERT(user_data == (void *)pclient_data);
+	ASSERT(pclient_data != NULL);
+
+	cerr("Client %i: Close handler\n", pclient_data->clientId);
+	pclient_data->closed++;
+#else
+
+	(void)user_data;
+	pclient_data->closed++;
+
+#endif /* __MACH__ && __APPLE__ */
+}
+
+static http_ini_t *g_ctx;
+
+static int request_test_handler(http_t *conn, void_t cbdata) {
+	int i;
+	char chunk_data[32];
+	const httpi_t *ri;
+	http_ini_t *ctx;
+	void_t ud, cud;
+
+	ctx = httpi_context(conn);
+	ud = httpi_user_data(ctx);
+	ri = http_request_info(conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(ctx == g_ctx);
+	ASSERT(ud == &g_ctx);
+
+	http_user_data_set(conn, (void *)6543);
+	cud = http_user_data(conn);
+	ASSERT((void *)cud == (void *)6543);
+
+	ASSERT((void *)cbdata == (void *)7);
+
+	http_ok(conn, "text/plain", -1);
+	for (i = 1; i <= 10; i++) {
+		http_chunk(conn, chunk_data, (unsigned)i);
+	}
+	http_chunk(conn, 0, 0);
+
+	return 200;
+}
+
+void main_main(http_ini_t *ctx) {
+	http_t *client_conn;
+	const httpi_t *ri;
+	char uri[64], ebuf[100];
+	char buf[1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 8];
+	const char *expected =
+		"112123123412345123456123456712345678123456789123456789A";
+	int i;
+	short ipv4_port = 8084;
+	short ipv4s_port = 8094;
+	short ipv4r_port = 8194;
+	short ipv6_port = 8086;
+	short ipv6s_port = 8096;
+	short ipv6r_port = 8196;
+
+	const char *request = "GET /U7 HTTP/1.0\r\n\r\n";
+
+	const char *opt;
+	FILE *f;
+	const char *plain_file_content;
+	const char *encoded_file_content;
+	const char *cgi_script_content;
+	const char *expected_cgi_result;
+	int opt_idx = 0;
+
+	use_ca_certificate("cert.pem");
+	tls_selfserver_set();
+
+	struct tclient_data ws_client1_data = {NULL, 0, 0};
+	struct tclient_data ws_client2_data = {NULL, 0, 0};
+	struct tclient_data ws_client3_data = {NULL, 0, 0};
+	http_t *ws_client1_conn = NULL;
+	http_t *ws_client2_conn = NULL;
+	http_t *ws_client3_conn = NULL;
+
+	char cmd_buf[256];
 
 	for (i = 0; i < 1000; i++) {
 		sprintf(uri, "/U%u", i);
 		http_route(ctx, uri, request_test_handler, NULL);
 	}
-
 	for (i = 500; i < 800; i++) {
 		sprintf(uri, "/U%u", i);
 		http_route(ctx, uri, NULL, (void *)1);
 	}
-
 	for (i = 600; i >= 0; i--) {
 		sprintf(uri, "/U%u", i);
 		http_route(ctx, uri, NULL, (void *)2);
 	}
-
 	for (i = 750; i <= 1000; i++) {
 		sprintf(uri, "/U%u", i);
 		http_route(ctx, uri, NULL, (void *)3);
 	}
-
 	for (i = 5; i < 9; i++) {
 		sprintf(uri, "/U%u", i);
-		http_route(ctx, uri, request_test_handler, (void *)(intptr_t)i);
+		http_route(ctx, uri, request_test_handler, (void *)(ptrdiff_t)i);
 	}
 
-	conn = http_download( "localhost", atoi(HTTP_PORT), 0, "%s", request);
-	ASSERT(conn != NULL);
-	delay(10000);
-	http_close_connection(conn);
+	http_websocket_route(ctx,
+		"/websocket",
+		websock_server_connect,
+		websock_server_ready,
+		websock_server_data,
+		websock_server_close,
+		(void *)7531);
 
+	/* Try to load non existing file */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET /file/not/found HTTP/1.0\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 404);
+	http_close_connection(client_conn);
+
+	/* Get data from callback */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", request);
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == (int)strlen(expected));
+	buf[i] = 0;
+	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+
+	/* Get data from callback using http://127.0.0.1 */
+	client_conn = http_download("127.0.0.1", ipv4_port, 0, "%s", request);
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	if ((i >= 0) && ((size_t)i < sizeof(buf))) {
+		buf[i] = 0;
+	} else {
+		cerr(
+			"ERROR: test_request_handlers: read returned %i (>=0, <%i)",
+			(int)i,
+			(int)sizeof(buf));
+		abort();
+	}
+	ASSERT((int)i < (int)sizeof(buf));
+	ASSERT(i > 0);
+	ASSERT(i == (int)strlen(expected));
+	buf[i] = 0;
+	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+
+#if defined(USE_IPV6)
+	/* Get data from callback using http://[::1] */
+	client_conn = http_download("[::1]", ipv6_port, 0, "%s", request);
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == (int)strlen(expected));
+	buf[i] = 0;
+	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+#endif
+
+#if !defined(NO_SSL)
+	/* Get data from callback using https://127.0.0.1 */
+	client_conn = http_download("127.0.0.1", ipv4s_port, 1, "%s", request);
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == (int)strlen(expected));
+	buf[i] = 0;
+	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+
+	/* Get redirect from callback using http://127.0.0.1 */
+	client_conn = http_download("127.0.0.1", ipv4r_port, 0, "%s", request);
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 302);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == -1);
+	http_close_connection(client_conn);
+#endif
+
+#if defined(USE_IPV6) && !defined(NO_SSL)
+	/* Get data from callback using https://[::1] */
+	client_conn = http_download("[::1]", ipv6s_port, 1, "%s", request);
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == (int)strlen(expected));
+	buf[i] = 0;
+	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+
+	/* Get redirect from callback using http://127.0.0.1 */
+	client_conn = http_download("[::1]", ipv6r_port, 0, "%s", request);
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 302);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == -1);
+	http_close_connection(client_conn);
+#endif
+
+/* It seems to be impossible to find out what the actual working
+ * directory of the CI test environment is. Before breaking another
+ * dozen of builds by trying blindly with different paths, just
+ * create the file here */
+#ifdef _WIN32
+	f = fopen("test.txt", "wb");
+#else
+	f = fopen("test.txt", "w");
+#endif
+	plain_file_content = "simple text file\n";
+	fwrite(plain_file_content, 17, 1, f);
+	fclose(f);
+
+#ifdef _WIN32
+	f = fopen("test_gz.txt.gz", "wb");
+#else
+	f = fopen("test_gz.txt.gz", "w");
+#endif
+	encoded_file_content = "\x1f\x8b\x08\x08\xf8\x9d\xcb\x55\x00\x00"
+		"test_gz.txt"
+		"\x00\x01\x11\x00\xee\xff"
+		"zipped text file"
+		"\x0a\x34\x5f\xcc\x49\x11\x00\x00\x00";
+	fwrite(encoded_file_content, 1, 52, f);
+	fclose(f);
+
+#ifdef _WIN32
+	f = fopen("test.cgi", "wb");
+	cgi_script_content = "#!test.cgi.cmd\r\n";
+	fwrite(cgi_script_content, strlen(cgi_script_content), 1, f);
+	fclose(f);
+	f = fopen("test.cgi.cmd", "w");
+	cgi_script_content = "@echo off\r\n"
+		"echo Connection: close\r\n"
+		"echo Content-Type: text/plain\r\n"
+		"echo.\r\n"
+		"echo CGI test\r\n"
+		"\r\n";
+	fwrite(cgi_script_content, strlen(cgi_script_content), 1, f);
+	fclose(f);
+#else
+	f = fopen("test.cgi", "w");
+	cgi_script_content = "#!/bin/sh\n\n"
+		"printf \"Connection: close\\r\\n\"\n"
+		"printf \"Content-Type: text/plain\\r\\n\"\n"
+		"printf \"\\r\\n\"\n"
+		"printf \"CGI test\\r\\n\"\n"
+		"\n";
+	fwrite(cgi_script_content, strlen(cgi_script_content), 1, f);
+	fclose(f);
+	system("chmod a+x test.cgi");
+#endif
+	expected_cgi_result = "CGI test";
+
+	/* Get static data */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET /test.txt HTTP/1.0\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == 17);
+	if ((i >= 0) && (i < (int)sizeof(buf))) {
+		buf[i] = 0;
+	}
+	ASSERT_STR_ABORT(buf, plain_file_content);
+
+	http_close_connection(client_conn);
+
+
+/* Test with CGI test executable */
+#if defined(_WIN32)
+	sprintf(cmd_buf, "copy %s\\cgi_test.cgi cgi_test.exe", locate_test_exes());
+#else
+	sprintf(cmd_buf, "cp %s/cgi_test.cgi cgi_test.cgi", locate_test_exes());
+#endif
+	system(cmd_buf);
+
+#if !defined(_WIN32)
+	/* TODO: add test for windows, check with POST */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "POST /cgi_test.cgi HTTP/1.0\r\nContent-Length: 3\r\n\r\nABC");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	http_close_connection(client_conn);
+#endif
+
+	/* Get zipped static data - will not work if Accept-Encoding is not set */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET /test_gz.txt HTTP/1.0\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+
+	ASSERT(http_get_code(client_conn) == 404);
+	http_close_connection(client_conn);
+
+	/* Get zipped static data - with Accept-Encoding */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET /test_gz.txt HTTP/1.0\r\nAccept-Encoding: gzip\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == 52);
+	if ((i >= 0) && (i < (int)sizeof(buf))) {
+		buf[i] = 0;
+	}
+	ASSERT(http_get_length(client_conn) == 52);
+	ASSERT_STR_ABORT(buf, encoded_file_content);
+
+	http_close_connection(client_conn);
+
+/* Get CGI generated data */
+#if !defined(NO_CGI)
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET /test.cgi HTTP/1.0\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+
+	i = http_read(client_conn, buf, sizeof(buf));
+	if ((i >= 0) && (i < (int)sizeof(buf))) {
+		while ((i > 0) && ((buf[i - 1] == '\r') || (buf[i - 1] == '\n'))) {
+			i--;
+		}
+		buf[i] = 0;
+	}
+	/* ASSERT(i == (int)strlen(expected_cgi_result)); */
+	ASSERT_STR_ABORT(buf, expected_cgi_result);
+	ASSERT(http_get_code(client_conn) == 200);
+	http_close_connection(client_conn);
+
+#else
+	(void)expected_cgi_result;
+	(void)cgi_script_content;
+#endif
+
+	/* Get directory listing */ client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET / HTTP/1.0\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i > 6);
+	buf[6] = 0;
+	ASSERT_STR_ABORT(buf, "<html>");
+	http_close_connection(client_conn);
+
+	/* POST to static file (will not work) */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "POST /test.txt HTTP/1.0\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 405);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i >= 29);
+	buf[29] = 0;
+	ASSERT_STR_ABORT(buf, "Error 405: Method Not Allowed");
+
+	http_close_connection(client_conn);
+
+	/* PUT to static file (will not work) */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "PUT /test.txt HTTP/1.0\r\n\r\n");
+	ASSERT(client_conn != NULL);
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 401); /* not authorized */
+
+	http_close_connection(client_conn);
+
+
+	/* Get data from callback using http_connect instead of http_download */
+	memset(ebuf, 0, sizeof(ebuf));
+	client_conn = http_connect("127.0.0.1", ipv4_port, 0, ebuf, sizeof(ebuf));
+	ASSERT(client_conn != NULL);
+	ASSERT_STR_ABORT(ebuf, "");
+
+	http_printf(client_conn, "%s", request);
+
+	i = http_get_response(client_conn, ebuf, sizeof(ebuf), 10000);
+	ck_assert_int_ge(i, 0);
+	ASSERT_STR_ABORT(ebuf, "");
+
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == (int)strlen(expected));
+	buf[i] = 0;
+	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+
+	/* Get data from callback using http_connect and absolute URI */
+	memset(ebuf, 0, sizeof(ebuf));
+	client_conn = http_connect("localhost", ipv4_port, 0, ebuf, sizeof(ebuf));
+	ASSERT(client_conn != NULL);
+	ASSERT_STR_ABORT(ebuf, "");
+
+	http_printf(client_conn, "GET http://test.domain:%d/U7 HTTP/1.0\r\n\r\n", ipv4_port);
+
+	i = http_get_response(client_conn, ebuf, sizeof(ebuf), 10000);
+	ck_assert_int_ge(i, 0);
+	ASSERT_STR_ABORT(ebuf, "");
+
+	ri = http_request_info(client_conn);
+
+	ASSERT(ri != NULL);
+	ASSERT(http_get_code(client_conn) == 200);
+	i = http_read(client_conn, buf, sizeof(buf));
+	ASSERT(i == (int)strlen(expected));
+	buf[i] = 0;
+	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+
+
+/* Websocket test */
+#ifdef USE_WEBSOCKET
+	/* Then connect a first client */
+	ws_client1_conn =
+		http_connect_websocket_client("localhost",
+			ipv4_port,
+			0,
+			ebuf,
+			sizeof(ebuf),
+			"/websocket",
+			NULL,
+			websocket_client_data_handler,
+			websocket_client_close_handler,
+			&ws_client1_data);
+
+	ASSERT(ws_client1_conn != NULL);
+
+	wait_not_null(
+		&(ws_client1_data.data)); /* Wait for the websocket welcome message */
+	ASSERT(ws_client1_data.closed == 0);
+	ASSERT(ws_client2_data.closed == 0);
+	ASSERT(ws_client3_data.closed == 0);
+	ASSERT(ws_client2_data.data == NULL);
+	ck_assert_uint_eq(ws_client2_data.len, 0);
+	ASSERT(ws_client1_data.data != NULL);
+	ck_assert_uint_eq(ws_client1_data.len, websocket_welcome_msg_len);
+	ASSERT(!memcmp(ws_client1_data.data,
+		websocket_welcome_msg,
+		websocket_welcome_msg_len));
+	free(ws_client1_data.data);
+	ws_client1_data.data = NULL;
+	ws_client1_data.len = 0;
+
+	http_websocket_client_write(ws_client1_conn, WEBSOCKET_OPCODE_TEXT, "data1", 5);
+
+	wait_not_null(
+		&(ws_client1_data
+			.data)); /* Wait for the websocket acknowledge message */
+	ASSERT(ws_client1_data.closed == 0);
+	ASSERT(ws_client2_data.closed == );
+	ASSERT(ws_client2_data.data == NULL);
+	ck_assert_uint_eq(ws_client2_data.len, 0);
+	ASSERT(ws_client1_data.data != NULL);
+	ck_assert_uint_eq(ws_client1_data.len, 3);
+	ASSERT(!memcmp(ws_client1_data.data, "ok1", 3));
+	free(ws_client1_data.data);
+	ws_client1_data.data = NULL;
+	ws_client1_data.len = 0;
+
+/* Now connect a second client */
+#ifdef USE_IPV6
+	ws_client2_conn =
+		http_connect_websocket_client("[::1]",
+			ipv6_port,
+			0,
+			ebuf,
+			sizeof(ebuf),
+			"/websocket",
+			NULL,
+			websocket_client_data_handler,
+			websocket_client_close_handler,
+			&ws_client2_data);
+#else
+	ws_client2_conn =
+		http_connect_websocket_client("127.0.0.1",
+			ipv4_port,
+			0,
+			ebuf,
+			sizeof(ebuf),
+			"/websocket",
+			NULL,
+			websocket_client_data_handler,
+			websocket_client_close_handler,
+			&ws_client2_data);
+#endif
+	ASSERT(ws_client2_conn != NULL);
+
+	wait_not_null(
+		&(ws_client2_data.data)); /* Wait for the websocket welcome message */
+	ASSERT(ws_client1_data.closed == 0);
+	ASSERT(ws_client2_data.closed == 0);
+	ASSERT(ws_client1_data.data == NULL);
+	ASSERT(ws_client1_data.len == 0);
+	ASSERT(ws_client2_data.data != NULL);
+	ASSERT(ws_client2_data.len == websocket_welcome_msg_len);
+	ASSERT(!memcmp(ws_client2_data.data,
+		websocket_welcome_msg,
+		websocket_welcome_msg_len));
+	free(ws_client2_data.data);
+	ws_client2_data.data = NULL;
+	ws_client2_data.len = 0;
+
+	http_websocket_client_write(ws_client1_conn, WEBSOCKET_OPCODE_TEXT, "data2", 5);
+
+	wait_not_null(
+		&(ws_client1_data
+			.data)); /* Wait for the websocket acknowledge message */
+
+	ASSERT(ws_client1_data.closed == 0);
+	ASSERT(ws_client2_data.closed == 0);
+	ASSERT(ws_client2_data.data == NULL);
+	ASSERT(ws_client2_data.len == 0);
+	ASSERT(ws_client1_data.data != NULL);
+	ASSERT(ws_client1_data.len == 4);
+	ASSERT(!memcmp(ws_client1_data.data, "ok 2", 4));
+	free(ws_client1_data.data);
+	ws_client1_data.data = NULL;
+	ws_client1_data.len = 0;
+
+	http_websocket_client_write(ws_client1_conn, WEBSOCKET_OPCODE_TEXT, "bye", 3);
+
+	wait_not_null(
+		&(ws_client1_data.data)); /* Wait for the websocket goodbye message */
+
+	ASSERT(ws_client1_data.closed == 0);
+	ASSERT(ws_client2_data.closed == 0);
+	ASSERT(ws_client2_data.data == NULL);
+	ASSERT(ws_client2_data.len == 0);
+	ASSERT(ws_client1_data.data != NULL);
+	ASSERT(ws_client1_data.len == websocket_goodbye_msg_len);
+	ASSERT(!memcmp(ws_client1_data.data,
+		websocket_goodbye_msg,
+		websocket_goodbye_msg_len));
+	free(ws_client1_data.data);
+	ws_client1_data.data = NULL;
+	ws_client1_data.len = 0;
+
+	http_close_connection(ws_client1_conn);
+
+	test_sleep(3); /* Won't get any message */
+
+	ASSERT(ws_client1_data.closed == 1);
+	ASSERT(ws_client2_data.closed == 0);
+	ASSERT(ws_client1_data.data == NULL);
+	ASSERT(ws_client1_data.len == 0);
+	ASSERT(ws_client2_data.data == NULL);
+	ASSERT(ws_client2_data.len == 0);
+
+	http_websocket_client_write(ws_client2_conn, WEBSOCKET_OPCODE_TEXT, "bye", 3);
+
+	wait_not_null(
+		&(ws_client2_data.data)); /* Wait for the websocket goodbye message */
+
+	ASSERT(ws_client1_data.closed == 1);
+	ASSERT(ws_client2_data.closed == 0);
+	ASSERT(ws_client1_data.data == NULL);
+	ASSERT(ws_client1_data.len == 0);
+	ASSERT(ws_client2_data.data != NULL);
+	ASSERT(ws_client2_data.len == websocket_goodbye_msg_len);
+	ASSERT(!memcmp(ws_client2_data.data,
+		websocket_goodbye_msg,
+		websocket_goodbye_msg_len));
+	free(ws_client2_data.data);
+	ws_client2_data.data = NULL;
+	ws_client2_data.len = 0;
+
+	http_close_connection(ws_client2_conn);
+
+	test_sleep(3); /* Won't get any message */
+
+	ASSERT(ws_client1_data.closed == 1);
+	ASSERT(ws_client2_data.closed == 1);
+	ASSERT(ws_client1_data.data == NULL);
+	ASSERT(ws_client1_data.len == 0);
+	ASSERT(ws_client2_data.data == NULL);
+	ASSERT(ws_client2_data.len == 0);
+
+	/* Connect client 3 */
+	ws_client3_conn =
+		http_connect_websocket_client("localhost",
+#if defined(NO_SSL)
+			ipv4_port,
+			0,
+#else
+			ipv4s_port,
+			1,
+#endif
+			ebuf,
+			sizeof(ebuf),
+			"/websocket",
+			NULL,
+			websocket_client_data_handler,
+			websocket_client_close_handler,
+			&ws_client3_data);
+
+	ASSERT(ws_client3_conn != NULL);
+
+	wait_not_null(
+		&(ws_client3_data.data)); /* Wait for the websocket welcome message */
+	ASSERT(ws_client1_data.closed == 1);
+	ASSERT(ws_client2_data.closed == 1);
+	ASSERT(ws_client3_data.closed == 0);
+	ASSERT(ws_client1_data.data == NULL);
+	ASSERT(ws_client1_data.len == 0);
+	ASSERT(ws_client2_data.data == NULL);
+	ASSERT(ws_client2_data.len == 0);
+	ASSERT(ws_client3_data.data != NULL);
+	ASSERT(ws_client3_data.len == websocket_welcome_msg_len);
+	ASSERT(!memcmp(ws_client3_data.data,
+		websocket_welcome_msg,
+		websocket_welcome_msg_len));
+	free(ws_client3_data.data);
+	ws_client3_data.data = NULL;
+	ws_client3_data.len = 0;
+#endif
+
+	/* Close the server */
+	g_ctx = NULL;
 	http_stop(ctx);
-	return 0;
+	mark_point();
+
+#ifdef USE_WEBSOCKET
+	for (i = 0; i < 100; i++) {
+		test_sleep(1);
+		if (ws_client3_data.closed != 0) {
+			mark_point();
+			break;
+		}
+	}
+
+	ASSERT(ws_client3_data.closed == 1);
+#endif
 }
 
-TEST(main_main) {
-	int i, unused, result = 0;
+TEST(http_route) {
+	int opt_idx = 0, result = 0;
+	string_t OPTIONS[16];
+	http_ini_t *ctx;
+	const char *HTTP_PORT = "8084,[::]:8086,8194r,[::]:8196r,8094s,[::]:8096s";
 
-	/* create test data */
-	fetch_data = (char *)malloc(fetch_data_size);
-	for (i = 0; i < fetch_data_size; i++) {
-		fetch_data[i] = 'a' + i % 10;
-	}
+	memset((void *)OPTIONS, 0, sizeof(OPTIONS));
+	OPTIONS[opt_idx++] = "listening_ports";
+	OPTIONS[opt_idx++] = HTTP_PORT;
+	OPTIONS[opt_idx++] = "authentication_domain";
+	OPTIONS[opt_idx++] = "test.domain";
+	OPTIONS[opt_idx++] = "document_root";
+	OPTIONS[opt_idx++] = ".";
+	//OPTIONS[opt_idx++] = "ssl_certificate";
+	//OPTIONS[opt_idx++] = ".";
 
-	EXEC_TEST(http_route);
-
-	/* test completed */
-	free(fetch_data);
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, null, NULL, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+	g_ctx = ctx;
+	httpi_start(ctx, main_main);
 
 	return result;
 }
@@ -328,7 +1059,7 @@ TEST(list) {
 	}
 
 	/* start stop server */
-	EXEC_TEST(main_main);
+	EXEC_TEST(http_route);
 
 	unused = chdir("../build");
 #if defined(_WIN32) || defined(_WIN64)

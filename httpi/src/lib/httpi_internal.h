@@ -150,13 +150,13 @@ typedef enum {
 	CGI_INTERPRETER,
 	CGI_INTERPRETER_ARGS,
 	CGI_BUFFERING,
-
+/*
 	CGI2_EXTENSIONS,
 	CGI2_ENVIRONMENT,
 	CGI2_INTERPRETER,
 	CGI2_INTERPRETER_ARGS,
 	CGI2_BUFFERING,
-
+*/
 	PUT_DELETE_PASSWORDS_FILE, /* must follow CGI_* */
 	PROTECT_URI,
 	AUTHENTICATION_DOMAIN,
@@ -880,7 +880,7 @@ void http_set_handler(http_ini_t *ctx,
 	ws_data_cb data_handler, ws_close_cb close_handler,
 	auth_cb auth_handler, void_t cbdata);
 
-http_t *http_connect_client_impl(const struct client_options *client_options,
+http_t *http_connect_impl(const struct client_options *client_options,
 	int use_ssl, struct error_data *error);
 
 /**

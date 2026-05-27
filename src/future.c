@@ -265,6 +265,20 @@ static void queue_work_handler(param_t args) {
 		errno = job->erred;
 }
 
+promise *alloc_promise(void) {
+	promise *f = null;
+	if (!is_empty(f = (promise *)events_malloc(sizeof(promise)))) {
+		f->args = null;
+		f->result->is_array = false;
+		f->result->value.integer = 0;
+		atomic_flag_clear(&f->mutex);
+		atomic_flag_clear(&f->done);
+		f->type = DATA_PROMISE;
+	}
+
+	return f;
+}
+
 promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...) {
 	if (is_promise(f)) {
 		va_list ap;
