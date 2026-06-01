@@ -64,7 +64,7 @@ When the conditions that would trigger an event occur (e.g., its file descriptor
 * [x] Implement `fs_events()` function, for fully recursive automatic *setup* and *execution* for **filesystem monitoring**.
 * [x] Merge the **core** [c-raii](https://github.com/zelang-dev/c-raii) memory safety into `fence()` function, `defer()`, `guard/guarded` and *exception* handling implementation `try...catch`.
 * [x] Update `CMakeLists.txt` for **OpenSSL** *tls* support thru *dependency* in [opentls](https://github.com/zelang-dev/opentls).
-* [ ] Completion of ALL OS *file system* function routines with matching **thread** ~async_fs_~ *version*.
+* [ ] Completion of ALL OS *file system* function routines with matching **thread** ~fs_~ *version*.
 
 ## Design
 
@@ -80,7 +80,7 @@ The Operating System **file descriptor** is represented by `fds_t` and `filefd_t
 
 This would also allow non-blocking file system handling. For cross-platform ease, everything is a *pass-thru* to a thread pool instead. A default of `one` is automatically created on first `events_create()` launch for `events_t`  **loop** handle.
 
-An thread pool is created by calling `events_create_future()` with a **loop** handle. This function returns an *future* handle that must be pass as first parameter to various *replacement* standard file system functions, a few currently implemented, all prefixed as **~async_fs_~**.
+An thread pool is created by calling `events_create_future()` with a **loop** handle. This function returns an *future* handle that must be pass as first parameter to various *replacement* standard file system functions, a few currently implemented, all prefixed as **~fs_~**, like `fs_open, fs_write, fs_read, fs_close, etc...`, these functions now call `futures_pool()` for handle. Previous implementation with **async_fs_** and **async_get_** prefix functions removed.
 
 * These functions are constructed as a wrapper call to `queue_work()` as a *coroutine/task* to *enqueue* the call to the actual thread handler.
 * Usage of `events_create_future()` is intended for *FileSystem/CPU* intensive workload offloading, NO actual **Events API** should be run in this thread, the **loop** handle is just required for internal setup.
@@ -486,6 +486,11 @@ C_API void async_ex(size_t stacksize, launch_func_t fn, uint32_t num_args, ...);
 WILL `panic/abort`, if `events_create_pool()` not set. */
 C_API uint32_t go(param_func_t fn, size_t num_of_args, ...);
 
+/* Same as `go()`, except can set ~`stacksize`~, and ~`fn`~ is `executed` between
+`guard/guarded` aka `try\catch` blocks. The ~`cleanup`~ is `fence(any)` for `scope` exit,
+in addition to other `defer()` calls. */
+C_API void go_guard(size_t stacksize, guarded_func_t fn, defer_cb cleanup, void *any);
+
 /*  Low-level call sitting underneath `async_read` and `async_write`.
  Puts task to ~sleep~ while waiting for I/O to be possible on `fd`.
 
@@ -540,60 +545,54 @@ Protocol either:
 - `-1` for PIPE/IPC socket `AF_UNIX`
 
 - Hostname can be `ip` address, `domain name` or `pathname` for UDS.
-- If `domain name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup. */
+- If `domain name`, automatically calls `async_getaddrinfo()` to preform a non-blocking DNS lockup. */
 C_API fds_t async_connect(char *hostname, int port, int protocol);
 
 /* Return `ip` address from `async_gethostbyname()` execution. */
 C_API char *gethostbyname_ip(struct hostent *host);
 
-/** Preform a non-blocking DNS lockup in separate `thrd` thread ~pool~ provided,
- returns ~struct~ `hostent` address. */
-C_API struct hostent *async_get_hostbyname(future *thrd, char *hostname);
-
-/** Preform a non-blocking DNS lockup in separate `thread`,
+/** Preform a non-blocking DNS lockup in separate `thread` ~pool~,
  returns ~struct~ `hostent` address. */
 C_API struct hostent *async_gethostbyname(char *hostname);
 
-C_API int async_get_addrinfo(future *thrd, const char *name,
- const char *service, const struct addrinfo *hints, addrinfo_t result);
-
 C_API int async_getaddrinfo(const char *name,
  const char *service, const struct addrinfo *hints, addrinfo_t result);
+C_API int async_getnameinfo(const struct sockaddr *sa, socklen_t salen,
+ char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
 
-C_API int async_fs_open(future *thrd, const char *path, int flag, int mode);
+C_API int async_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolve_src);
+C_API int async_parse_addr(char *host, u_saddr_t *dst, int *ip_version);
+
 C_API int fs_open(const char *path, int flag, int mode);
-
-C_API int async_fs_read(future *thrd, int fd, void *buf, uint32_t count);
 C_API int fs_read(int fd, void *buf, uint32_t count);
-
-C_API int async_fs_write(future *thrd, int fd, const void *buf, uint32_t count);
 C_API int fs_write(int fd, const void *buf, uint32_t count);
-
-C_API ssize_t async_fs_sendfile(future *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
 C_API ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
-
-C_API int async_fs_close(future *thrd, int fd);
 C_API int fs_close(int fd);
-
-C_API int async_fs_unlink(future *thrd, const char *path);
 C_API int fs_unlink(const char *path);
-
-C_API int async_fs_mkdir(future *thrd, const char *path, mode_t mode);
 C_API int fs_mkdir(const char *path, mode_t mode);
-
-C_API int async_fs_rmdir(future *thrd, const char *path);
 C_API int fs_rmdir(const char *path);
-
-C_API int async_fs_stat(future *thrd, const char *path, struct stat *st);
 C_API int fs_stat(const char *path, struct stat *st);
-
-C_API int async_fs_access(future *thrd, const char *path, int mode);
+C_API int fs_fstat(int fd, struct stat *st);
 C_API int fs_access(const char *path, int mode);
-
 C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
 C_API int fs_writefile(const char *path, char *text);
 C_API char *fs_readfile(const char *path);
+C_API bool fs_touch(const char *path);
+C_API int fs_rename(const char *oldfile, const char *newfile);
+C_API int fs_copyfile(const char *oldfile, const char *newfile);
+
+C_API int async_getentropy(void *buf, size_t buflen);
+C_API int async_fwrite(const char *path, const char *mode, void *buf, size_t size, size_t count);
+C_API int async_fprintf(const char *path, const char *mode, const char *buf);
+
+C_API FILE *fs_fopen(const char *path, const char *mode);
+C_API size_t fs_fread(void *buf, size_t items_size, size_t items_count, FILE *stream);
+C_API size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream);
+C_API int fs_fclose(FILE *stream);
+C_API int fs_fgetc(FILE *stream);
+C_API char *fs_fgets(char *buf, int count, FILE *stream);
+C_API int fs_chmod(const char *file, mode_t mode);
 
 /* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
 - This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.
@@ -608,6 +607,20 @@ C_API const char *fs_events_path(int wd);
 C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);
 C_API bool spawn_is_finish(execinfo_t *child);
+
+C_API values_t promise_wait(promise *p);
+C_API void promise_clean(promise *p);
+C_API promise *alloc_promise(void);
+C_API promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...);
+C_API promise *promise_fopen(const char *path, const char *mode);
+C_API int promise_read(promise *p, int fd, void *buf, uint32_t count);
+C_API int promise_fgetc(promise *p, FILE *stream);
+C_API char *promise_fgets(promise *p, char *buf, int count, FILE *stream);
+C_API size_t promise_fwrite(promise *p, void *buf, size_t items_size, size_t items_count, FILE *stream);
+C_API int promise_fprintf(promise *p, FILE *stream, const char *fmt);
+C_API int promise_fclose(promise *p, FILE *stream);
+C_API promise *promise_popen(const char *path, const char *mode);
+C_API int promise_pclose(promise *p, FILE *stream);
 ```
 
 ## Automatic Memory Safety

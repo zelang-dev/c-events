@@ -97,8 +97,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	/* data points to the place where the message is stored when passed to
 	 * the websocket_data callback.  This is either mem on the stack, or a
 	 * dynamically allocated buffer if it is too large. */
-	char mem[4096];
-	string data;
+	unsigned char mem[4096];
 	/* mask flag and opcode */
 	unsigned char mop;
 	/* Variables used for connection monitoring */
@@ -160,11 +159,13 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			}
 		}
 
-		if (header_len > 0 && body_len >= header_len) {
+		if (header_len > 0 && ( body_len >= header_len)) {
 			/* Allocate space to hold websocket payload */
-			data = mem;
-			if (data_len > sizeof(mem)) {
-				data = malloc(data_len);
+			unsigned char *data = mem;
+			size_t required_len = (size_t)data_len + 4;
+
+			if (required_len > sizeof(mem)) {
+				data = (unsigned char *)malloc(data_len);
 				if (data == NULL) {
 					/* Allocation failed, exit the loop and then close the connection */
 					http_log(DEBUG_ERROR, conn, "%s: websocket out of memory; closing connection", __func__);
@@ -184,17 +185,14 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				http_log(DEBUG_ERROR, conn, "%s: websocket error: body len less than header len, closing connection", __func__);
 				break;
 			}
-
-			if (data_len + header_len > body_len) {
-				 /* current mask and opcode */
-				mop = buf[0];
-
-				/* Overflow case */
+			if (data_len + (uint64_t)header_len > (uint64_t)body_len) {
+				mop = buf[0]; /* current mask and opcode */
+							  /* Overflow case */
 				len = body_len - header_len;
 				memcpy(data, buf + header_len, len);
 				error = 0;
-				while ((uint64_t)len < data_len && !task_is_canceled()) {
-					n = _read_inner(conn, (void_t)(data + len), (data_len - len));
+				while ((uint64_t)len < data_len) {
+					n = tls_reader(socket2fd(conn->client->sock), (void_t)(data + len), (data_len - len));
 					if (n < 0) {
 						error = 1;
 						break;
@@ -208,6 +206,9 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 
 				if (error) {
 					http_log(DEBUG_ERROR, conn, "%s: websocket pull failed; closing connection", __func__);
+					if (data != mem) {
+						free_ex(data);
+					}
 					break;
 				}
 				conn->req.data_len = conn->req.request_len;
@@ -368,7 +369,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 		} else {
 			/* Read from the socket into the next available location in the
 			 * message queue. */
-			n = _read_inner(conn, conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
+			n = tls_reader(socket2fd(conn->client->sock), conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
 			if (n <= 0) {
 				/* Error, no bytes read */
 				debug_info("PULL from %s:%u failed"CLR_LN,
@@ -411,8 +412,6 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				/* TODO: get timeout def */
 			}
 		}
-		if (task_is_canceled())
-			break;
 	}
 
 	/* Leave data processing loop */
@@ -608,7 +607,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 	unsigned char header[14];
 	uint16_t len;
 	uint32_t len1, len2;
-	size_t header_len = 1, deflated_size = 0;
+	size_t headerLen, deflated_size = 0;
 	Bytef *deflated = 0;
 	int use_deflate, retval = -1;
 
@@ -630,6 +629,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 			http_log(DEBUG_CRASH, conn,
 				"Out of memory: Cannot allocate deflate buffer of %lu bytes",
 				(unsigned long)deflated_size);
+			atomic_unlock(&conn->req.mutex);
 			return -1;
 		}
 		conn->req.websocket_deflate_state.avail_out = (uInt)deflated_size;
@@ -637,38 +637,38 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 		deflate(&conn->req.websocket_deflate_state, conn->req.websocket_deflate_flush);
 		data_len = deflated_size - conn->req.websocket_deflate_state.avail_out - 4; // Strip trailing 0x00 0x00 0xff 0xff bytes
 	} else
-		header[0] = 0x80 + (opcode & 0xF);
+		header[0] = 0x80u | (unsigned char)((unsigned)opcode & 0xf);
 
 	/* Frame format: http://tools.ietf.org/html/rfc6455#section-5.2 */
 	if (data_len < 126) {
 		/* inline 7-bit length field */
 		header[1] = (unsigned char)data_len;
-		header_len = 2;
-	} else if (data_len <= 65535) {
+		headerLen = 2;
+	} else if (data_len <= 0xFFFF) {
 		/* 16-bit length field */
-		len = htons((uint16_t)data_len);
+		uint16_t len = htons((uint16_t)data_len);
 		header[1] = 126;
-		header_len = 4;
 		memcpy(header + 2, &len, 2);
+		headerLen = 4;
 	} else {
 		/* 64-bit length field */
-		len1 = htonl((uint64_t)data_len >> 32);
-		len2 = htonl(data_len & 0xFFFFFFFF);
+		uint32_t len1 = htonl((uint32_t)((uint64_t)data_len >> 32));
+		uint32_t len2 = htonl((uint32_t)(data_len & 0xFFFFFFFFu));
 		header[1] = 127;
-		header_len = 10;
 		memcpy(header + 2, &len1, 4);
 		memcpy(header + 6, &len2, 4);
+		headerLen = 10;
 	}
 
 	if (masking_key) {
 		/* add mask */
 		header[1] |= 0x80;
-		memcpy(header + header_len, &masking_key, 4);
-		header_len += 4;
+		memcpy(header + headerLen, &masking_key, 4);
+		headerLen += 4;
 	}
 
-	retval = http_write(conn, (const_t)header, header_len);
-	if (retval != (int)header_len) {
+	retval = http_write(conn, (const_t)header, headerLen);
+	if (retval != (int)headerLen) {
 		/* Did not send complete header */
 		retval = -1;
 	} else {
@@ -679,6 +679,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 			} else
 				retval = http_write(conn, (const_t)data, data_len);
 		}
+		/* if dataLen == 0, the header length (2) is returned */
 	}
 
 	atomic_unlock(&conn->req.mutex);
@@ -690,27 +691,27 @@ FORCEINLINE int http_websocket_write(http_t *conn, websocket_type opcode, string
 }
 
 FORCEINLINE int http_websocket_text(http_t *conn, string_t data, size_t dataLen) {
-	return http_websocket_write_exec(conn, WS_OPS_TEXT, data, dataLen, 0);
+	return http_websocket_client_write(conn, WS_OPS_TEXT, data, dataLen);
 }
 
 FORCEINLINE int http_websocket_binary(http_t *conn, const_t data, size_t dataLen) {
-	return http_websocket_write_exec(conn, WS_OPS_BINARY, (string_t)data, dataLen, 0);
+	return http_websocket_client_write(conn, WS_OPS_BINARY, (string_t)data, dataLen);
 }
 
 FORCEINLINE int http_websocket_close(http_t *conn, string_t data, size_t dataLen) {
-	return http_websocket_write_exec(conn, WS_OPS_CLOSE, data, dataLen, 0);
+	return http_websocket_client_write(conn, WS_OPS_CLOSE, data, dataLen);
 }
 
 FORCEINLINE int http_websocket_ping(http_t *conn, string_t data, size_t dataLen) {
-	return http_websocket_write_exec(conn, WS_OPS_PING, data, dataLen, 0);
+	return http_websocket_client_write(conn, WS_OPS_PING, data, dataLen);
 }
 
 FORCEINLINE int http_websocket_pong(http_t *conn, string_t data, size_t dataLen) {
-	return http_websocket_write_exec(conn, WS_OPS_PONG, data, dataLen, 0);
+	return http_websocket_client_write(conn, WS_OPS_PONG, data, dataLen);
 }
 
 FORCEINLINE int http_websocket_continuation(http_t *conn, string_t data, size_t dataLen) {
-	return http_websocket_write_exec(conn, WS_OPS_CONTINUATION, data, dataLen, 0);
+	return http_websocket_client_write(conn, WS_OPS_CONTINUATION, data, dataLen);
 }
 
 struct websocket_client_thread_data {

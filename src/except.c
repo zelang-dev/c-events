@@ -1134,12 +1134,27 @@ ex_guard_t *guard_init(void) {
 }
 
 EVENTS_INLINE const char *guard_message(void) {
+	/* Checking `scope` here stops propagation if exception in `defer(callback)`
+	 * or `atexit(routine)` with no scope, means the initial setup caller has
+	 * already exited, bad state, the previous error not correctly handled.
+	 * Segmentation fault otherwise, no longer an `guard/guarded` block, or nested call outside scope. */
 #ifdef _WIN32
+	/* TODO: need to recheck this under Windows
+	 * `arena` field is for propagating scope on and nested `guard/guarded` blocks. */
 	ex_memory_t *scope = scope_local();
+	if (is_empty(scope))
+		return "";
+
 	const char *exception = (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
 	return exception == NULL ? ex_local()->ex : exception;
 #else
 	ex_memory_t *scope = scope_local()->arena;
+	if (is_empty(scope)) {
+		/* This is temporary, need custom indicator flag instead and routine.
+		 * Since this also means no error */
+		return "";
+	}
+
 	return (const char *)(!is_empty(scope->_panic) ? scope->_panic : scope->err);
 #endif
 }

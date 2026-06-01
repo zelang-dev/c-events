@@ -12,7 +12,7 @@ fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol
 	int len, err, proto, off = 0, on = 1;
 	char ipbuf[22] = {0};
 	char *ip = ipbuf;
-	union usa usa;
+	u_saddr_t usa;
 	struct sockaddr_un u_sa = {0};
 	usa.sa = *sa;
 	socklen_t sn = 0;
@@ -52,9 +52,9 @@ fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol
 			/* Could be 6 for IPv6 only or 10 (4+6) for IPv4+IPv6 */
 			/* Set IPv6 only option, but don't abort on errors. */
 			if (protocol > 6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&off, sizeof(off)) != 0) {
-				cerr("cannot set socket option IPV6_V6ONLY=off");
+				cerr("cannot set socket option IPV6_V6ONLY=off"CLR_LN);
 			} else if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&on, sizeof(on)) != 0) {
-				cerr("cannot set socket option IPV6_V6ONLY=on");
+				cerr("cannot set socket option IPV6_V6ONLY=on"CLR_LN);
 			}
 		}
 	}
@@ -161,7 +161,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 fds_t async_accept(fds_t fd, char *server, int *port) {
 	fds_t cfd;
 	int one;
-	union usa usa;
+	u_saddr_t usa;
 	struct sockaddr_in sa = {0};
 	struct sockaddr_un u_sa = {0};
 	uchar *ip;
@@ -199,28 +199,30 @@ fds_t async_accept(fds_t fd, char *server, int *port) {
 
 fds_t async_connect(char *hostname, int port, int protocol) {
 	fds_t fd;
-	int err, proto, n = 0;
-	char ipbuf[22] = {0};
-	char *ip = ipbuf;
-	struct sockaddr_in sa;
-	struct sockaddr_un u_sa = {0};
+	int err, ip_family = 0, proto, n = 0;
+	u_saddr_t usa;
+	u_saddr_t *sa;
 	socklen_t sn;
-	struct hostent *he = {0};
 	uds_t uds = (protocol == -1)
 		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
 		: null;
 	bool is_unix = !is_empty(uds);
 
-	if (!is_unix && (!protocol || !str_is((const char *)hostname, events_hostname()))) {
-		if ((he = async_gethostbyname(hostname)) == NULL) {
+	if (!is_unix) {
+		char host[ARRAY_SIZE] = {0};
+		if (port)
+			snprintf(host, sizeof(host) - 1, "%s:%d", hostname, port);
+		else
+			snprintf(host, sizeof(host) - 1, "%s", hostname);
+
+		if (!async_parse_addr(host, &usa, &ip_family)) {
 			errno = EDESTADDRREQ;
 			return -1;
 		}
-		ip = (char *)he->h_addr;
 	}
 
 	proto = protocol ? SOCK_STREAM : SOCK_DGRAM;
-	if ((fd = socket((is_unix ? AF_UNIX : AF_INET),
+	if ((fd = socket((is_unix ? AF_UNIX : usa.sa.sa_family),
 		proto, (protocol ? IPPROTO_IP : IPPROTO_UDP))) < 0) {
 		errno = os_geterror();
 		if (is_unix)
@@ -243,14 +245,18 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 		uds->socket= fd;
 		uds->type = DATA_UNIX;
 		err = connect(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
+		sn = sizeof(sa->sun);
 	} else {
-		sa = events_get_sockaddr(fd)->sin;
-		memset(&sa, 0, sizeof sa);
-		memmove(&sa.sin_addr, ip, 4);
-		sa.sin_family = AF_INET;
-		sa.sin_port = htons(port);
-		err = connect(fd, (struct sockaddr *)&sa, sizeof sa);
-		events_get_sockaddr(fd)->sin = sa;
+		sa = events_get_sockaddr(fd);
+		memset(sa, 0, sizeof *sa);
+		memmove(&sa->storage, &usa.storage, sizeof(usa.storage));
+		if (ip_family == 6) {
+			err = connect(fd, &sa->sa, sizeof sa->sin6);
+			sn = sizeof(sa->sin6);
+		} else {
+			err = connect(fd, &sa->sa, sizeof sa->sin);
+			sn = sizeof(sa->sin);
+		}
 	}
 
 	if (err < 0 && (os_geterror() != EINPROGRESS && os_geterror() != EAGAIN)) {
@@ -262,11 +268,7 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 
 	// wait for finish
 	async_wait(fd, 'w');
-
-	sn = is_unix ? sizeof(u_sa) : sizeof(sa);
-	if (getpeername(fd,
-		(is_unix ? (struct sockaddr *)&u_sa : (struct sockaddr *)&sa),
-		&sn) >= 0) {
+	if (getpeername(fd, (is_unix ? (struct sockaddr *)&sa->sun : &sa->sa), &sn) >= 0) {
 		events_target(socket2fd(fd))->uds = uds;
 		return fd;
 	}
@@ -323,17 +325,172 @@ static EVENTS_INLINE void *os_gethostbyname(param_t name) {
 	return NULL;
 }
 
+int async_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolve_src) {
+	struct addrinfo hints, *res, *ressave;
+	int func_ret = 0;
+	int gai_ret;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = af;
+	if (!resolve_src) {
+		hints.ai_flags = AI_NUMERICHOST;
+	}
+
+	gai_ret = events_is_active() && tasks_is_active()
+		? async_getaddrinfo(src, NULL, &hints, &res)
+		: getaddrinfo(src, NULL, &hints, &res);
+	if (gai_ret != 0) {
+		/* gai_strerror could be used to convert gai_ret to a string */
+		/* POSIX return values: see
+		 * http://pubs.opengroup.org/onlinepubs/9699919799/functions/freeaddrinfo.html
+		 */
+		/* Windows return values: see
+		 * https://msdn.microsoft.com/en-us/library/windows/desktop/ms738520%28v=vs.85%29.aspx
+		 */
+		return 0;
+	}
+
+	ressave = res;
+
+	while (res) {
+		if ((dstlen >= (size_t)res->ai_addrlen)
+			&& (res->ai_addr->sa_family == af)) {
+			memcpy(dst, res->ai_addr, res->ai_addrlen);
+			func_ret = 1;
+		}
+		res = res->ai_next;
+	}
+
+	freeaddrinfo(ressave);
+	return func_ret;
+}
+
+int async_parse_addr(char *host, u_saddr_t *dst, int *ip_version) {
+	unsigned int a, b, c, d;
+	unsigned port;
+	unsigned long portUL;
+	int len;
+	const char *cb;
+	char *endptr;
+	char buf[100] = {0};
+	size_t ptrlen = strlen(host);
+
+	memset(dst, 0, sizeof(u_saddr_t));
+	dst->sin.sin_family = AF_INET;
+	*ip_version = 0;
+
+	/* Initialize len as invalid. */
+	port = 0;
+	len = 0;
+	/* Test for different ways to format this string */
+	if (sscanf(host,
+		"%u.%u.%u.%u:%u%n",
+		&a,
+		&b,
+		&c,
+		&d,
+		&port,
+		&len) // NOLINT(cert-err34-c) 'sscanf' used to convert a string
+			  // to an integer value, but function will not report
+			  // conversion errors; consider using 'strtol' instead
+		== 5) {
+		/* Bind to a specific IPv4 address, e.g. 192.168.1.5:8080 */
+		dst->sin.sin_addr.s_addr =
+			htonl((a << 24) | (b << 16) | (c << 8) | d);
+		dst->sin.sin_port = htons((uint16_t)port);
+		*ip_version = 4;
+		return 1;
+	} else if (sscanf(host, "[%49[^]]]:%u%n", buf, &port, &len) == 2
+		&& ((size_t)len <= ptrlen)
+		&& async_inet_pton(AF_INET6, buf, &dst->sin6, sizeof(dst->sin6), 0)) {
+		/* IPv6 address, examples: see above */
+		/* dst->sin6.sin6_family = AF_INET6; already set by http_inet_pton */
+		dst->sin6.sin6_port = htons((uint16_t)port);
+		*ip_version = 6;
+		return 1;
+	} else if ((portUL = strtoul(host, &endptr, 0) && port <= 0xffff)
+		&& (host != endptr)) {
+		len = (int)(endptr - host);
+		port = (uint16_t)portUL;
+		/* If only port is specified, bind to IPv4, INADDR_ANY */
+		dst->sin.sin_port = htons((uint16_t)port);
+		*ip_version = 4;
+		return 1;
+	} else if ((cb = strchr(host, ':')) != NULL) {
+		/* String could be a hostname. This check algorithm
+		 * will only work for RFC 952 compliant hostnames,
+		 * starting with a letter, containing only letters,
+		 * digits and hyphen ('-'). Newer specs may allow
+		 * more, but this is not guaranteed here, since it
+		 * may interfere with rules for port option lists. */
+
+		/* According to RFC 1035, hostnames are restricted to 255 characters
+		 * in total (63 between two dots). */
+		char hostname[ARRAY_SIZE];
+		size_t hostnlen = (size_t)(cb - host);
+		if ((hostnlen >= ptrlen) || (hostnlen >= sizeof(hostname))) {
+			/* This would be invalid in any case */
+			*ip_version = 0;
+			return 0;
+		}
+
+		str_lcpy(hostname, host, hostnlen + 1);
+		if (async_inet_pton(AF_INET, hostname, &dst->sin, sizeof(dst->sin), 1)) {
+			if (sscanf(cb + 1, "%u%n", &port, &len)
+				== 1) { // NOLINT(cert-err34-c) 'sscanf' used to convert a
+						// string to an integer value, but function will not
+						// report conversion errors; consider using 'strtol'
+						// instead
+				*ip_version = 4;
+				dst->sin.sin_port = htons((uint16_t)port);
+				len += (int)(hostnlen + 1);
+				return 1;
+			}
+		} else if (async_inet_pton(AF_INET6, hostname, &dst->sin6, sizeof(dst->sin6), 1)) {
+			if (sscanf(cb + 1, "%u%n", &port, &len) == 1) {
+				*ip_version = 6;
+				dst->sin6.sin6_port = htons((uint16_t)port);
+				len += (int)(hostnlen + 1);
+				return 1;
+			}
+		}
+	} else if (host[0] == 'x') {
+		/* unix (linux) domain socket */
+		if (ptrlen < sizeof(dst->sun.sun_path)) {
+			len = ptrlen;
+			dst->sun.sun_family = AF_UNIX;
+			memset(dst->sun.sun_path, 0, sizeof(dst->sun.sun_path));
+			memcpy(dst->sun.sun_path, (char *)host + 1, ptrlen - 1);
+			port = 0;
+			*ip_version = 99;
+			return 1;
+		}
+	}
+
+	/* Reset ip_version to 0 if there is an error */
+	*ip_version = 0;
+	return 0;
+}
+
 EVENTS_INLINE char *gethostbyname_ip(struct hostent *host) {
 	struct in_addr **p1 = (struct in_addr **)host->h_addr_list;
 	return (char *)inet_ntop(AF_INET, p1[0], future_buffer(), INET_ADDRSTRLEN);
 }
 
-EVENTS_INLINE struct hostent *async_get_hostbyname(future *thrd, char *hostname) {
+EVENTS_INLINE struct hostent *async_gethostbyname(char *hostname) {
+	future *thrd = futures_pool();
 	return (struct hostent *)queue_get(queue_work(thrd, os_gethostbyname, 2, hostname, thrd->buffer)).object;
 }
 
-EVENTS_INLINE struct hostent *async_gethostbyname(char *hostname) {
-	return async_get_hostbyname(futures_pool(), hostname);
+static EVENTS_INLINE void *os_getnameinfo(param_t args) {
+	return casting(getnameinfo((const struct sockaddr *)args[0].object, args[1].u_int,
+		args[2].char_ptr, args[3].u_int, args[4].char_ptr, args[5].u_int, args[6].integer));
+}
+
+EVENTS_INLINE int async_getnameinfo(const struct sockaddr *sa, socklen_t salen,
+	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags) {
+	return queue_get(queue_work(futures_pool(), os_getnameinfo, 7, sa, casting(salen), host,
+		casting(hostlen), serv, casting(servlen), casting(flags))).integer;
 }
 
 static EVENTS_INLINE void *os_getaddrinfo(param_t args) {
@@ -341,14 +498,9 @@ static EVENTS_INLINE void *os_getaddrinfo(param_t args) {
 		(const struct addrinfo *)args[2].object, (addrinfo_t)args[3].object));
 }
 
-EVENTS_INLINE int async_get_addrinfo(future *thrd, const char *name,
-	const char *service, const struct addrinfo *hints, addrinfo_t result) {
-	return queue_get(queue_work(thrd, os_getaddrinfo, 4, name, service, hints, result)).integer;
-}
-
 EVENTS_INLINE int async_getaddrinfo(const char *name,
 	const char *service, const struct addrinfo *hints, addrinfo_t result) {
-	return async_get_addrinfo(futures_pool(), name, service, hints, result);
+	return queue_get(queue_work(futures_pool(), os_getaddrinfo, 4, name, service, hints, result)).integer;
 }
 
 static EVENTS_INLINE void *_os_open(param_t args) {
@@ -430,41 +582,27 @@ static EVENTS_INLINE void *_os_mkdir(param_t args) {
 	return casting(mkdir(args[0].const_char_ptr, args[1].u_short));
 }
 
-EVENTS_INLINE int async_fs_open(future *thrd, const char *path, int flag, int mode) {
+EVENTS_INLINE int fs_open(const char *path, int flag, int mode) {
+	future *thrd = futures_pool();
 	thrd->last_fd = TASK_DEAD;
 	return queue_get(queue_work(thrd, _os_open, 3, path, casting(flag), casting(mode))).integer;
-}
-
-EVENTS_INLINE int fs_open(const char *path, int flag, int mode) {
-	return async_fs_open(futures_pool(), path, flag, mode);
-}
-
-EVENTS_INLINE int async_fs_read(future *thrd, int fd, void *buf, uint32_t count) {
-	return queue_get(queue_work(thrd, _os_read, 3, casting(fd), buf, casting(count))).integer;
 }
 
 EVENTS_INLINE int fs_read(int fd, void *buf, uint32_t count) {
 	return queue_get(queue_work(futures_pool(), _os_read, 3, casting(fd), buf, casting(count))).integer;
 }
 
-EVENTS_INLINE int async_fs_write(future *thrd, int fd, const void *buf, uint32_t count) {
-	return queue_get(queue_work(thrd, _os_write, 3, casting(fd), buf, casting(count))).integer;
-}
-
 EVENTS_INLINE int fs_write(int fd, const void *buf, uint32_t count) {
-	return async_fs_write(futures_pool(), fd, buf, count);
-}
-
-EVENTS_INLINE ssize_t async_fs_sendfile(future *thrd, int fd_out, int fd_in, off_t *offset, size_t length) {
-	return queue_get(queue_work(thrd, _os_sendfile, 4,
-		casting(fd_out), casting(fd_in), offset, casting(length))).long_long;
+	return queue_get(queue_work(futures_pool(), _os_write, 3, casting(fd), buf, casting(count))).integer;
 }
 
 EVENTS_INLINE ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length) {
-	return async_fs_sendfile(futures_pool(), fd_out, fd_in, offset, length);
+	return queue_get(queue_work(futures_pool(), _os_sendfile, 4,
+		casting(fd_out), casting(fd_in), offset, casting(length))).long_long;
 }
 
-EVENTS_INLINE int async_fs_close(future *thrd, int fd) {
+EVENTS_INLINE int fs_close(int fd) {
+	future *thrd = futures_pool();
 	if (thrd->last_fd == fd) {
 		thrd->last_fd = TASK_ERRED;
 		return TASK_ERRED;
@@ -476,56 +614,28 @@ EVENTS_INLINE int async_fs_close(future *thrd, int fd) {
 	return r;
 }
 
-EVENTS_INLINE int fs_close(int fd) {
-	return async_fs_close(futures_pool(), fd);
-}
-
-EVENTS_INLINE int async_fs_unlink(future *thrd, const char *path) {
-	return queue_get(queue_work(thrd, _os_unlink, 1, path)).integer;
-}
-
 EVENTS_INLINE int fs_unlink(const char *path) {
-	return async_fs_unlink(futures_pool(), path);
-}
-
-EVENTS_INLINE int async_fs_rmdir(future *thrd, const char *path) {
-	return queue_get(queue_work(thrd, _os_rmdir, 1, path)).integer;
+	return queue_get(queue_work(futures_pool(), _os_unlink, 1, path)).integer;
 }
 
 EVENTS_INLINE int fs_rmdir(const char *path) {
-	return async_fs_rmdir(futures_pool(), path);
-}
-
-EVENTS_INLINE int async_fs_mkdir(future *thrd, const char *path, mode_t mode) {
-	return queue_get(queue_work(thrd, _os_mkdir, 2, path, casting(mode))).integer;
+	return queue_get(queue_work(futures_pool(), _os_rmdir, 1, path)).integer;
 }
 
 EVENTS_INLINE int fs_mkdir(const char *path, mode_t mode) {
-	return async_fs_mkdir(futures_pool(), path, mode);
-}
-
-EVENTS_INLINE int async_fs_stat(future *thrd, const char *path, struct stat *st) {
-	return queue_get(queue_work(thrd, _os_stat, 2, path, st)).integer;
+	return queue_get(queue_work(futures_pool(), _os_mkdir, 2, path, casting(mode))).integer;
 }
 
 EVENTS_INLINE int fs_stat(const char *path, struct stat *st) {
-	return async_fs_stat(futures_pool(), path, st);
-}
-
-EVENTS_INLINE int async_fs_fstat(future *thrd, int fd, struct stat *st) {
-	return queue_get(queue_work(thrd, _os_fstat, 2, casting(fd), st)).integer;
+	return queue_get(queue_work(futures_pool(), _os_stat, 2, path, st)).integer;
 }
 
 EVENTS_INLINE int fs_fstat(int fd, struct stat *st) {
-	return async_fs_fstat(futures_pool(), fd, st);
-}
-
-EVENTS_INLINE int async_fs_access(future *thrd, const char *path, int mode) {
-	return queue_get(queue_work(thrd, _os_access, 2, path, casting(mode))).integer;
+	return queue_get(queue_work(futures_pool(), _os_fstat, 2, casting(fd), st)).integer;
 }
 
 EVENTS_INLINE int fs_access(const char *path, int mode) {
-	return async_fs_access(futures_pool(), path, mode);
+	return queue_get(queue_work(futures_pool(), _os_access, 2, path, casting(mode))).integer;
 }
 
 EVENTS_INLINE bool fs_exists(const char *path) {
@@ -835,6 +945,16 @@ static EVENTS_INLINE void *_os_fclose(param_t args) {
 EVENTS_INLINE int fs_fclose(FILE *stream) {
 	return queue_get(queue_work(futures_pool(), _os_fclose, 1, stream)).integer;
 }
+
+#ifndef _WIN32
+static EVENTS_INLINE void *_os_chmod(param_t args) {
+	return casting(chmod(args[0].const_char_ptr, args[1].u_int));
+}
+
+EVENTS_INLINE int fs_chmod(const char *file, mode_t mode) {
+	return queue_get(queue_work(futures_pool(), _os_chmod, 2, file, casting(mode))).integer;
+}
+#endif
 
 static EVENTS_INLINE void *_os_fgetc(param_t args) {
 	return casting(fgetc((FILE *)args[0].object));

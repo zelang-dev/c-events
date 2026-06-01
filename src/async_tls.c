@@ -16,6 +16,12 @@
 #undef X509_NAME
 #undef X509_CERT_PAIR
 #undef X509_EXTENSIONS
+#else
+#include <netdb.h>
+#endif
+
+#ifndef NI_NUMERICHOST
+#	define NI_NUMERICHOST 1
 #endif
 
 #ifndef PATH_MAX
@@ -75,6 +81,7 @@ enum events_cipher_type {
 typedef enum {
 	ssl_generate_pkey = ca_file + 1,
 	ssl_create_self,
+	ssl_create_self_req,
 	ssl_x509_pkey_write,
 	ssl_worker
 } thrd_worker_types;
@@ -112,13 +119,25 @@ static const EVP_CIPHER *get_cipher(long algo) {
     }
 }
 
-static bool add_ext(STACK_OF(X509_REQUEST) *sk, int nid, char *value) {
-    X509_EXTENSION *ex;
-    ex = X509V3_EXT_conf_nid(NULL, NULL, nid, value);
-    if (!ex)
-        return false;
-    sk_X509_EXTENSION_push((struct stack_st_X509_EXTENSION*)sk, ex);
-    return true;
+/* Add extension using V3 code: we can set the config file as NULL
+ * because we wont reference any other sections. */
+static int add_ext(X509 *cert, int nid, char *value) {
+	X509_EXTENSION *ex;
+	X509V3_CTX ctx;
+	/* This sets the 'context' of the extensions. */
+	/* No configuration database */
+	X509V3_set_ctx_nodb(&ctx);
+	/* Issuer and subject certs: both the target since it is self signed,
+	 * no request and no CRL
+	 */
+	X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
+	ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
+	if (!ex)
+		return 0;
+
+	X509_add_ext(cert, ex, -1);
+	X509_EXTENSION_free(ex);
+	return 1;
 }
 
 static bool config_check(const char *section_label, const char *config_filename, const char *sections, CONF *config) {
@@ -343,7 +362,7 @@ static bool create_self_ex(EVP_PKEY *pkey, X509 *x509) {
 	BIO *x509file = NULL, *pOut = NULL;
 	bool no_error = true;
 	if (!(pOut = BIO_new_file(pkey_file(), _BIO_MODE_W(PKCS7_BINARY)))) {
-		cerr("Unable to open \"%s\" for writing.\n", pkey_file());
+		cerr("Unable to open \"%s\" for writing."CLR_LN, pkey_file());
 		no_error = false;
 	} else if (pOut
 		&& !PEM_write_bio_PrivateKey(pOut, pkey, NULL, NULL, 0, NULL, NULL)) {
@@ -355,7 +374,7 @@ static bool create_self_ex(EVP_PKEY *pkey, X509 *x509) {
 	}
 
 	if (!(x509file = BIO_new_file(cert_file(), _BIO_MODE_W(PKCS7_BINARY)))) {
-		cerr("Unable to open \"%s\" for writing.\n", cert_file());
+		cerr("Unable to open \"%s\" for writing."CLR_LN, cert_file());
 		no_error = false;
 	} else if (x509file && !PEM_write_bio_X509(x509file, x509)) {
 		perror("Unable to write certificate to disk.");
@@ -411,7 +430,6 @@ static void *thrd_worker_thread(param_t args) {
 	thrd_worker_types preform = args[0].integer;
 	EVP_PKEY *pkey = NULL;
 	X509 *x509 = NULL;
-	X509_REQ *csr = NULL;
 	bool no_error = true;
 	switch (preform) {
 		case ssl_generate_pkey:
@@ -419,6 +437,25 @@ static void *thrd_worker_thread(param_t args) {
 			int keylength = args[2].integer;
 			int pkey_id = args[3].integer;
 			no_error = generate_pkey_ex(pkey, keylength, pkey_id);
+			break;
+		case ssl_create_self_req:
+			pkey = EVP_PKEY_new();
+			if (no_error = generate_pkey_ex(pkey, 4096, EVP_PKEY_RSA)) {
+				char buf[1024] = {0}, buf1[64] = {0};
+				const char *name = events_hostname();
+				u_saddr_t dst;
+				no_error = false;
+				memset(&dst.storage, 0, sizeof(dst.storage));
+				async_inet_pton(AF_INET6, name, &dst.sin6, sizeof(dst.sin6), 1);
+				getnameinfo((const struct sockaddr *)&dst.sin6, sizeof(dst.sin6),
+					buf1, sizeof(buf1), null, 0, NI_NUMERICHOST);
+				snprintf(buf, sizeof(buf), "IP.1:%s, IP.2:127.0.0.1, DNS.1:%s, DNS.2:localhost", buf1, name);
+				if ((x509 = x509_self_req(pkey, NULL, NULL, name, buf, (long)events_now()))) {
+					no_error = create_self_ex(pkey, x509);
+					X509_free(x509);
+				}
+			}
+			EVP_PKEY_free(pkey);
 			break;
 		case ssl_create_self:
 			pkey = EVP_PKEY_new();
@@ -461,6 +498,62 @@ EVP_PKEY *rsa_pkey(int keylength) {
     return pkey;
 }
 
+X509 *x509_self_req(EVP_PKEY *pkey, const char *country, const char *org,
+	const char *domain, const char *subject_alt_names, long serial) {
+	/* Allocate memory for the X509 structure. */
+	X509 *x509 = X509_new();
+	if (!x509) {
+		perror("Unable to create X509 structure.");
+		return NULL;
+	}
+
+	/* Set the serial number. */
+	X509_set_version(x509, 2);
+	ASN1_INTEGER_set(X509_get_serialNumber(x509), serial);
+
+	/* This certificate is valid from now until exactly one year from now. */
+	X509_gmtime_adj(X509_get_notBefore(x509), 0);
+	X509_gmtime_adj(X509_get_notAfter(x509), 31536000L);
+
+	/* Set the public key for our certificate. */
+	X509_set_pubkey(x509, pkey);
+
+	/* We want to copy the subject name to the issuer name. */
+	X509_NAME *name = X509_get_subject_name(x509);
+
+	/* Set the country code and common name. */
+	X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (const unsigned char *)(country == NULL ? "US" : country), -1, -1, 0);
+	X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (const unsigned char *)(org == NULL ? "selfSigned" : org), -1, -1, 0);
+	//X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char *)(domain == NULL ? "localhost" : domain), -1, -1, 0);
+
+	/* Its self signed so set the issuer name to be the same as the
+	 * subject. */
+	X509_set_issuer_name(x509, name);
+
+	/* Add various extensions: standard extensions */
+	add_ext(x509, NID_basic_constraints, "critical,CA:FALSE");
+	add_ext(x509, NID_key_usage, "critical,keyCertSign,cRLSign,digitalSignature,keyEncipherment");
+
+	/* This is a typical use for request extensions: requesting a value for
+	 * subject alternative name. */
+	add_ext(x509, NID_subject_alt_name, (char *)subject_alt_names);
+	add_ext(x509, NID_name_constraints, "permitted;IP:127.0.0.1/255.255.255.255, permitted;IP:0:0:0:0:0:0:0:1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff");
+	add_ext(x509, NID_ext_key_usage, "serverAuth,clientAuth");
+	add_ext(x509, NID_subject_key_identifier, "hash");
+
+	/* Some Netscape specific extensions */
+	add_ext(x509, NID_netscape_cert_type, "sslCA");
+
+	/* Actually sign the certificate with our key. */
+	if (!X509_sign(x509, pkey, EVP_sha256())) {
+		perror("Error signing certificate.");
+		X509_free(x509);
+		return NULL;
+	}
+
+	return x509;
+}
+
 /* Generates a self-signed x509 certificate. */
 X509 *x509_self(EVP_PKEY *pkey, const char *country, const char *org, const char *domain) {
     /* Allocate memory for the X509 structure. */
@@ -487,10 +580,11 @@ X509 *x509_self(EVP_PKEY *pkey, const char *country, const char *org, const char
 	X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (const unsigned char *)(org == NULL ? "selfSigned" : org), -1, -1, 0);
 	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char *)(domain == NULL ? "localhost" : domain), -1, -1, 0);
 
-    /* Now set the issuer name. */
-    X509_set_issuer_name(x509, name);
+	/* Its self signed so set the issuer name to be the same as the
+	 * subject. */
+	X509_set_issuer_name(x509, name);
 
-    /* Actually sign the certificate with our key. */
+	/* Actually sign the certificate with our key. */
     if (!X509_sign(x509, pkey, EVP_sha256())) {
         perror("Error signing certificate.");
         X509_free(x509);
@@ -501,7 +595,7 @@ X509 *x509_self(EVP_PKEY *pkey, const char *country, const char *org, const char
 }
 
 EVENTS_INLINE bool x509_self_export(EVP_PKEY *pkey, X509 *x509, const char *path_noext) {
-	promise *fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_create_self), pkey, x509, path_noext);
+	promise *fut = queue_work(futures_pool(), thrd_worker_thread, 4, casting(ssl_create_self_req), pkey, x509, path_noext);
 
 	return queue_get(fut).boolean;
 }
@@ -599,7 +693,7 @@ static void cert_names_setup(void) {
 		|| !(snprintf(events_csr, sizeof(events_csr), "%s.csr", name))
 		|| !(snprintf(events_pkey, sizeof(events_pkey), "%s.key", name))
 		|| !(snprintf(events_self_touch, sizeof(events_self_touch), "%s.local", name)))
-			cerr("Invalid certificate %s names: %s, %s, %s\n", name, events_cert, events_csr, events_pkey);
+			cerr("Invalid certificate %s names: %s, %s, %s"CLR_LN, name, events_cert, events_csr, events_pkey);
 	}
 }
 
@@ -647,7 +741,7 @@ static const char *default_cert_file(char *path) {
 			|| !(snprintf(events_cert, sizeof(events_cert), "%s%s.crt", events_directory, name))
 			|| !(snprintf(events_csr, sizeof(events_csr), "%s%s.csr", events_directory, name))
 			|| !(snprintf(events_pkey, sizeof(events_pkey), "%s%s.key", events_directory, name)))
-			cerr("Invalid certificate %s names: %s, %s, %s, %s\n",
+			cerr("Invalid certificate %s names: %s, %s, %s, %s"CLR_LN,
 			name, events_cert, events_csr, events_pkey, events_directory);
 	}
 
@@ -803,7 +897,7 @@ int tls_socket_bind(int fd) {
 	if (!tls_config_set_keypair_file(starget->tls_config, cert_file(), pkey_file())) {
 		starget->tls = tls_server();
 		if (is_empty(starget->tls)) {
-			cerr("\nfailed to tls_server: `tls_server`\n");
+			cerr("\nfailed to tls_server: `tls_server`"CLR_LN);
 		} else {
 			if (!tls_configure(starget->tls, starget->tls_config))
 				return fd;
@@ -811,7 +905,7 @@ int tls_socket_bind(int fd) {
 			cerr("\nfailed to tls_configure: %s", tls_error(starget->tls));
 		}
 	} else {
-		cerr("\nfailed to set tls_config_set_keypair_file: %s\n", tls_config_error(starget->tls_config));
+		cerr("\nfailed to set tls_config_set_keypair_file: %s"CLR_LN, tls_config_error(starget->tls_config));
 	}
 
 	return -EINVAL;
@@ -824,14 +918,14 @@ int tls_socket_set(struct sockaddr *sa, char *host, int backlog, int protocol) {
 	if (!str_is_empty(host))
 		url = str_parseip((char *)host, (uint32_t *)&err, &rport, true);
 
-	if (str_is_empty(host) || (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0", url)))
+	if (str_is_empty(host) || (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0,::1", url)))
 		url = (char *)events_hostname();
 
 	if (!is_empty(url) && (server = async_socket(sa, url, backlog, protocol)) > 0) {
 		events_fd_t *starget = events_target(socket2fd(server));
 		starget->tls_config = tls_config_new();
 		if (is_empty(starget->tls_config))
-			cerr("\nfailed to tls_socket_set: `tls_config_new`\n");
+			cerr("\nfailed to tls_socket_set: `tls_config_new`"CLR_LN);
 		else
 			return socket2fd(server);
 	}
@@ -843,7 +937,7 @@ int tls_bind(const char *host, int backlog) {
 	fds_t server;
 	int err = 0, port = 0;
 	char *url = str_parseip((char *)host, (uint32_t *)&err, &port, true);
-	if (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0", url))
+	if (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0,::1", url))
 		url = (char *)events_hostname();
 
 	if (!is_empty(url) && (server = async_bind(url, port, backlog, true)) > 0) {
@@ -857,15 +951,15 @@ int tls_bind(const char *host, int backlog) {
 					if (!tls_configure(starget->tls, starget->tls_config))
 						return socket2fd(server);
 
-					cerr("\nfailed to configure bind: %s", tls_error(starget->tls));
+					cerr("\nfailed to configure bind: %s"CLR_LN, tls_error(starget->tls));
 				} else {
-					cerr("\nfailed to bind: `tls_server`\n");
+					cerr("\nfailed to bind: `tls_server`"CLR_LN);
 				}
 			} else {
-				cerr("\nfailed to set bind: %s\n", tls_config_error(starget->tls_config));
+				cerr("\nfailed to set bind: %s"CLR_LN, tls_config_error(starget->tls_config));
 			}
 		} else {
-			cerr("\nfailed to bind: `tls_config_new`\n");
+			cerr("\nfailed to bind: `tls_config_new`"CLR_LN);
 		}
 	}
 
@@ -952,9 +1046,6 @@ int tls_dial(const char *uri) {
 	fds_t client;
 	int err = 0, port = 0;
 	char *host = str_parseip((char *)uri, (uint32_t *)&err, &port, true);
-	if (!is_empty(host) && str_has("localhost,127.0.0.1,0.0.0.0", host))
-		host = (char *)events_hostname();
-
 	if (!is_empty(host) && (client = async_connect(host, (!port ? 443 : port), true)) > 0) {
 		int fd = socket2fd(client);
 		events_fd_t *ctarget = events_target(fd);
@@ -963,18 +1054,18 @@ int tls_dial(const char *uri) {
 			if (!tls_config_set_ca_file(ctarget->tls_config, ca_cert_file())) {
 				if (events_useing_secure_client
 					&& tls_config_set_keypair_file(ctarget->tls_config, cert_file(), pkey_file()))
-					cerr("\nfailed to secure keypair_file: %s\n", tls_config_error(ctarget->tls_config));
+					cerr("\nfailed to secure keypair_file: %s"CLR_LN, tls_config_error(ctarget->tls_config));
 
-				if (!(err = async_tls_connect(host, fd)))
+				if (!(err = async_tls_connect((str_has("localhost,127.0.0.1,0.0.0.0", host) ? events_hostname() : host), fd)))
 					return fd;
 
-				cerr("\nfailed to async_tls_connect: %s\n",
+				cerr("\nfailed to async_tls_connect: %s"CLR_LN,
 					(err == -ECONNREFUSED ? strerror(errno) : tls_error(ctarget->tls)));
 			} else {
-				cerr("\nfailed to tls_config_set_ca_file: %s\n", tls_config_error(ctarget->tls_config));
+				cerr("\nfailed to tls_config_set_ca_file: %s"CLR_LN, tls_config_error(ctarget->tls_config));
 			}
 		} else {
-			cerr("\nfailed to connect: `tls_dial/tls_config_new`\n");
+			cerr("\nfailed to connect: `tls_dial/tls_config_new`"CLR_LN);
 		}
 	}
 

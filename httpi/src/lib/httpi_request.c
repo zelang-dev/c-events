@@ -1805,7 +1805,8 @@ static int is_in_script_path(http_t *conn, string_t path) {
 	/* TODO (Feature): Add config value for allowed script path.
 	 * Default: All allowed. */
 	(void)conn;
-	(void)path;
+	if (str_has(path, ".cgi"))
+		return 0;
 	return 1;
 }
 

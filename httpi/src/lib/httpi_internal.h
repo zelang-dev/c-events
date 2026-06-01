@@ -304,9 +304,9 @@ struct server_socket_s {
 	/* Is port supposed to redirect everything to SSL port	*/
 	bool has_redir;
 	/* Local socket address */
-	union usa lsa;
+	u_saddr_t lsa;
 	/* Remote socket address */
-	union usa rsa;
+	u_saddr_t rsa;
 	tasks_t *task;
 };
 
@@ -766,7 +766,7 @@ int http_get_option_index(string_t name);
  * vector is initialized to point to the "y" part, and val vector length
  * is adjusted to point only to "x". */
 string_t http_next_option(string_t list, struct vec *val, struct vec *eq_val);
-int http_parse_match_net(const struct vec *vec, const union usa *sa, int no_strict);
+int http_parse_match_net(const struct vec *vec, const u_saddr_t *sa, int no_strict);
 
 /* Processes a request/response from a remote client. */
 int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err);
@@ -841,7 +841,6 @@ void http_domain_header(http_t *conn);
 void http_static_cache_header(http_t *conn);
 void http_cors_header(http_t *conn);
 
-int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src);
 int http_server(http_ini_t *ctx);
 
 /*
@@ -961,8 +960,8 @@ void qjs_exec_script(http_t *conn, string_t script_name);
 
 int is_authorized_for_put(http_t *conn);
 void http_compressed_data(http_t *conn, struct file *filep);
-void sockaddr_to_str(char *buf, size_t len, const union usa *usa);
-unsigned short sockaddr_in_port(union usa *s);
+void sockaddr_to_str(char *buf, size_t len, const u_saddr_t *usa);
+unsigned short sockaddr_in_port(u_saddr_t *s);
 int http_switch_domain(http_t *conn);
 string_t http_fgets(char *buf, size_t size, struct file *filep, char **p);
 void discard_unread_request_data(http_t *conn);

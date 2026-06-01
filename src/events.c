@@ -185,9 +185,10 @@ EVENTS_INLINE void events_update_polling(events_t *loop, int fd, int events) {
 }
 
 EVENTS_INLINE bool events_is_active(void) {
-	return atomic_load_explicit(&sys_event.num_loops, memory_order_relaxed) > 0;
+	return atomic_load_explicit(&sys_event.num_loops, memory_order_relaxed) > 0 && __thrd()->loop != null;
 }
-void events_set_main(main_cb startup) {
+
+EVENTS_INLINE void events_set_main(main_cb startup) {
 	events_main_func = startup;
 }
 
@@ -370,7 +371,7 @@ EVENTS_INLINE void events_deinit(void) {
 	events_startup_set = false;
 }
 
-EVENTS_INLINE union usa *events_get_sockaddr(fds_t fd) {
+EVENTS_INLINE u_saddr_t *events_get_sockaddr(fds_t fd) {
 	return &events_target(fd)->addr;
 }
 
@@ -2061,6 +2062,33 @@ uint32_t go(param_func_t fn, size_t num_of_args, ...) {
 
 	panic("MUST call `events_create_pool()` at startup!");
 	return TASK_ERRED;
+}
+
+static void _os_guarded(param_t args) {
+	guarded_func_t handlerFunc = (guarded_func_t)$shift(args).func;
+	defer_cb cleanupFunc = (defer_cb)$shift(args).func;
+	guard {
+		if (!is_empty(cleanupFunc) && args->object)
+			fence(args->object, cleanupFunc);
+		else if (!is_empty(cleanupFunc))
+			defer(cleanupFunc, args->object);
+		handlerFunc(args);
+	} guarded;
+}
+
+void go_guard(size_t stacksize, guarded_func_t fn, defer_cb cleanup, void *any) {
+	if (is_data(sys_event.tasks_cpu_idx) && $size(sys_event.tasks_cpu_idx) > 0) {
+		param_t params = arrays(3, fn, cleanup, any);
+		tasks_t *t = create_task(stacksize, (data_func_t)_os_guarded, params, true, true);
+		if (!is_empty(t)) {
+			task_push(t, false);
+			events_deque_t *q = sys_event.local[t->tid];
+			atomic_flag_test_and_set(&q->started);
+			yield();
+		} else {
+			$delete(params);
+		}
+	}
 }
 
 EVENTS_INLINE bool is_taskgroup(void *params) {

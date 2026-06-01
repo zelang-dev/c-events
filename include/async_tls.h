@@ -106,6 +106,10 @@ C_API bool x509_pkey_write(EVP_PKEY *pkey, X509 *x509);
 
 C_API EVP_PKEY *rsa_pkey(int keylength);
 C_API X509 *x509_self(EVP_PKEY *pkey, const char *country, const char *org, const char *domain);
+
+/* Generates a self-signed x509 certificate with subject_alt_names. */
+C_API X509 *x509_self_req(EVP_PKEY *pkey, const char *country, const char *org,
+	const char *domain, const char *subject_alt_names, long serial);
 C_API bool x509_self_export(EVP_PKEY *pkey, X509 *x509, const char *path_noext);
 
 C_API void use_ca_certificate(const char *path);

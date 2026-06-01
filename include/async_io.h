@@ -53,7 +53,7 @@
 #	define Statement(s) do {	\
 			s	\
 		}	while (0)
-#	define trace 		Statement(printf(CLR_LN"%s:%d Trace ", __FILE__, __LINE__);)
+#	define trace 		Statement(printf(CLR_LN"%s:%d Trace "CLR, __FILE__, __LINE__);)
 #	define unreachable 	Statement(printf(CLR_LN"How did we get here? In %s on line %d\n", __FILE__, __LINE__);)
 #endif
 
@@ -163,6 +163,10 @@ typedef void (*udp_packet_cb)(udp_t);
 typedef struct af_unix_s *uds_t;
 typedef client_cb uds_unix_cb;
 
+typedef int (*events_nameinfo_func)(const struct sockaddr *sa, socklen_t salen,
+	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
+typedef int (*events_addrinfo_func)(const char *name, const char *service,
+	const struct addrinfo *req, struct addrinfo **pai);
 
 #ifndef null
 #	define null			NULL
@@ -336,59 +340,35 @@ Protocol either:
 - `-1` for ~Unix Domain Socket~ (UDS) aka `AF_UNIX`
 
 - Hostname can be an `ip` address, `domain name` or `pathname` for UDS.
-- If `domain name`, automatically calls `async_gethostbyname()` to preform a non-blocking DNS lockup. */
+- If `domain name`, automatically calls `async_getaddrinfo()` to preform a non-blocking DNS lockup. */
 C_API fds_t async_connect(char *hostname, int port, int protocol);
 
 /* Return `ip` address from `async_gethostbyname()` execution. */
 C_API char *gethostbyname_ip(struct hostent *host);
 
-/** Preform a non-blocking DNS lockup in separate `thrd` thread ~pool~ provided,
- returns ~struct~ `hostent` address. */
-C_API struct hostent *async_get_hostbyname(future *thrd, char *hostname);
-
-/** Preform a non-blocking DNS lockup in separate `thread`,
+/** Preform a non-blocking DNS lockup in separate `thread` ~pool~,
  returns ~struct~ `hostent` address. */
 C_API struct hostent *async_gethostbyname(char *hostname);
 
-C_API int async_get_addrinfo(future *thrd, const char *name,
-	const char *service, const struct addrinfo *hints, addrinfo_t result);
+C_API int async_getaddrinfo(const char *name, const char *service,
+	const struct addrinfo *hints, addrinfo_t result);
+C_API int async_getnameinfo(const struct sockaddr *sa, socklen_t salen,
+	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
 
-C_API int async_getaddrinfo(const char *name,
-	const char *service, const struct addrinfo *hints, addrinfo_t result);
+C_API int async_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolve_src);
+C_API int async_parse_addr(char *host, u_saddr_t *dst, int *ip_version);
 
-C_API int async_fs_open(future *thrd, const char *path, int flag, int mode);
 C_API int fs_open(const char *path, int flag, int mode);
-
-C_API int async_fs_read(future *thrd, int fd, void *buf, uint32_t count);
 C_API int fs_read(int fd, void *buf, uint32_t count);
-
-C_API int async_fs_write(future *thrd, int fd, const void *buf, uint32_t count);
 C_API int fs_write(int fd, const void *buf, uint32_t count);
-
-C_API ssize_t async_fs_sendfile(future *thrd, int fd_out, int fd_in, off_t *offset, size_t length);
 C_API ssize_t fs_sendfile(int fd_out, int fd_in, off_t *offset, size_t length);
-
-C_API int async_fs_close(future *thrd, int fd);
 C_API int fs_close(int fd);
-
-C_API int async_fs_unlink(future *thrd, const char *path);
 C_API int fs_unlink(const char *path);
-
-C_API int async_fs_mkdir(future *thrd, const char *path, mode_t mode);
 C_API int fs_mkdir(const char *path, mode_t mode);
-
-C_API int async_fs_rmdir(future *thrd, const char *path);
 C_API int fs_rmdir(const char *path);
-
-C_API int async_fs_stat(future *thrd, const char *path, struct stat *st);
 C_API int fs_stat(const char *path, struct stat *st);
-
-C_API int async_fs_fstat(future *thrd, int fd, struct stat *st);
 C_API int fs_fstat(int fd, struct stat *st);
-
-C_API int async_fs_access(future *thrd, const char *path, int mode);
 C_API int fs_access(const char *path, int mode);
-
 C_API bool fs_exists(const char *path);
 C_API size_t fs_filesize(const char *path);
 C_API int fs_writefile(const char *path, char *text);
@@ -396,6 +376,21 @@ C_API char *fs_readfile(const char *path);
 C_API bool fs_touch(const char *path);
 C_API int fs_rename(const char *oldfile, const char *newfile);
 C_API int fs_copyfile(const char *oldfile, const char *newfile);
+
+C_API int async_getentropy(void *buf, size_t buflen);
+C_API int async_fwrite(const char *path, const char *mode, void *buf, size_t size, size_t count);
+C_API int async_fprintf(const char *path, const char *mode, const char *buf);
+
+C_API FILE *fs_fopen(const char *path, const char *mode);
+C_API size_t fs_fread(void *buf, size_t items_size, size_t items_count, FILE *stream);
+C_API size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream);
+C_API int fs_fclose(FILE *stream);
+C_API int fs_fgetc(FILE *stream);
+C_API char *fs_fgets(char *buf, int count, FILE *stream);
+
+#ifndef _WIN32
+C_API int fs_chmod(const char *file, mode_t mode);
+#endif
 
 /* Monitor `path` recursively for changes, WILL execute `handler` with `filter` on detections.
 - This call is executed in `tasks` ~thread~ `pool`, aka `goroutine`.
@@ -434,17 +429,6 @@ C_API int uds_bind(char *addr, int backlog);
 C_API int uds_accept(int fd, char *server);
 C_API void uds_handler(uds_unix_cb connected, int client);
 C_API bool socket_is_uds(int socket);
-
-C_API int async_getentropy(void *buf, size_t buflen);
-C_API int async_fwrite(const char *path, const char *mode, void *buf, size_t size, size_t count);
-C_API int async_fprintf(const char *path, const char *mode, const char *buf);
-
-C_API FILE *fs_fopen(const char *path, const char *mode);
-C_API size_t fs_fread(void *buf, size_t items_size, size_t items_count, FILE *stream);
-C_API size_t fs_fwrite(void *buf, size_t items_size, size_t items_count, FILE *stream);
-C_API int fs_fclose(FILE *stream);
-C_API int fs_fgetc(FILE *stream);
-C_API char *fs_fgets(char *buf, int count, FILE *stream);
 
 #if defined (__cplusplus) || defined (c_plusplus)
 } /* terminate extern "C" { */

@@ -9,7 +9,7 @@ void *main_main(param_t args) {
 	ASSERT_TASK((data_type(thrd) == DATA_THREAD));
 	ASSERT_TASK((data_type(futures_pool()) == DATA_THREAD));
 	ASSERT_TASK((futures_pool() == thrd));
-	ASSERT_TASK(((host = async_get_hostbyname(thrd, "dns.google")) != NULL));
+	ASSERT_TASK(((host = async_gethostbyname("dns.google")) != NULL));
 	ASSERT_TASK(str_is(gethostbyname_ip(host), "8.8.8.8") || str_is(gethostbyname_ip(host), "8.8.4.4"));
 	return 0;
 }

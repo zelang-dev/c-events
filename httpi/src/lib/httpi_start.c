@@ -41,7 +41,7 @@ FORCEINLINE bool http_is_valid_method(string_t method) {
 
 /* Verify given socket address against the ACL.
  * Return -1 if ACL is malformed, 0 if address is disallowed, 1 if allowed. */
-static int http_check_acl(http_ini_t *phys_ctx, const union usa *sa) {
+static int http_check_acl(http_ini_t *phys_ctx, const u_saddr_t *sa) {
 	int allowed, flag, matched;
 	struct vec vec;
 
@@ -80,7 +80,9 @@ static void httpi_cleanup(void_t ptr) {
 	http_t *conn = (http_t *)ptr;
 	//recover_cb recover = (recover_cb)conn;
 	string_t err = guard_message();
-	if (!is_empty(conn)) {
+	if (is_type(conn, DATA_HTTPINFO)) {
+		events_del(conn->client->sock);
+		tls_closer(socket2fd(conn->client->sock));
 		if (!is_empty(conn->req.buf))
 			conn->req.buf = free_ex(conn->req.buf);
 
@@ -98,24 +100,26 @@ static void httpi_cleanup(void_t ptr) {
 	}
 }
 
-static void http_handler(int client) {
-	guard {
-		http_t *conn = (http_t *)events_get_target_data(client);
-		defer(httpi_cleanup, conn);
-		/* Request buffers are not pre-allocated. They are private to the
-		 * request and do not contain any state information that might be
-		 * of interest to anyone observing a server status.  */
-		conn->req.buf = calloc(1, conn->ctx->max_request_size + 1);
-		if (conn->req.buf == NULL) {
-			http_log(DEBUG_CRASH, conn, "Out of memory: Cannot allocate buffer for task #%i", task_id());
-		} else {
-			conn->req.buf_size = (int)conn->ctx->max_request_size;
-			conn->domain = &(conn->ctx->host); /* Use default domain and default host */
-			conn->req.user_data = conn->ctx->user_data;
-			conn->action = HTTP_REQUEST;
-			http_process_connection(conn->ctx, conn);
-		}
-	} guarded;
+static void http_handler(opaque_t connected) {
+	http_t *conn = (http_t *)connected->object;
+	/* Request buffers are not pre-allocated. They are private to the
+	 * request and do not contain any state information that might be
+	 * of interest to anyone observing a server status.  */
+	conn->req.buf = calloc(1, conn->ctx->max_request_size + 1);
+	if (conn->req.buf == NULL) {
+		http_log(DEBUG_CRASH, conn, "Out of memory: Cannot allocate buffer for task #%i", task_id());
+	} else {
+		conn->req.buf_size = (int)conn->ctx->max_request_size;
+		conn->domain = &(conn->ctx->host); /* Use default domain and default host */
+		conn->req.user_data = conn->ctx->user_data;
+		conn->action = HTTP_REQUEST;
+		http_process_connection(conn->ctx, conn);
+		/* Send FIN to the client */
+		if ((conn->status >= 400 || conn->code >= 400) && !conn->client->has_ssl)
+			shutdown(socket2fd(conn->client->sock), SHUT_RDWR);
+		else
+			delay(200);
+	}
 }
 
 /* Process new incoming connections to the server. */
@@ -125,7 +129,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	time_t conn_birth_time;
 	char src_addr[IP_ADDR_STR_LEN];
 	fds_t sock;
-	union usa *usa;
+	u_saddr_t *usa;
 	socklen_t len;
 	int on = 1;
 
@@ -155,10 +159,10 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	}
 
 	so->sock = sock;
-	so->rsa.storage = usa->storage;
+	memcpy(&so->rsa.storage, &usa->storage, sizeof(usa->storage));
 	memset(&so->lsa.sa, 0, sizeof(so->lsa.sa));
 	len = sizeof(so->lsa.sa);
-	if (!http_check_acl(ctx, (const union usa *)&so->rsa)) {
+	if (!http_check_acl(ctx, (const u_saddr_t *)&so->rsa)) {
 		sockaddr_to_str(src_addr, sizeof(src_addr), &so->rsa);
 		http_log(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
 			__func__, src_addr);
@@ -206,10 +210,12 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 			conn->version = 1.1;
 			conn->req.conn_birth_time = conn_birth_time;
 			conn->req.remote_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client->rsa));
-			conn->req.server_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client->lsa));
+			conn->req.server_port = ntohs(USA_IN_PORT_UNSAFE(&conn->client->lsa));
 			sockaddr_to_str(conn->req.remote_addr, sizeof(conn->req.remote_addr), &conn->client->rsa);
 			conn->type = (data_types)DATA_HTTPINFO;
 			events_set_target_data(so->sock, (void *)conn);
+			debug_info("Incoming %sconnection from %s"CLR_LN,
+				(conn->client->has_ssl ? "SSL " : ""), conn->req.remote_addr);
 		} else {
 			events_set_target_data(so->sock, null);
 			tls_closer(socket2fd(so->sock));
@@ -570,13 +576,16 @@ static void http_server_task(param_t args) {
 	http_socket *listener = (http_socket *)args[0].object;
 	http_ini_t *ctx = (http_ini_t *)args[1].object;
 	http_t *conn = null;
+	string certpath = ctx->host.config[SSL_CERTIFICATE];
 
 	listener->task = active_scheduler_task();
 	task_data_set(listener->task, (void_t)args);
 	if (listener->has_ssl) {
-		if (is_type(ctx, DATA_HTTP_SERVER) && is_empty(ctx->host.config[SSL_CERTIFICATE]))
-			use_certificate(ctx->host.config[SSL_CERTIFICATE], 0);
-
+		if (is_type(ctx, DATA_HTTP_SERVER) && is_empty(certpath))
+			use_certificate(null, 0); // creates a self sign cert base on host system name
+		//TODO: refactor setup, cert filenames currently *.crt and *.key, where `system host name = domain name` as filename
+		//else if(certpath)
+		//	use_certificate(certpath, 0);
 		if (is_type(ctx, DATA_HTTP_SERVER) && ctx->status == HTTP_STATUS_RUNNING)
 			tls_socket_bind(socket2fd(listener->sock));
 	} else {
@@ -586,7 +595,7 @@ static void http_server_task(param_t args) {
 	while (is_type(ctx, DATA_HTTP_SERVER) && ctx->status == HTTP_STATUS_RUNNING) {
 		if (!is_empty(conn = http_accept(listener, ctx))) {
 			conn->ctx = ctx;
-			accept_handler(http_handler, socket2fd(conn->client->sock));
+			go_guard(Kb(64), http_handler, httpi_cleanup, conn);
 		}
 	}
 }
@@ -626,7 +635,7 @@ FORCEINLINE void httpi_start(http_ini_t *ctx, http_main_cb start) {
 	events_set_main((main_cb)http_main_task);
 	async_task(http_main_task, 2, ctx, start);
 	foreach(socket in ctx->server_sockets) {
-		async_ex(Kb(64), http_server_task, 2, socket.object, ctx);
+		async_ex(Kb(32), http_server_task, 2, socket.object, ctx);
 	}
 
 	http_atexit_ctrl_c = ctx;

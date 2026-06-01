@@ -9,6 +9,13 @@
 #   define C_API extern
 #endif
 
+#if defined(__APPLE__)
+#include <copyfile.h>
+#elif !defined(__FreeBSD__)
+// Linux and others
+#include <sys/sendfile.h>
+#endif
+
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 #include <sys/event.h>
 #include <libgen.h>
@@ -123,7 +130,7 @@ extern "C" {
 C_API int os_open(const char *path, int flags, mode_t mode);
 
 /* Unix equivalent of Win32's `CopyFile` Source - https://stackoverflow.com/a/2180788 */
-C_API int copyfile(const char *to, const char *from);
+C_API int copyfile(const char *source, const char *destination);
 
 #if __FreeBSD__ || __NetBSD__ || __OpenBSD__ || __DragonFly__ || __APPLE__ || __MACH__
 C_API int inotify_init(void);

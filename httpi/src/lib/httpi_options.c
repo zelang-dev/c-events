@@ -498,7 +498,7 @@ reparse:
 	return list;
 }
 
-int http_parse_match_net(const struct vec *vec, const union usa *sa, int no_strict) {
+int http_parse_match_net(const struct vec *vec, const u_saddr_t *sa, int no_strict) {
 	int n;
 	unsigned int a, b, c, d, slash;
 
@@ -538,7 +538,7 @@ int http_parse_match_net(const struct vec *vec, const union usa *sa, int no_stri
 /* Verify given socket address against the ACL.
  * Return -1 if ACL is malformed, 0 if address is disallowed, 1 if allowed.
  */
-static int http_check_acl(http_ini_t *ctx, const union usa *sa) {
+static int http_check_acl(http_ini_t *ctx, const u_saddr_t *sa) {
 	int allowed, flag, matched;
 	struct vec vec;
 
@@ -574,7 +574,7 @@ static int http_check_acl(http_ini_t *ctx, const union usa *sa) {
 }
 
 bool http_set_acl_option(http_ini_t *ctx) {
-	union usa sa;
+	u_saddr_t sa;
 	memset(&sa, 0, sizeof(sa));
 	//sa.sin6.sin6_family = AF_INET6;
 	sa.sin.sin_family = AF_INET;
@@ -880,9 +880,9 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 		*ip_version = 4;
 	} else if (sscanf(vec->ptr, "[%49[^]]]:%u%n", buf, &port, &len) == 2
 		&& ((size_t)len <= vec->len)
-		&& http_inet_pton(AF_INET6, buf, &so->lsa.sin6, sizeof(so->lsa.sin6), 0)) {
+		&& async_inet_pton(AF_INET6, buf, &so->lsa.sin6, sizeof(so->lsa.sin6), 0)) {
 		/* IPv6 address, examples: see above */
-		/* so->lsa.sin6.sin6_family = AF_INET6; already set by http_inet_pton */
+		/* so->lsa.sin6.sin6_family = AF_INET6; already set by async_inet_pton */
 		so->lsa.sin6.sin6_port = htons((uint16_t)port);
 		*ip_version = 6;
 	} else if ((vec->ptr[0] == '+')
@@ -925,7 +925,7 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 		}
 
 		str_lcpy((string)vec->hostname, vec->ptr, hostnlen + 1);
-		if (http_inet_pton(AF_INET, vec->hostname, &so->lsa.sin, sizeof(so->lsa.sin), 1)) {
+		if (async_inet_pton(AF_INET, vec->hostname, &so->lsa.sin, sizeof(so->lsa.sin), 1)) {
 			if (sscanf(cb + 1, "%u%n", &port, &len)
 				== 1) { // NOLINT(cert-err34-c) 'sscanf' used to convert a
 						// string to an integer value, but function will not
@@ -937,7 +937,7 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 			} else {
 				len = 0;
 			}
-		} else if (http_inet_pton(AF_INET6, vec->hostname, &so->lsa.sin6, sizeof(so->lsa.sin6), 1)) {
+		} else if (async_inet_pton(AF_INET6, vec->hostname, &so->lsa.sin6, sizeof(so->lsa.sin6), 1)) {
 			if (sscanf(cb + 1, "%u%n", &port, &len) == 1) {
 				*ip_version = 6;
 				so->lsa.sin6.sin6_port = htons((uint16_t)port);
@@ -1019,7 +1019,7 @@ void http_set_close_on_exec(fds_t sock) {
 static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	int portsOk, int portsTotal, int ip_version, http_socket *so) {
 	int ip_family, off = 0, on = 0;
-	union usa usa;
+	u_saddr_t usa;
 	socklen_t len;
 	string_t opt_txt;
 	long opt_listen_backlog;
@@ -1089,7 +1089,7 @@ int http_set_ports_option(http_ini_t *ctx) {
 	char error_string[ERROR_STRING_LEN];
 	struct vec vec;
 	http_socket *so;
-	union usa usa;
+	u_saddr_t usa;
 	socklen_t len;
 	int on, off, ip_version, ports_total, ports_ok;
 
@@ -1097,6 +1097,7 @@ int http_set_ports_option(http_ini_t *ctx) {
 
 	on = 1;
 	off = 0;
+	ip_version = 0;
 	ports_total = 0;
 	ports_ok = 0;
 

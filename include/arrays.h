@@ -102,6 +102,7 @@ typedef union {
 	int integer;
 	unsigned int u_int;
 	int *int_ptr;
+	intptr_t intptr;
 	signed long s_long;
 	unsigned long u_long;
 	long long long_long;
@@ -125,8 +126,9 @@ typedef union {
 	intptr_t **array_int;
 	uintptr_t **array_uint;
 	data_func_t func;
-} values_t, *tuple_t, *param_t, *array_t, *range_t;
+} values_t, *tuple_t, *param_t, *array_t, *range_t, *opaque_t;
 typedef void (*launch_func_t)(param_t);
+typedef void (*guarded_func_t)(opaque_t);
 
 typedef struct {
 	data_types type;

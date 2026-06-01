@@ -236,7 +236,7 @@ struct events_fd_s {
 	bool backend_used;
 	intptr_t _backend; /* can be used by backends (never modified by core) */
 	events_cb callback;
-	union usa addr;
+	u_saddr_t addr;
 	void *cb_arg;
 	void *user_data;
 	events_t *loop;
@@ -544,7 +544,7 @@ struct af_unix_s {
 	struct sockaddr_un *addr;
 };
 
-static EVENTS_INLINE socklen_t socklen_get(const union usa *s) {
+static EVENTS_INLINE socklen_t socklen_get(const u_saddr_t *s) {
 	switch (s->storage.ss_family) {
 		case AF_UNIX:
 			return sizeof(&s->sun.sun_path);
@@ -556,7 +556,7 @@ static EVENTS_INLINE socklen_t socklen_get(const union usa *s) {
 			return sizeof(struct sockaddr_in6);
 			break;
 		default:
-			return sizeof(union usa);
+			return sizeof(u_saddr_t);
 			break;
 	}
 	return 0;

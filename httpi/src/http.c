@@ -530,13 +530,13 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 			found = false;
 			is_cookie_set = false;
 			s_pos = str_pos(line, ":");
-			if (s_pos != DATA_INVALID) {
+			if (s_pos != DATA_INVALID && x != 0) {
 				found = true;
 				line[s_pos] = '\0';
 				key = trim(line);
 				value = trim(trim_at(line, s_pos + 1));
 				this->num_headers++;
-			} else if (str_has(line, "HTTP/")) {
+			} else if (str_has(line, "HTTP/") && !x) {
 				s_pos = str_pos(line, " ");
 				line[s_pos] = '\0';
 				string params1 = trim_at(line, (s_pos + 1));

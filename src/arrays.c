@@ -1146,7 +1146,11 @@ char *str_parseip(char *name, uint32_t *ip, int *port, bool autofree) {
 		name = buf;
 	}
 
-	if ((i = str_pos(name, ":")) > 6) {
+	if ((i = str_pos(name, "]:")) > 3) {
+		*port = atoi(trim_at(name, i + 2));
+		name[i + 1] = '\0';
+		return autofree ? str_dup(name) : str_dup_ex(name);
+	} else if ((i = str_pos(name, ":")) > 6) {
 		tmp = str_split_ex(name, ":", null);
 		*port = atoi(tmp[1]);
 		name = tmp[0];
@@ -1203,7 +1207,7 @@ char *str_parseip(char *name, uint32_t *ip, int *port, bool autofree) {
 	if (is_empty(tmp) && autofree)
 		return name;
 
-	return  autofree && !is_empty(tmp) ? tmp[0] : (char *)tmp;
+	return autofree && !is_empty(tmp) ? tmp[0] : (char *)tmp;
 }
 
 static EVENTS_INLINE char *uri_dup(const void *src, size_t len) {

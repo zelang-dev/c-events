@@ -119,6 +119,15 @@ typedef unsigned long __sigset_t;
 #	include <rpmalloc.h>
 #endif
 
+/* Unified socket `union` address. */
+typedef union usa_s {
+	struct sockaddr sa;
+	struct sockaddr_in sin;
+	struct sockaddr_in6 sin6;
+	struct sockaddr_un sun;
+	struct sockaddr_storage storage;
+} u_saddr_t;
+
 #include <future.h>
 
 #define EVENTS_READ 	1
@@ -173,15 +182,6 @@ struct ex_ptr_s {
 	void **ptr;
 };
 
-/* Unified socket address. */
-union usa {
-	struct sockaddr sa;
-	struct sockaddr_in sin;
-	struct sockaddr_in6 sin6;
-	struct sockaddr_un sun;
-	struct sockaddr_storage storage;
-};
-
 C_API sys_events_t sys_event;
 C_API volatile sig_atomic_t events_got_signal;
 
@@ -201,7 +201,7 @@ C_API int events_set_nonblocking(fds_t fd);
 C_API int events_set_blocking(fds_t fd);
 
 /* Return unified `sockaddr` ~union~ address of given `fd`. */
-C_API union usa *events_get_sockaddr(fds_t fd);
+C_API u_saddr_t *events_get_sockaddr(fds_t fd);
 
 /* Set custom `user_data` to given `fd` ~internal~ table,
  * only assignable if `main thread` caller. */
@@ -491,6 +491,11 @@ C_API void async_ex(size_t stacksize, launch_func_t fn, uint32_t num_args, ...);
 /* Same as `async_task()`, except the ~`coroutine`~ `added/executed` in ~thread~ pool.
 WILL `panic/abort`, if `events_create_pool()` not set. */
 C_API uint32_t go(param_func_t fn, size_t num_of_args, ...);
+
+/* Same as `go()`, except can set ~`stacksize`~, and ~`fn`~ is `executed` between
+`guard/guarded` aka `try\catch` blocks. The ~`cleanup`~ is `fence(any)` for `scope` exit,
+in addition to other `defer()` calls. */
+C_API void go_guard(size_t stacksize, guarded_func_t fn, defer_cb cleanup, void *any);
 
 /*  Low-level call sitting underneath `async_read` and `async_write`.
  Puts task to ~sleep~ while waiting for I/O to be possible on `fd`.

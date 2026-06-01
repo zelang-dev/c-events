@@ -230,7 +230,7 @@ int remove_directory(http_t *conn, string_t dir) {
 	return ok;
 }
 
-int scan_directory(http_t *conn,	string_t dir, void *data, int (*cb)(struct de *, void *)) {
+int scan_directory(http_t *conn, string_t dir, void *data, int (*cb)(struct de *, void *)) {
 	char path[UTF8_PATH_MAX];
 	struct dirent *dp;
 	DIR *dirp;
@@ -419,32 +419,36 @@ void handle_directory_request(http_t *conn, string_t dir) {
 	conn->status = 200;
 }
 
-unsigned short sockaddr_in_port(union usa *s) {
+unsigned short sockaddr_in_port(u_saddr_t *s) {
 	if (s->sa.sa_family == AF_INET)
 		return s->sin.sin_port;
-#if defined(USE_IPV6)
-	if (s->sa.sa_family == AF_INET6)
+	else if (s->sa.sa_family == AF_INET6)
 		return s->sin6.sin6_port;
-#endif
+
 	return 0;
 }
 
-void sockaddr_to_str(char *buf, size_t len, const union usa *usa) {
+void sockaddr_to_str(char *buf, size_t len, const u_saddr_t *usa) {
 	buf[0] = '\0';
 
 	if (!usa) {
 		return;
 	}
-
+	events_nameinfo_func namelookup = events_is_active() && tasks_is_active()
+		? async_getnameinfo : getnameinfo;
+	char service[NI_MAXSERV] = {0};
 	if (usa->sa.sa_family == AF_INET) {
-		getnameinfo(&usa->sa, sizeof(usa->sin), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
+		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sin), buf, (unsigned)len,
+			service, NI_MAXSERV, NI_NUMERICHOST);
 	} else if (usa->sa.sa_family == AF_INET6) {
-		getnameinfo(&usa->sa, sizeof(usa->sin6), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
+		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sin6), buf, (unsigned)len,
+			service, NI_MAXSERV, NI_NUMERICHOST);
 	} else if (usa->sa.sa_family == AF_UNIX) {
 		/* TODO: Define a remote address for unix domain sockets.
 		* This code will always return "localhost", identical to http+tcp:*/
-		getnameinfo(&usa->sa, sizeof(usa->sun), buf, (unsigned)len, NULL, 0, NI_NUMERICHOST);
-		//str_lcpy(buf, UDS_SERVER_NAME, len);
+		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sun), buf, (unsigned)len,
+			service, NI_MAXSERV, NI_NUMERICHOST);
+			//str_lcpy(buf, UDS_SERVER_NAME, len);
 	}
 }
 
@@ -2144,9 +2148,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 	if (ctx == NULL || conn == NULL)
 		return;
 
-	httpi_t *ri = &conn->req;
 	debug_info("Start processing connection from %s"CLR_LN, conn->req.remote_addr);
-
 	do {
 		debug_info("calling get_request (%i times for this connection)"CLR_LN, conn->req.handled_requests + 1);
 		if (!get_request_response(conn, ebuf, sizeof(ebuf), &reqerr)) {
@@ -2156,15 +2158,22 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 			 * error message and close the connection. */
 			if (reqerr > 0)
 				http_error(conn, reqerr, "%s", ebuf);
-		} else if (strcmp(ri->http_version, "1.0") && strcmp(ri->http_version, "1.1")) {
+		} else if (conn->req.http_version && strcmp(conn->req.http_version, "1.0") && strcmp(conn->req.http_version, "1.1")) {
 			/* HTTP/2 is not allowed here */
 			http_snprintf(NULL, /* No truncation check for ebuf */
-				ebuf, sizeof(ebuf), "Bad HTTP version: [%s]", ri->http_version);
+				ebuf, sizeof(ebuf), "Bad HTTP version: [%s]", conn->req.http_version);
 			http_error(conn, 505, "%s", ebuf);
 		}
 
 		if (ebuf[0] == '\0') {
-			uri = http_get_uri(conn);
+			uri = http_get_path(conn);
+			if (str_is_empty(uri)) {
+				trace; cout("- %p, %s, %s, %s, %d = %d <--"CLR_LN, conn, conn->req.buf,
+					conn->req.local_uri, conn->uri, conn->action, conn->req.request_len);
+				parse_http(conn->action, conn, conn->req.buf);
+				trace; cout("- %p, %s, %s, %d = %d <--"CLR_LN, conn, conn->url_to, conn->path, conn->action, conn->req.request_len);
+				uri = http_get_path(conn);
+			}
 			uri_type = http_get_uri_type(uri);
 			switch (uri_type) {
 				case URI_TYPE_ASTERISK:
@@ -2207,7 +2216,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 		}
 
 		debug_info("http: %s, error: %s"CLR_LN,
-			(ri->http_version ? ri->http_version : "none"),
+			(conn->req.http_version ? conn->req.http_version : "none"),
 			(ebuf[0] ? ebuf : "none"));
 
 		if (ebuf[0] == '\0') {
@@ -2227,14 +2236,14 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 		/* http2 response complete. Free header buffer */
 		//free_buffered_http2_response_header_list(conn);
 
-		if (ri->remote_user != NULL) {
-			ptr.con = ri->remote_user;
+		if (conn->req.remote_user != NULL) {
+			ptr.con = conn->req.remote_user;
 			free_ex(ptr.var);
 
 			/*
 			 * Important! When having connections with and without auth
 			 * would cause double free and then crash */
-			ri->remote_user = NULL;
+			conn->req.remote_user = NULL;
 		}
 
 		/* NOTE(lsm): order is important here. should_keep_alive() call
@@ -2277,54 +2286,13 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 
 	debug_info("Done processing connection from %s (%f sec)"CLR_LN,
 		conn->req.remote_addr, difftime(time(NULL), conn->req.conn_birth_time));
-	close_socket_gracefully(conn);
-}
-
-int http_inet_pton(int af, string_t src, void *dst, size_t dstlen, int resolve_src) {
-	struct addrinfo hints, *res, *ressave;
-	int func_ret = 0;
-	int gai_ret;
-
-	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = af;
-	if (!resolve_src) {
-		hints.ai_flags = AI_NUMERICHOST;
-	}
-
-	gai_ret = events_is_active() && tasks_is_active()
-		? async_getaddrinfo(src, NULL, &hints, &res)
-		: getaddrinfo(src, NULL, &hints, &res);
-	if (gai_ret != 0) {
-		/* gai_strerror could be used to convert gai_ret to a string */
-		/* POSIX return values: see
-		 * http://pubs.opengroup.org/onlinepubs/9699919799/functions/freeaddrinfo.html
-		 */
-		/* Windows return values: see
-		 * https://msdn.microsoft.com/en-us/library/windows/desktop/ms738520%28v=vs.85%29.aspx
-		 */
-		return 0;
-	}
-
-	ressave = res;
-
-	while (res) {
-		if ((dstlen >= (size_t)res->ai_addrlen)
-			&& (res->ai_addr->sa_family == af)) {
-			memcpy(dst, res->ai_addr, res->ai_addrlen);
-			func_ret = 1;
-		}
-		res = res->ai_next;
-	}
-
-	freeaddrinfo(ressave);
-	return func_ret;
 }
 
 http_t *http_connect_impl(const struct client_options *client_options,
 	int use_ssl, struct error_data *error) {
 	http_t *conn = NULL;
 	fds_t sock;
-	union usa sa;
+	u_saddr_t sa;
 	struct sockaddr *psa;
 	socklen_t len;
 	unsigned max_req_size =	(unsigned)atoi(http_get_default_option(MAX_REQUEST_SIZE));
@@ -2410,6 +2378,12 @@ http_t *http_connect_impl(const struct client_options *client_options,
 	}
 
 	if ((int)sock < 0) {
+		http_snprintf(
+			NULL, /* No truncation check for ebuf */
+			error->text,
+			error->text_buffer_size,
+			"%s",
+			ex_strerror(os_geterror()));
 		free(conn);
 		return NULL;
 	}
