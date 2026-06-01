@@ -39,7 +39,7 @@ fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol
 
 	if (is_unix) {
 		uds->addr = &events_get_sockaddr(fd)->sun;
-		strncpy(uds->addr->sun_path, address, sizeof(uds->addr->sun_path) - 1);
+		snprintf(uds->addr->sun_path, sizeof(uds->addr->sun_path), "%s", address);
 		uds->addr->sun_family = AF_UNIX;
 		uds->socket = fd;
 		uds->type = DATA_UNIX;
@@ -132,7 +132,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 
 	if (is_unix) {
 		uds->addr = &events_get_sockaddr(fd)->sun;
-		strncpy(uds->addr->sun_path, address, sizeof(uds->addr->sun_path) - 1);
+		snprintf(uds->addr->sun_path, sizeof(uds->addr->sun_path), "%s", address);
 		uds->addr->sun_family = AF_UNIX;
 		uds->socket = fd;
 		uds->type = DATA_UNIX;
@@ -240,7 +240,7 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 	// start connecting
 	if (is_unix) {
 		uds->addr = &events_get_sockaddr(fd)->sun;
-		strncpy(uds->addr->sun_path, hostname, sizeof(uds->addr->sun_path) - 1);
+		snprintf(uds->addr->sun_path, sizeof(uds->addr->sun_path), "%s", hostname);
 		uds->addr->sun_family = AF_UNIX;
 		uds->socket= fd;
 		uds->type = DATA_UNIX;
@@ -355,7 +355,7 @@ int async_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resol
 	while (res) {
 		if ((dstlen >= (size_t)res->ai_addrlen)
 			&& (res->ai_addr->sa_family == af)) {
-			memcpy(dst, res->ai_addr, res->ai_addrlen);
+			memcpy(dst, res->ai_addr, res->ai_addrlen < dstlen ? res->ai_addrlen : dstlen);
 			func_ret = 1;
 		}
 		res = res->ai_next;
