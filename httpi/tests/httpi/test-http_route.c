@@ -65,7 +65,7 @@ static void websock_server_ready(http_t *conn, void *udata) {
 }
 
 #define long_ws_buf_len_16 (500)
-#define long_ws_buf_len_64 (70000)
+#define long_ws_buf_len_64 (40000)
 static char long_ws_buf[long_ws_buf_len_64];
 
 static int websock_server_data(http_t *conn,
@@ -266,9 +266,11 @@ void main_main(http_ini_t *ctx) {
 	struct tclient_data ws_client1_data = {NULL, 0, 0};
 	struct tclient_data ws_client2_data = {NULL, 0, 0};
 	struct tclient_data ws_client3_data = {NULL, 0, 0};
+	struct tclient_data ws_client4_data = {NULL, 0, 0};
 	http_t *ws_client1_conn = NULL;
 	http_t *ws_client2_conn = NULL;
 	http_t *ws_client3_conn = NULL;
+	http_t *ws_client4_conn = NULL;
 
 	char cmd_buf[256];
 
@@ -396,7 +398,7 @@ void main_main(http_ini_t *ctx) {
 	i = http_read(client_conn, buf, sizeof(buf));
 	ASSERT(i == (int)strlen(expected));
 	buf[i] = 0;
-	//ASSERT_STR_ABORT(buf, expected);
+	ASSERT(str_is(buf, expected));
 	http_close_connection(client_conn);
 
 	/* Get redirect from callback using http://127.0.0.1 */
@@ -549,7 +551,8 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(http_get_code(client_conn) == 200);
 	http_close_connection(client_conn);
 
-	/* Get directory listing */ client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET / HTTP/1.0\r\n\r\n");
+	/* Get directory listing */
+	client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET / HTTP/1.0\r\n\r\n");
 	ASSERT(client_conn != NULL);
 	ri = http_request_info(client_conn);
 
@@ -559,6 +562,7 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(i > 21);
 	buf[21] = 0;
 	ASSERT_STR_ABORT(buf, "<!DOCTYPE html><html>");
+	delay(1000);
 	http_close_connection(client_conn);
 
 	/* POST to static file (will not work) */
@@ -627,6 +631,24 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(i == (int)strlen(expected));
 	buf[i] = 0;
 	ASSERT_STR_ABORT(buf, expected);
+	http_close_connection(client_conn);
+
+	/* Get data non existing handler (will return 404) */
+	client_conn = http_connect("localhost", ipv4_port, 0, ebuf, sizeof(ebuf));
+
+	ASSERT(str_is(ebuf, ""));
+	ASSERT(client_conn != NULL);
+
+	http_printf(client_conn,
+		"GET /unknown_url HTTP/1.1\r\n"
+		"Host: localhost:%u\r\n"
+		"\r\n",
+		ipv4_port);
+
+	i = http_get_response(client_conn, ebuf, sizeof(ebuf), 10000);
+	ASSERT(i >= 0);
+	ASSERT(str_is(ebuf, ""));
+	ASSERT(http_get_code(client_conn) == 404);
 	http_close_connection(client_conn);
 
 	/* Websocket test */
@@ -811,16 +833,66 @@ void main_main(http_ini_t *ctx) {
 	ws_client3_data.data = NULL;
 	ws_client3_data.len = 0;
 
-	trace;
-	for (i = 0; i < 100; i++) {
-		delay(5);
-		if (ws_client3_data.closed != 0) {
-			break;
-		}
-	}
+	/* Write long data (16 bit size header) */
+	http_websocket_binary(ws_client3_conn,
+		long_ws_buf,
+		long_ws_buf_len_16);
 
-	trace;
+	/* Wait for the response */
+	wait_not_null(&(ws_client3_data.data));
+
+	ASSERT((int)ws_client3_data.len == (int)long_ws_buf_len_16);
+	ASSERT(!memcmp(ws_client3_data.data, long_ws_buf, long_ws_buf_len_16));
+	free(ws_client3_data.data);
+	ws_client3_data.data = NULL;
+	ws_client3_data.len = 0;
+
+	/* Write long data (64 bit size header) */
+	http_websocket_binary(ws_client3_conn,
+		long_ws_buf,
+		long_ws_buf_len_64);
+
+	/* Wait for the response */
+	wait_not_null(&(ws_client3_data.data));
+
+	ASSERT((int)ws_client3_data.len == (int)long_ws_buf_len_64);
+	ASSERT(!memcmp(ws_client3_data.data, long_ws_buf, long_ws_buf_len_64));
+	free(ws_client3_data.data);
+	ws_client3_data.data = NULL;
+	ws_client3_data.len = 0;
+
+	/* Disconnect client 3 */
+	ASSERT(ws_client3_data.closed == 0);
+	http_close_connection(ws_client3_conn);
 	ASSERT(ws_client3_data.closed == 1);
+
+	/* Connect client 4 */
+	ws_client4_conn = http_websocket_connect("localhost",
+			ipv4s_port,
+			1,
+			"/websocket",
+			NULL,
+			websocket_client_data_handler,
+			websocket_client_close_handler,
+			&ws_client4_data);
+
+	ASSERT(ws_client4_conn != NULL);
+
+	wait_not_null(
+		&(ws_client4_data.data)); /* Wait for the websocket welcome message */
+	ASSERT(ws_client1_data.closed == 1);
+	ASSERT(ws_client2_data.closed == 1);
+	ASSERT(ws_client3_data.closed == 1);
+	ASSERT(ws_client4_data.closed == 0);
+	ASSERT(ws_client4_data.data != NULL);
+	ASSERT(ws_client4_data.len == websocket_welcome_msg_len);
+	ASSERT(!memcmp(ws_client4_data.data,
+		websocket_welcome_msg,
+		websocket_welcome_msg_len));
+	free(ws_client4_data.data);
+	ws_client4_data.data = NULL;
+	ws_client4_data.len = 0;
+	/* stop the server without closing this connection */
 
 	/* Close the server */
 	g_ctx = NULL;

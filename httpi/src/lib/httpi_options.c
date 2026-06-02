@@ -877,10 +877,12 @@ int parse_port_string(const struct vec *vec, http_socket *so, int *ip_version) {
 		so->lsa.sin.sin_addr.s_addr =
 			htonl((a << 24) | (b << 16) | (c << 8) | d);
 		so->lsa.sin.sin_port = htons((uint16_t)port);
+		snprintf((string)vec->hostname, sizeof(vec->hostname), "%s", (string)vec->ptr);
 		*ip_version = 4;
 	} else if (sscanf(vec->ptr, "[%49[^]]]:%u%n", buf, &port, &len) == 2
 		&& ((size_t)len <= vec->len)
 		&& async_inet_pton(AF_INET6, buf, &so->lsa.sin6, sizeof(so->lsa.sin6), 0)) {
+		snprintf((string)vec->hostname, sizeof(vec->hostname), "%s", (string)buf);
 		/* IPv6 address, examples: see above */
 		/* so->lsa.sin6.sin6_family = AF_INET6; already set by async_inet_pton */
 		so->lsa.sin6.sin6_port = htons((uint16_t)port);

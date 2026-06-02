@@ -31,6 +31,7 @@ EX_EXCEPTION(sig_quit);
 EX_EXCEPTION(sig_segv);
 EX_EXCEPTION(sig_term);
 EX_EXCEPTION(sig_trap);
+EX_EXCEPTION(sig_pipe);
 EX_EXCEPTION(sig_hup);
 EX_EXCEPTION(sig_break);
 EX_EXCEPTION(sig_winch);
@@ -789,6 +790,9 @@ void ex_signal_setup(void) {
 #endif
 #ifdef SIGTRAP
     ex_signal(SIGTRAP, EX_NAME(sig_trap));
+#endif
+#ifdef SIGPIPE
+	ex_signal(SIGPIPE, EX_NAME(sig_pipe));
 #endif
 #endif
 

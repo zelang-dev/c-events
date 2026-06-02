@@ -441,15 +441,10 @@ static void *thrd_worker_thread(param_t args) {
 		case ssl_create_self_req:
 			pkey = EVP_PKEY_new();
 			if (no_error = generate_pkey_ex(pkey, 4096, EVP_PKEY_RSA)) {
-				char buf[1024] = {0}, buf1[64] = {0};
+				char buf[1024] = {0};
 				const char *name = events_hostname();
-				u_saddr_t dst;
 				no_error = false;
-				memset(&dst.storage, 0, sizeof(dst.storage));
-				async_inet_pton(AF_INET6, name, &dst.sin6, sizeof(dst.sin6), 1);
-				getnameinfo((const struct sockaddr *)&dst.sin6, sizeof(dst.sin6),
-					buf1, sizeof(buf1), null, 0, NI_NUMERICHOST);
-				snprintf(buf, sizeof(buf), "IP.1:%s, IP.2:127.0.0.1, DNS.1:%s, DNS.2:localhost", buf1, name);
+				snprintf(buf, sizeof(buf), "IP.1:127.0.0.1, IP.2:::1, DNS.1:%s, DNS.2:localhost", name);
 				if ((x509 = x509_self_req(pkey, NULL, NULL, name, buf, (long)events_now()))) {
 					no_error = create_self_ex(pkey, x509);
 					X509_free(x509);
@@ -918,7 +913,7 @@ int tls_socket_set(struct sockaddr *sa, char *host, int backlog, int protocol) {
 	if (!str_is_empty(host))
 		url = str_parseip((char *)host, (uint32_t *)&err, &rport, true);
 
-	if (str_is_empty(host) || (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0,::1", url)))
+	if (str_is_empty(host) || (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0", url)))
 		url = (char *)events_hostname();
 
 	if (!is_empty(url) && (server = async_socket(sa, url, backlog, protocol)) > 0) {
@@ -937,7 +932,7 @@ int tls_bind(const char *host, int backlog) {
 	fds_t server;
 	int err = 0, port = 0;
 	char *url = str_parseip((char *)host, (uint32_t *)&err, &port, true);
-	if (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0,::1", url))
+	if (!is_empty(url) && str_has("localhost,127.0.0.1,0.0.0.0", url))
 		url = (char *)events_hostname();
 
 	if (!is_empty(url) && (server = async_bind(url, port, backlog, true)) > 0) {

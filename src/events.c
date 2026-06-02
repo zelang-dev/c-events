@@ -287,14 +287,6 @@ int events_init(int max_fd) {
 
 	sys_event.gc = array();
 	deque_init(sys_event.local[0], sys_event.queue_size);
-#if !defined(_WIN32)
-	struct sigaction sa;
-
-	/* Ignore SIGPIPE */
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = SIG_IGN;
-	sigaction(SIGPIPE, &sa, NULL);
-#endif
 	return 0;
 }
 
@@ -2068,10 +2060,7 @@ static void _os_guarded(param_t args) {
 	guarded_func_t handlerFunc = (guarded_func_t)$shift(args).func;
 	defer_cb cleanupFunc = (defer_cb)$shift(args).func;
 	guard {
-		if (!is_empty(cleanupFunc) && args->object)
-			fence(args->object, cleanupFunc);
-		else if (!is_empty(cleanupFunc))
-			defer(cleanupFunc, args->object);
+		defer(cleanupFunc, args->object);
 		handlerFunc(args);
 	} guarded;
 }

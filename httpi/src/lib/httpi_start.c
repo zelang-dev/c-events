@@ -78,11 +78,15 @@ static int http_check_acl(http_ini_t *phys_ctx, const u_saddr_t *sa) {
 
 static void httpi_cleanup(void_t ptr) {
 	http_t *conn = (http_t *)ptr;
-	//recover_cb recover = (recover_cb)conn;
 	string_t err = guard_message();
 	if (is_type(conn, DATA_HTTPINFO)) {
+		int fd = socket2fd(conn->client->sock);
+		if (!str_is_empty(err) && guard_caught("sig_pipe")) {
+			debug_info("Warning: SIGPIPE on socket #%d caught!"CLR_LN, fd);
+		}
+
 		events_del(conn->client->sock);
-		tls_closer(socket2fd(conn->client->sock));
+		tls_closer(fd);
 		if (!is_empty(conn->req.buf))
 			conn->req.buf = free_ex(conn->req.buf);
 
@@ -90,14 +94,12 @@ static void httpi_cleanup(void_t ptr) {
 			conn->client = free_ex(conn->client);
 
 		http_free(conn);
+		conn = null;
+		ptr = null;
 	}
 
-	if (!str_is_empty(err)) {
-		cerr("Exception: %s"CLR_LN, err);
-		//if (recover && guard_caught(err)) {
-		//	recover(err);
-		//}
-	}
+	if (!str_is_empty(err) && !str_is(err, "sig_pipe") && guard_caught(err))
+		cerr("Exception: %s caught, closing normally!"CLR_LN, err);
 }
 
 static void http_handler(opaque_t connected) {
@@ -117,8 +119,6 @@ static void http_handler(opaque_t connected) {
 		/* Send FIN to the client */
 		if ((conn->status >= 400 || conn->code >= 400) && !conn->client->has_ssl)
 			shutdown(socket2fd(conn->client->sock), SHUT_RDWR);
-		else
-			delay(200);
 	}
 }
 
