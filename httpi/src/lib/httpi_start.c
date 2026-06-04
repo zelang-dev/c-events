@@ -81,11 +81,13 @@ static void httpi_cleanup(void_t ptr) {
 	string_t err = guard_message();
 	if (is_type(conn, DATA_HTTPINFO)) {
 		int fd = socket2fd(conn->client->sock);
-		if (!str_is_empty(err) && guard_caught("sig_pipe")) {
-			debug_info("Warning: SIGPIPE on socket #%d caught!"CLR_LN, fd);
+		if (!str_is_empty(err)) {
+			events_del(conn->client->sock);
+			if (guard_caught("sig_pipe")) {
+				debug_info("Warning: SIGPIPE on socket #%d caught!"CLR_LN, fd);
+			}
 		}
 
-		events_del(conn->client->sock);
 		tls_closer(fd);
 		if (!is_empty(conn->req.buf))
 			conn->req.buf = free_ex(conn->req.buf);
@@ -117,8 +119,8 @@ static void http_handler(opaque_t connected) {
 		conn->action = HTTP_REQUEST;
 		http_process_connection(conn->ctx, conn);
 		/* Send FIN to the client */
-		if ((conn->status >= 400 || conn->code >= 400) && !conn->client->has_ssl)
-			shutdown(socket2fd(conn->client->sock), SHUT_RDWR);
+		if (!conn->client->has_ssl)
+			shutdown(socket2fd(conn->client->sock), SHUT_WR);
 	}
 }
 

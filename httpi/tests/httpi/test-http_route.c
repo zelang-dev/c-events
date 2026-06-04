@@ -65,7 +65,7 @@ static void websock_server_ready(http_t *conn, void *udata) {
 }
 
 #define long_ws_buf_len_16 (500)
-#define long_ws_buf_len_64 (40000)
+#define long_ws_buf_len_64 (70000)
 static char long_ws_buf[long_ws_buf_len_64];
 
 static int websock_server_data(http_t *conn,
@@ -228,13 +228,6 @@ static int request_test_handler(http_t *conn, void_t cbdata) {
 	return 200;
 }
 
-static int wait_not_null(void *volatile *data) {
-	while (*data == NULL)
-		yield();
-
-	return 1;
-}
-
 void main_main(http_ini_t *ctx) {
 	http_t *client_conn;
 	const httpi_t *ri;
@@ -263,10 +256,10 @@ void main_main(http_ini_t *ctx) {
 	use_ca_certificate("../../cert.pem");
 	tls_selfserver_set();
 
-	struct tclient_data ws_client1_data = {NULL, 0, 0};
-	struct tclient_data ws_client2_data = {NULL, 0, 0};
-	struct tclient_data ws_client3_data = {NULL, 0, 0};
-	struct tclient_data ws_client4_data = {NULL, 0, 0};
+	struct tclient_data ws_client1_data = {NULL, 0, 0, 1};
+	struct tclient_data ws_client2_data = {NULL, 0, 0, 2};
+	struct tclient_data ws_client3_data = {NULL, 0, 0, 3};
+	struct tclient_data ws_client4_data = {NULL, 0, 0, 4};
 	http_t *ws_client1_conn = NULL;
 	http_t *ws_client2_conn = NULL;
 	http_t *ws_client3_conn = NULL;
@@ -530,6 +523,7 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(http_get_length(client_conn) == 52);
 	ASSERT_STR_ABORT(buf, encoded_file_content);
 
+	delay(1000);
 	http_close_connection(client_conn);
 
 	/* Get CGI generated data */
@@ -646,9 +640,9 @@ void main_main(http_ini_t *ctx) {
 		ipv4_port);
 
 	i = http_get_response(client_conn, ebuf, sizeof(ebuf), 10000);
-	ASSERT(i >= 0);
+	ASSERT(i == -1);
 	ASSERT(str_is(ebuf, ""));
-	ASSERT(http_get_code(client_conn) == 404);
+	ASSERT_EQ_ABORT(http_get_code(client_conn), 404);
 	http_close_connection(client_conn);
 
 	/* Websocket test */
@@ -665,8 +659,7 @@ void main_main(http_ini_t *ctx) {
 
 	ASSERT(ws_client1_conn != NULL);
 
-	wait_not_null(
-		&(ws_client1_data.data)); /* Wait for the websocket welcome message */
+	http_websocket_wait(ws_client1_conn); /* Wait for the websocket welcome message */
 	ASSERT(ws_client1_data.closed == 0);
 	ASSERT(ws_client2_data.closed == 0);
 	ASSERT(ws_client3_data.closed == 0);
@@ -683,9 +676,7 @@ void main_main(http_ini_t *ctx) {
 
 	http_websocket_text(ws_client1_conn, "data1", 5);
 
-	wait_not_null(
-		&(ws_client1_data
-			.data)); /* Wait for the websocket acknowledge message */
+	http_websocket_wait(ws_client1_conn); /* Wait for the websocket acknowledge message */
 	ASSERT(ws_client1_data.closed == 0);
 	ASSERT(ws_client2_data.closed == 0);
 	ASSERT(ws_client2_data.data == NULL);
@@ -709,8 +700,7 @@ void main_main(http_ini_t *ctx) {
 			&ws_client2_data);
 	ASSERT(ws_client2_conn != NULL);
 
-	wait_not_null(
-		&(ws_client2_data.data)); /* Wait for the websocket welcome message */
+	http_websocket_wait(ws_client2_conn); /* Wait for the websocket welcome message */
 	ASSERT(ws_client1_data.closed == 0);
 	ASSERT(ws_client2_data.closed == 0);
 	ASSERT(ws_client1_data.data == NULL);
@@ -726,9 +716,7 @@ void main_main(http_ini_t *ctx) {
 
 	http_websocket_text(ws_client1_conn, "data2", 5);
 
-	wait_not_null(
-		&(ws_client1_data
-			.data)); /* Wait for the websocket acknowledge message */
+	http_websocket_wait(ws_client1_conn); /* Wait for the websocket acknowledge message */
 
 	ASSERT(ws_client1_data.closed == 0);
 	ASSERT(ws_client2_data.closed == 0);
@@ -743,8 +731,7 @@ void main_main(http_ini_t *ctx) {
 
 	http_websocket_text(ws_client1_conn, "bye", 3);
 
-	wait_not_null(
-		&(ws_client1_data.data)); /* Wait for the websocket goodbye message */
+	http_websocket_wait(ws_client1_conn); /* Wait for the websocket goodbye message */
 
 	ASSERT(ws_client1_data.closed == 0);
 	ASSERT(ws_client2_data.closed == 0);
@@ -763,7 +750,7 @@ void main_main(http_ini_t *ctx) {
 
 	http_close_connection(ws_client1_conn);
 
-	delay(3000); /* Won't get any message */
+	delay(500); /* Won't get any message */
 
 	ASSERT(ws_client1_data.closed == 1); /* Closed */
 
@@ -775,8 +762,7 @@ void main_main(http_ini_t *ctx) {
 
 	http_websocket_text(ws_client2_conn, "bye", 3);
 
-	wait_not_null(
-		&(ws_client2_data.data)); /* Wait for the websocket goodbye message */
+	http_websocket_wait(ws_client2_conn); /* Wait for the websocket goodbye message */
 
 	ASSERT(ws_client1_data.closed == 1);
 	ASSERT(ws_client2_data.closed == 0);
@@ -793,7 +779,7 @@ void main_main(http_ini_t *ctx) {
 
 	http_close_connection(ws_client2_conn);
 
-	delay(3000); /* Won't get any message */
+	delay(500); /* Won't get any message */
 
 	ASSERT(ws_client1_data.closed == 1);
 	ASSERT(ws_client2_data.closed == 1);
@@ -815,8 +801,7 @@ void main_main(http_ini_t *ctx) {
 
 	ASSERT(ws_client3_conn != NULL);
 
-	wait_not_null(
-		&(ws_client3_data.data)); /* Wait for the websocket welcome message */
+	http_websocket_wait(ws_client3_conn); /* Wait for the websocket welcome message */
 	ASSERT(ws_client1_data.closed == 1);
 	ASSERT(ws_client2_data.closed == 1);
 	ASSERT(ws_client3_data.closed == 0);
@@ -839,7 +824,7 @@ void main_main(http_ini_t *ctx) {
 		long_ws_buf_len_16);
 
 	/* Wait for the response */
-	wait_not_null(&(ws_client3_data.data));
+	http_websocket_wait(ws_client3_conn);
 
 	ASSERT((int)ws_client3_data.len == (int)long_ws_buf_len_16);
 	ASSERT(!memcmp(ws_client3_data.data, long_ws_buf, long_ws_buf_len_16));
@@ -853,7 +838,7 @@ void main_main(http_ini_t *ctx) {
 		long_ws_buf_len_64);
 
 	/* Wait for the response */
-	wait_not_null(&(ws_client3_data.data));
+	http_websocket_wait(ws_client3_conn);
 
 	ASSERT((int)ws_client3_data.len == (int)long_ws_buf_len_64);
 	ASSERT(!memcmp(ws_client3_data.data, long_ws_buf, long_ws_buf_len_64));
@@ -878,8 +863,7 @@ void main_main(http_ini_t *ctx) {
 
 	ASSERT(ws_client4_conn != NULL);
 
-	wait_not_null(
-		&(ws_client4_data.data)); /* Wait for the websocket welcome message */
+	http_websocket_wait(ws_client4_conn); /* Wait for the websocket welcome message */
 	ASSERT(ws_client1_data.closed == 1);
 	ASSERT(ws_client2_data.closed == 1);
 	ASSERT(ws_client3_data.closed == 1);

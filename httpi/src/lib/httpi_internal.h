@@ -491,6 +491,14 @@ struct http_ini_s {
 	atomic_spinlock nonce_mutex;
 };
 
+struct httpi_ws_s {
+	data_types type;
+	volatile bool is_data_ready;
+	ws_data_cb data_handler;
+	ws_close_cb close_handler;
+	void_t callback_data;
+};
+
 struct httpi_s {
 	http_protocol_type proto;
 	/* Total bytes sent to client */
@@ -630,6 +638,7 @@ struct http_s {
 	http_ini_t *ctx;
 	struct ini_domain_s *domain;
 	httpi_t req;
+	httpi_ws_t ws;
 	http2_t http2;
 	/* The protocol */
 	char protocol[16];
@@ -969,6 +978,8 @@ void discard_unread_request_data(http_t *conn);
  * attacks by removing '..', excessive '/' and '\' characters */
 void remove_double_dots_slashes(char *inout);
 int set_throttle(string_t spec, uint32_t remote_ip, string_t uri);
+void close_socket_gracefully(http_t *conn);
+void close_connection(http_t *conn);
 
 /* Used to free the resources associated with a context. */
 void http_free_ini(http_ini_t *ctx);

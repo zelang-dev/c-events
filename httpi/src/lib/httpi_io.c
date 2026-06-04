@@ -1603,7 +1603,7 @@ int get_request_response(http_t *conn, char *ebuf, size_t ebuf_len, int *err) {
 	return 1;
 }
 
-static void close_socket_gracefully(http_t *conn) {
+void close_socket_gracefully(http_t *conn) {
 	struct linger linger;
 	int error_code = 0;
 	int linger_timeout = -2;
@@ -1680,7 +1680,7 @@ static void close_socket_gracefully(http_t *conn) {
 	}
 }
 
-static void close_connection(http_t *conn) {
+void close_connection(http_t *conn) {
 	if (is_empty(conn) || is_empty(conn->client)
 		|| conn->client->sock == INVALID_SOCKET)
 		return;
@@ -1688,6 +1688,11 @@ static void close_connection(http_t *conn) {
 	atomic_lock(&conn->ctx->nonce_mutex);
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
+	if (conn->ctx->http_type == HTTP_INI_WEBSOCKET && !is_empty(conn->ws.close_handler)) {
+		conn->ws.close_handler(conn, conn->ws.callback_data);
+	}
+
+	conn->req.user_data = null;
 	close_socket_gracefully(conn);
 	/* Now we know that our FIN is ACK-ed, safe to close */
 	tls_closer(conn->client->sock);
@@ -1712,7 +1717,6 @@ void http_close_connection(http_t *conn) {
 		/* client context: loops must end */
 		conn->ctx->status = HTTP_STATUS_STOPPING;
 		conn->req.must_close = 1;
-		task_set_canceled(conn->ctx->worker_taskid);
 	}
 
 	close_connection(conn);
@@ -2167,13 +2171,6 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 
 		if (ebuf[0] == '\0') {
 			uri = http_get_path(conn);
-			if (str_is_empty(uri)) {
-				trace; cout("- %p, %s, %s, %s, %d = %d <--"CLR_LN, conn, conn->req.buf,
-					conn->req.local_uri, conn->uri, conn->action, conn->req.request_len);
-				parse_http(conn->action, conn, conn->req.buf);
-				trace; cout("- %p, %s, %s, %d = %d <--"CLR_LN, conn, conn->url_to, conn->path, conn->action, conn->req.request_len);
-				uri = http_get_path(conn);
-			}
 			uri_type = http_get_uri_type(uri);
 			switch (uri_type) {
 				case URI_TYPE_ASTERISK:

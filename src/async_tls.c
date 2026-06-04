@@ -519,14 +519,14 @@ X509 *x509_self_req(EVP_PKEY *pkey, const char *country, const char *org,
 	/* Set the country code and common name. */
 	X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (const unsigned char *)(country == NULL ? "US" : country), -1, -1, 0);
 	X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (const unsigned char *)(org == NULL ? "selfSigned" : org), -1, -1, 0);
-	//X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char *)(domain == NULL ? "localhost" : domain), -1, -1, 0);
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char *)(domain == NULL ? "localhost" : domain), -1, -1, 0);
 
 	/* Its self signed so set the issuer name to be the same as the
 	 * subject. */
 	X509_set_issuer_name(x509, name);
 
 	/* Add various extensions: standard extensions */
-	add_ext(x509, NID_basic_constraints, "critical,CA:FALSE");
+	add_ext(x509, NID_basic_constraints, "critical,CA:TRUE");
 	add_ext(x509, NID_key_usage, "critical,keyCertSign,cRLSign,digitalSignature,keyEncipherment");
 
 	/* This is a typical use for request extensions: requesting a value for

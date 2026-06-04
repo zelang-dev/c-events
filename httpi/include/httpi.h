@@ -42,6 +42,7 @@ typedef struct h2_header h2_header_t;
 typedef struct form_data_handler_s form_data_handler_t;
 typedef struct http_server_port http_server_port_t;
 typedef struct httpi_s httpi_t;
+typedef struct httpi_ws_s httpi_ws_t;
 
 enum http_dbg {
 	/* No error messages are generated at all */
@@ -508,6 +509,7 @@ C_API int http_websocket_binary(http_t *conn, const_t data, size_t dataLen);
 C_API int http_websocket_ping(http_t *conn, string_t data, size_t dataLen);
 C_API int http_websocket_pong(http_t *conn, string_t data, size_t dataLen);
 C_API int http_websocket_close(http_t *conn, string_t data, size_t dataLen);
+C_API void http_websocket_wait(http_t *conn);
 
 /*
  * Use to write as a client to a websocket server. The function returns -1 if an error occurs,
@@ -521,8 +523,9 @@ C_API int http_websocket_client_write(http_t *conn, websocket_type opcode, strin
  * - port: server port
  * - use_ssl: make a secure connection to server
  * - path: server path you are trying to connect to, i.e. if connection to localhost/app, path should be "/app"
- * - origin: value of the Origin HTTP header
+ * - origin: value of the `Origin:` HTTP header
  * - data_func: callback that should be used when data is received from the server
+ * - close_func: callback that should be used when close is received from the server
  * - user_data: user supplied argument
  *
  *  Return:

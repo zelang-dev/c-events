@@ -75,7 +75,7 @@ static int http_send_websocket_handshake(http_t *conn, string_t websock_key) {
 }
 
 /* Reads from a websocket connection. */
-void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handler, void_t callback_data) {
+static void http_read_websocket(http_t *conn, ws_data_cb ws_data_handler, void_t callback_data) {
 	/* Pointer to the beginning of the portion of the incoming websocket
 	 * message queue.
 	 * The original websocket upgrade request is never removed, so the queue
@@ -103,7 +103,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 	/* Variables used for connection monitoring */
 	double timeout = -1.0;
 
-	if (ctx == NULL || conn == NULL) return;
+	if (conn == NULL) return;
 
 	if (conn->domain->config[ENABLE_WEBSOCKET_PING_PONG]) {
 		enable_ping_pong = str_is_case(conn->domain->config[ENABLE_WEBSOCKET_PING_PONG], "yes");
@@ -122,11 +122,12 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 		conn->req.remote_addr,
 		conn->req.remote_port);
 	conn->req.in_websocket_handling = 1;
-	task_name("websocket #%d", task_id());
+	if (conn->ws.type == DATA_WS_SERVER)
+		task_name("Websocket server #%d", task_id());
 
 	/* Loop continuously, reading messages from the socket, invoking the
 	 * callback, and waiting repeatedly until an error occurs. */
-	while (ctx->status == HTTP_STATUS_RUNNING && (!conn->req.must_close)) {
+	while (conn->ctx->status == HTTP_STATUS_RUNNING && !conn->req.must_close) {
 		header_len = 0;
 		if (conn->req.data_len < conn->req.request_len) {
 			debug_info("%s: websocket error: data len less than request len, closing connection"CLR_LN, __func__);
@@ -342,6 +343,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 							callback_data)) {
 							exit_by_callback = 1;
 						}
+					conn->ws.is_data_ready = true;
 				}
 			}
 
@@ -370,11 +372,13 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 			/* Read from the socket into the next available location in the
 			 * message queue. */
 			n = tls_reader(socket2fd(conn->client->sock), conn->req.buf + conn->req.data_len, conn->req.buf_size - conn->req.data_len);
-			if (n <= 0) {
+			if (n < 0) {
 				/* Error, no bytes read */
-				debug_info("PULL from %s:%u failed"CLR_LN,
+				debug_info("PULL from %s:%u failed, error: %s"CLR_LN,
 					conn->req.remote_addr,
-					conn->req.remote_port);
+					conn->req.remote_port, (conn->client->has_ssl
+						? ERR_reason_error_string(ERR_get_error())
+						: ex_strerror(os_geterror())));
 				break;
 			}
 
@@ -383,7 +387,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				/* Reset open PING count */
 				ping_count = 0;
 			} else {
-				if (ctx->status == HTTP_STATUS_RUNNING 	&& (!conn->req.must_close)) {
+				if (conn->ctx->status == HTTP_STATUS_RUNNING && (!conn->req.must_close)) {
 					if (ping_count > MAX_UNANSWERED_PING) {
 						/* Stop sending PING */
 						debug_info("Too many (%i) unanswered ping from %s:%u "
@@ -412,6 +416,7 @@ void http_read_websocket(http_ini_t *ctx, http_t *conn, ws_data_cb ws_data_handl
 				/* TODO: get timeout def */
 			}
 		}
+		yield_active_info();
 	}
 
 	/* Leave data processing loop */
@@ -530,6 +535,16 @@ void http_websocket_request(http_ini_t *ctx,
 		}
 	}
 
+	/* Step 4: Check if there is a responsible websocket handler. */
+	if (!is_callback_resource) {
+		/* There is no callback, and Lua is not responsible either. */
+		/* Reply with a 404 Not Found. We are still at a standard
+		 * HTTP request here, before the websocket handshake, so
+		 * we can still send standard HTTP error replies. */
+		http_error(conn, 404, "%s", "Not found");
+		return;
+	}
+
 	/* Step 5: The websocket connection has been accepted */
 	if (!http_send_websocket_handshake(conn, websock_key)) {
 		http_error(conn, 500, "%s", "Websocket handshake failed");
@@ -538,12 +553,15 @@ void http_websocket_request(http_ini_t *ctx,
 
 	/* Step 6: Call the ready handler */
 	if (is_callback_resource) {
-		if (ws_ready_handler != NULL) ws_ready_handler(conn, cbData);
+		if (ws_ready_handler != NULL)
+			ws_ready_handler(conn, cbData);
 	}
 
 	/* Step 7: Enter the read loop */
-	if (is_callback_resource)
-		http_read_websocket(ctx, conn, ws_data_handler, cbData);
+	if (is_callback_resource) {
+		conn->ws.type = DATA_WS_SERVER;
+		http_read_websocket(conn, ws_data_handler, cbData);
+	}
 
 	/* Step 8: Close the deflate & inflate buffers */
 	if (conn->req.websocket_deflate_initialized) {
@@ -714,35 +732,37 @@ FORCEINLINE int http_websocket_continuation(http_t *conn, string_t data, size_t 
 	return http_websocket_client_write(conn, WS_OPS_CONTINUATION, data, dataLen);
 }
 
-struct websocket_client_thread_data {
-	http_t *conn;
-	ws_data_cb data_handler;
-	ws_close_cb close_handler;
-	void_t callback_data;
-};
+FORCEINLINE void http_websocket_wait(http_t *conn) {
+	delay(5);
+	while (is_type(conn, DATA_HTTPINFO) && !conn->ws.is_data_ready)
+		yield_active_info();
 
-static void_t websocket_client_thread(param_t data) {
-	struct websocket_client_thread_data *cdata = (struct websocket_client_thread_data *)data->object;
-	http_ini_t *ctx;
-	http_t *conn;
+	conn->ws.is_data_ready = false;
+}
 
-	if (!is_empty(cdata) && !is_empty(conn = cdata->conn) && !is_empty(ctx = conn->ctx)) {
-		ctx->status = HTTP_STATUS_RUNNING;
-		ctx->worker_taskid = task_id();
-		task_name("ws-client #%d", ctx->worker_taskid);
-
-		http_read_websocket(ctx, conn, cdata->data_handler, cdata->callback_data);
-		debug_info("%s", "Websocket client task exited"CLR_LN);
-		if (cdata->close_handler != NULL) {
-			cdata->close_handler(cdata->conn, cdata->callback_data);
-		}
-
-		/* The websocket_client context has only this task. If it runs out,
-		set the stop_flag. */
-		ctx->status = HTTP_STATUS_TERMINATED;
+static void websocket_client_thread_close(void_t data) {
+	http_t *conn = (http_t *)data;
+	if (is_type(conn, DATA_HTTPINFO)) {
+		close_connection(conn);
 	}
 
-	return free_ex(cdata);
+	string_t err = guard_message();
+	if (!str_is_empty(err) && guard_caught(err))
+		cerr("Exception: %s caught, closing normally!"CLR_LN, err);
+}
+
+static void websocket_client_thread(opaque_t data) {
+	http_t *conn = (http_t *)data->object;
+	http_ini_t *ctx;
+
+	if (is_type(conn, DATA_HTTPINFO)) {
+		ctx->status = HTTP_STATUS_RUNNING;
+		ctx->worker_taskid = task_id();
+		conn->ws.type = DATA_WS_CLIENT;
+		task_name("Websocket client #%d", ctx->worker_taskid);
+		http_read_websocket(conn, conn->ws.data_handler, conn->ws.callback_data);
+		debug_info("%s", "Websocket client exited"CLR_LN);
+	}
 }
 
 static void generate_websocket_magic(string magic25) {
@@ -759,18 +779,9 @@ static void generate_websocket_magic(string magic25) {
 }
 
 static http_t *http_websocket_connect_impl(struct client_options *client_options,
-	int use_ssl,
-	string error_buffer,
-	size_t error_buffer_size,
-	string_t path,
-	string_t origin,
-	string_t extensions,
-	ws_data_cb data_func,
-	ws_close_cb close_func,
-	void_t user_data) {
+	int use_ssl, string error_buffer, size_t error_buffer_size, string_t path,
+	string_t origin, string_t extensions, ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
 	http_t *conn = NULL;
-
-	struct websocket_client_thread_data *thread_data;
 	char magic[32] = {0};
 	generate_websocket_magic(magic);
 
@@ -911,18 +922,11 @@ static http_t *http_websocket_connect_impl(struct client_options *client_options
 		return NULL;
 	}
 
-	thread_data = (struct websocket_client_thread_data *)calloc(
-		1, sizeof(struct websocket_client_thread_data));
-	if (!thread_data) {
-		debug_info("%s\r\n", "Out of memory");
-		http_close_connection(conn);
-		return NULL;
-	}
-
-	thread_data->conn = conn;
-	thread_data->data_handler = data_func;
-	thread_data->close_handler = close_func;
-	thread_data->callback_data = user_data;
+	conn->ws.type = DATA_WS_CLIENT;
+	conn->ws.is_data_ready = false;
+	conn->ws.data_handler = data_func;
+	conn->ws.close_handler = close_func;
+	conn->ws.callback_data = user_data;
 
 	/* Now upgrade to ws/wss client context */
 	conn->ctx->user_data = user_data;
@@ -932,41 +936,19 @@ static http_t *http_websocket_connect_impl(struct client_options *client_options
 	/* Start a ~threaded~ `task` to read the websocket client connection
 	 * This `task` will automatically stop when http_disconnect is
 	 * called on the client connection */
-	if (go(websocket_client_thread, 1, thread_data) == TASK_ERRED) {
-		free(thread_data);
-		http_close_connection(conn);
-		conn = NULL;
-		debug_info("%s", "Websocket client connect task could not be started\r\n");
-	}
-
+	go_guard(Kb(48), websocket_client_thread, websocket_client_thread_close, conn);
 	return conn;
 }
 
-http_t *http_websocket_connect(string_t host,
-	int port,
-	int use_ssl,
-	string_t path,
-	string_t origin,
-	ws_data_cb data_func,
-	ws_close_cb close_func,
-	void_t user_data) {
+http_t *http_websocket_connect(string_t host, int port, int use_ssl,
+	string_t path, string_t origin, ws_data_cb data_func, ws_close_cb close_func, void_t user_data) {
 	struct client_options client_options;
 	memset(&client_options, 0, sizeof(client_options));
 	client_options.host = host;
 	client_options.port = port;
 
-	string error_buffer = task_erred_str();
-	size_t error_buffer_size = ERR_BUF;
-	return http_websocket_connect_impl(&client_options,
-		use_ssl,
-		error_buffer,
-		error_buffer_size,
-		path,
-		origin,
-		NULL,
-		data_func,
-		close_func,
-		user_data);
+	return http_websocket_connect_impl(&client_options, use_ssl,
+		task_erred_str(), ERR_BUF, path, origin, NULL, data_func, close_func, user_data);
 }
 
 http_t *http_websocket_connect_secure(struct client_options *client_options, string_t path, string_t origin,
