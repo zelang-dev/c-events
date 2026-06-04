@@ -16,4 +16,4 @@ foreach (TARGET ${TARGET_LIST})
     add_test(NAME ${TARGET} COMMAND ${TARGET} WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endforeach()
 
-add_subdirectory(httpi)
+add_subdirectory(units)

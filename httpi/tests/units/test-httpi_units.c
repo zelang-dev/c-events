@@ -3,9 +3,9 @@
 #include <openssl/md5.h>
 
 #if defined(_WIN32)
-#   define TESTDIR "../../httpi/tests/httpi"
+#   define TESTDIR "../../httpi/tests/units"
 #else
-#   define TESTDIR "../httpi/tests/httpi"
+#   define TESTDIR "../httpi/tests/units"
 #endif
 
 static string_t const mon_short_names[] = {

@@ -2,9 +2,9 @@
 #include <openssl/md5.h>
 
 #if defined(_WIN32)
-#   define TESTDIR "../../httpi/tests/httpi"
+#   define TESTDIR "../../httpi/tests/units"
 #else
-#   define TESTDIR "../httpi/tests/httpi"
+#   define TESTDIR "../httpi/tests/units"
 #endif
 
 void check_func(int condition, string_t cond_txt, unsigned line);
@@ -12,7 +12,8 @@ void check_func(int condition, string_t cond_txt, unsigned line);
 static int s_total_tests = 0;
 static int s_failed_tests = 0;
 
-void check_func(int condition, string_t cond_txt, unsigned line) {
+void check_func(int condition, string_t cond_txt, unsigned line)
+{
 	++s_total_tests;
 	if (!condition) {
 		printf("Fail on line %d: [%s]\n", line, cond_txt);
@@ -25,18 +26,30 @@ void check_func(int condition, string_t cond_txt, unsigned line) {
 		check_func(expr, #expr, __LINE__);                                     \
 	} while (0)
 
+#define REQUIRE(expr)                                                          \
+	do {                                                                       \
+		check_func(expr, #expr, __LINE__);                                     \
+		if (!(expr)) {                                                         \
+			exit(EXIT_FAILURE);                                                \
+		}                                                                      \
+	} while (0)
+
 #define HTTP_PORT "8080"
+#ifdef NO_SSL
+#define HTTPS_PORT HTTP_PORT
+#define LISTENING_ADDR "127.0.0.1:" HTTP_PORT
+#else
 #define HTTP_REDIRECT_PORT "8088"
 #define HTTPS_PORT "8443"
-#define LISTENING_ADDR "localhost:" HTTP_PORT
+#define LISTENING_ADDR                                                         \
+	"127.0.0.1:" HTTP_PORT ",127.0.0.1:" HTTP_REDIRECT_PORT "r"                \
+	",127.0.0.1:" HTTPS_PORT "s"
+#endif
 
 static char *read_file(string_t path, int *size) {
-	FILE *fp;
-	struct stat st;
 	char *data = fs_readfile(path);
 	ASSERT(data != NULL);
 	*size = (int)fs_filesize(path);
-	ASSERT(strlen(data) == (size_t)*size);
 	return data;
 }
 
@@ -44,6 +57,7 @@ static long fetch_data_size = 1024 * 1024;
 static char *fetch_data;
 static string_t inmemory_file_data = "hi there";
 static string_t upload_filename = "upload_test.txt";
+static string_t upload_filename2 = "upload_test2.txt";
 static string_t upload_ok_message = "upload successful";
 
 static string_t open_file_cb(http_t *conn, string_t path, size_t *size) {
@@ -172,125 +186,121 @@ static int log_message_cb(const http_t *conn, string_t msg) {
 }
 
 static string_t OPTIONS[] = {
-	"document_root",
-	".",
-	"listening_ports",
-	LISTENING_ADDR,
-	"enable_keep_alive",
-	"yes",
-#ifndef NO_SSL
-	/*"ssl_certificate",
-	"../resources/ssl_cert.pem",*/
-#endif
-	NULL,
+    "document_root",
+    ".",
+    "listening_ports",
+    LISTENING_ADDR,
+    "enable_keep_alive",
+    "yes",
+    /*"ssl_certificate",
+    "../resources/ssl_cert.pem",*/
+    NULL,
 };
 
-static int websocket_data_handler(const http_t *conn, int flags, char *data, size_t data_len, void *cbdata) {
-	(void)conn;
-	(void)flags;
-	(void)data;
-	(void)data_len;
-	(void)cbdata;
-	return 200;
-}
-
 void main_main(http_ini_t *ctx) {
-	bool use_ssl = false;
-	http_t *conn;
-	int port;
-
-	use_ca_certificate("../../cert.pem");
+	use_ca_certificate("cert.pem");
 	tls_selfserver_set();
 
-	if (use_ssl)
-		port = atoi(HTTPS_PORT);
-	else
-		port = atoi(HTTP_PORT);
+	http_t *conn;
+	static string_t boundary = "OOO___MY_BOUNDARY___OOO";
+	char buf[20], *file2_data;
+	int file2_len;
+	char *file_data, *post_data;
+	int file_len, post_data_len;
 
-	/* Try to connect to our own server */
-	/* Invalid port test */
-	conn = http_websocket_connect("localhost",
-		0,
-		use_ssl,
-		"/",
-		"http://localhost",
-		(ws_data_cb)websocket_data_handler,
-		NULL,
-		NULL);
-	ASSERT(conn == NULL);
+	/* Upload one file */
+	ASSERT((file_data = read_file("./passfile", &file_len)) != NULL);
+	post_data = mem_printf(&post_data_len,
+		"--%s\r\n"
+		"Content-Disposition: form-data; "
+		"name=\"file\"; "
+		"filename=\"%s\"\r\n\r\n"
+		"%.*s\r\n"
+		"--%s--\r\n",
+		boundary,
+		upload_filename,
+		file_len,
+		file_data,
+		boundary);
+	ASSERT(post_data_len > 0);
 
-	/* Should succeed, the default `HttPi` server should complete the handshake */
-	conn = http_websocket_connect("localhost",
-		port,
-		use_ssl,
-		"/",
-		"http://localhost",
-		(ws_data_cb)websocket_data_handler,
-		NULL,
-		NULL);
-	ASSERT(conn != NULL);
+	/* TODO (bel): ... */
+	ASSERT((conn = http_download("localhost", atoi(HTTP_PORT), 0,
+		"POST /upload?1 HTTP/1.1\r\n"
+		"Content-Length: %d\r\n"
+		"Content-Type: multipart/form-data; "
+		"boundary=%s\r\n\r\n"
+		"%.*s", post_data_len, boundary,
+		post_data_len, post_data)) != NULL);
+	ASSERT(http_read(conn, buf, sizeof(buf)) == (int)strlen(upload_ok_message));
+	ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);
 	http_close_connection(conn);
 
-	/* Try an external server test */
-	port = 80;
-	if (use_ssl) {
-		port = 443;
-	}
+	/* Upload two files */
+	ASSERT((file_data = read_file("./CMakeLists.txt", &file_len)) != NULL);
+	ASSERT((file2_data = read_file("./hello_gz_unzipped.txt", &file2_len)) != NULL);
+	post_data = mem_printf(&post_data_len,
+		/* First file */
+		"--%s\r\n"
+		"Content-Disposition: form-data; "
+		"name=\"file2\"; "
+		"filename=\"%s\"\r\n\r\n"
+		"%.*s\r\n"
 
-	/* Not a websocket server path */
-	conn = http_websocket_connect("websocket.org",
-		port,
-		use_ssl,
-		"/",
-		"http://websocket.org",
-		(ws_data_cb)websocket_data_handler,
-		NULL,
-		NULL);
-	ASSERT(conn == NULL);
+		/* Second file */
+		"--%s\r\n"
+		"Content-Disposition: form-data; "
+		"name=\"file3\"; "
+		"filename=\"%s\"\r\n\r\n"
+		"%.*s\r\n"
 
-	/* Invalid port test */
-	conn = http_websocket_connect("echo.websocket.org",
-		0,
-		use_ssl,
-		"/",
-		"http://websocket.org",
-		(ws_data_cb)websocket_data_handler,
-		NULL,
-		NULL);
-	ASSERT(conn == NULL);
-
-	/* Should succeed, echo.websocket.org echos the data back */
-	conn = http_websocket_connect("echo.websocket.org",
-		443,
-		1,
-		"/",
-		"http://websocket.org",
-		(ws_data_cb)websocket_data_handler,
-		NULL,
-		NULL);
-	ASSERT(conn != NULL);
+		/* Final boundary */
+		"--%s--\r\n",
+		boundary, upload_filename,
+		file_len, file_data,
+		boundary, upload_filename2,
+		file2_len, file2_data,
+		boundary);
+	ASSERT(post_data_len > 0);
+	ASSERT((conn = http_download("localhost", atoi(HTTP_PORT), 0,
+		"POST /upload?2 HTTP/1.1\r\n"
+		"Content-Length: %d\r\n"
+		"Content-Type: multipart/form-data; "
+		"boundary=%s\r\n\r\n"
+		"%.*s", post_data_len, boundary,
+		post_data_len, post_data)) != NULL);
+	ASSERT(http_read(conn, buf, sizeof(buf)) == (int)strlen(upload_ok_message));
+	delay(1000);
+	ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);
 	http_close_connection(conn);
-	delay(2000);
 
+	delay(3000);
+
+	/* Stop the server */
 	http_stop(ctx);
 }
 
-TEST(http_websocket_connect) {
-	int result = 0;
-
+TEST(http_upload) {
 	http_ini_t *ctx;
 	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, NULL, server_opts(OPTIONS)), DATA_HTTP_SERVER));
-	httpi_start(ctx, main_main);
 
-	return result;
+	/* Initialize the library */
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+
+	/* Start the server */
+	httpi_start(ctx, main_main);
+	return 0;
 }
 
 TEST(list) {
 	char buffer[512];
-	FILE *f;
-	http_ini_t *ctx;
 	int i, unused, result = 0;
+
+	/* create test data */
+	fetch_data = (char *)malloc(fetch_data_size);
+	for (i = 0; i < fetch_data_size; i++) {
+		fetch_data[i] = 'a' + i % 10;
+	}
 
 #if defined(_WIN32) || defined(_WIN64)
 	unused = chdir("Debug");
@@ -298,30 +308,33 @@ TEST(list) {
 	unused = chdir(TESTDIR);
 
 	/* print headline */
-	cout("HttPi %s basic websocket test\n\n", httpi_version());
+	cout("HttPi %s upload test\n\n", httpi_version());
 	getcwd(buffer, sizeof(buffer));
 	cout("Test directory is \"%s\"\n", buffer); /* should be the "test" directory */
-	f = fopen("hello.txt", "r");
+
+	FILE *f = fopen("hello.txt", "r");
 	if (f) {
 		fclose(f);
 	} else {
 		cout("Error: Test directory does not contain hello.txt\n");
 	}
 
-	f = fopen("./test-http_websocket_connect.c", "r");
+	f = fopen("test-http_route.c", "r");
 	if (f) {
 		fclose(f);
 	} else {
-		cout("Error: Test directory does not contain test-http_websocket_connect.c\n");
+		cout("Error: Test directory does not contain test-http_route.c\n");
 	}
 
-	/* start stop server */
-	EXEC_TEST(http_websocket_connect);
+	EXEC_TEST(http_upload);
 
 	unused = chdir("../build");
 #if defined(_WIN32) || defined(_WIN64)
 	unused = chdir("Debug");
 #endif
+
+	/* test completed */
+	free(fetch_data);
 
 	return result;
 }
