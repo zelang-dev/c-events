@@ -7,6 +7,30 @@
 #	endif
 #endif
 
+void async_sockaddr_str(char *dst, size_t dst_len, const u_saddr_t *usa) {
+	dst[0] = '\0';
+
+	if (!usa) {
+		return;
+	}
+	events_nameinfo_func namelookup = events_is_active() && tasks_is_active()
+		? async_getnameinfo : getnameinfo;
+	char service[NI_MAXSERV] = {0};
+	if (usa->sa.sa_family == AF_INET) {
+		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sin), dst, (unsigned)dst_len,
+			service, NI_MAXSERV, NI_NUMERICHOST);
+	} else if (usa->sa.sa_family == AF_INET6) {
+		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sin6), dst, (unsigned)dst_len,
+			service, NI_MAXSERV, NI_NUMERICHOST);
+	} else if (usa->sa.sa_family == AF_UNIX) {
+		/* TODO: Define a remote address for unix domain sockets.
+		* This code will always return "localhost", identical to http+tcp:*/
+		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sun), dst, (unsigned)dst_len,
+			service, NI_MAXSERV, NI_NUMERICHOST);
+			//str_lcpy(buf, UDS_SERVER_NAME, len);
+	}
+}
+
 fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol) {
 	fds_t fd;
 	int len, err, proto, off = 0, on = 1;
@@ -38,12 +62,13 @@ fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol
 	}
 
 	if (is_unix) {
-		uds->addr = &events_get_sockaddr(fd)->sun;
-		strncpy(uds->addr->sun_path, address, sizeof(uds->addr->sun_path) - 1);
-		uds->addr->sun_family = AF_UNIX;
+		memset(&usa, 0, sizeof(usa));
+		strncpy(usa.sun.sun_path, address, sizeof(usa.sun.sun_path) - 1);
+		usa.sun.sun_family = AF_UNIX;
 		uds->socket = fd;
 		uds->type = DATA_UNIX;
-		err = bind(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
+		sn = sizeof(usa.sun.sun_path);
+		err = bind(fd, (struct sockaddr *)&usa.sa, sn);
 	} else {
 		sn = sa->sa_family == AF_INET6 ? sizeof(usa.sin6) : sizeof(usa.sin);
 		err = bind(fd, (struct sockaddr *)sa, sn);
@@ -83,36 +108,25 @@ fds_t async_socket(struct sockaddr *sa, char *address, int backlog, int protocol
 
 fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	fds_t fd;
-	int err, proto, n = !protocol ? str_subcount(address, ".") : 0;
-	char ipbuf[22] = {0};
-	char *ip = ipbuf;
-	struct sockaddr_in sa;
+	int err, proto, n = 0, ip_family = 0;
+	u_saddr_t usa;
 	socklen_t sn;
-	struct hostent *he = {0};
 	uds_t uds = (protocol == -1)
 		? (uds_t)events_calloc(1, sizeof(struct af_unix_s))
 		: null;
 	bool is_unix = !is_empty(uds);
 
 	if (!is_unix) {
-		memset(&sa, 0, sizeof sa);
-		sa.sin_family = AF_INET;
-		if (!protocol || (address != OS_NULL && !str_is(address, events_hostname()))) {
-			if (!protocol && (port || backlog) && n == 3) {
-				ip = (char *)&backlog;
-			} else {
-				if ((he = async_gethostbyname(address)) == NULL) {
-					errno = EDESTADDRREQ;
-					return -1;
-				}
-				ip = (char *)he->h_addr;
-			}
+		char host[ARRAY_SIZE] = {0};
+		if (port)
+			snprintf(host, sizeof(host) - 1, "%s:%d", address, port);
+		else
+			snprintf(host, sizeof(host) - 1, "%s", address);
 
-			n = 0;
-			memmove(&sa.sin_addr, ip, 4);
+		if (!async_parse_addr(host, &usa, &ip_family)) {
+			errno = EDESTADDRREQ;
+			return -1;
 		}
-
-		sa.sin_port = htons(port);
 	}
 
 	proto = protocol ? SOCK_STREAM : SOCK_DGRAM;
@@ -131,15 +145,16 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 	}
 
 	if (is_unix) {
-		uds->addr = &events_get_sockaddr(fd)->sun;
-		strncpy(uds->addr->sun_path, address, sizeof(uds->addr->sun_path) - 1);
-		uds->addr->sun_family = AF_UNIX;
+		memset(&usa, 0, sizeof(usa));
+		strncpy(usa.sun.sun_path, address, sizeof(usa.sun.sun_path) - 1);
+		usa.sun.sun_family = AF_UNIX;
 		uds->socket = fd;
 		uds->type = DATA_UNIX;
-		err = bind(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
+		sn = sizeof(usa.sun.sun_path);
+		err = bind(fd, (struct sockaddr *)&usa.sa, sn);
 	} else {
-		err = bind(fd, (struct sockaddr *)&sa, sizeof(sa));
-		events_get_sockaddr(fd)->sin = sa;
+		sn = usa.sa.sa_family == AF_INET6 ? sizeof(usa.sin6) : sizeof(usa.sin);
+		err = bind(fd, &usa.sa, sn);
 	}
 
 	if (err < 0) {
@@ -150,6 +165,7 @@ fds_t async_bind(char *address, int port, int backlog, int protocol) {
 		return -1;
 	}
 
+	memcpy(&events_get_sockaddr(fd)->storage, &usa.storage, sizeof(usa.storage));
 	if (proto == SOCK_STREAM)
 		listen(fd, backlog);
 
@@ -239,12 +255,14 @@ fds_t async_connect(char *hostname, int port, int protocol) {
 
 	// start connecting
 	if (is_unix) {
-		uds->addr = &events_get_sockaddr(fd)->sun;
-		strncpy(uds->addr->sun_path, hostname, sizeof(uds->addr->sun_path) - 1);
-		uds->addr->sun_family = AF_UNIX;
+		uds->addr = events_get_sockaddr(fd);
+		strncpy(uds->addr->sun.sun_path, hostname, sizeof(uds->addr->sun.sun_path) - 1);
+		uds->addr->sun.sun_family = AF_UNIX;
 		uds->socket= fd;
 		uds->type = DATA_UNIX;
-		err = connect(fd, (struct sockaddr *)uds->addr, sizeof(uds->addr));
+		err = connect(fd, (struct sockaddr *)&uds->addr->sun, sizeof(uds->addr->sun));
+		memset(&usa, 0, sizeof(usa));
+		sa = &usa;
 		sn = sizeof(sa->sun);
 	} else {
 		sa = events_get_sockaddr(fd);

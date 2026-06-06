@@ -24,7 +24,7 @@ TEST(parse_multipart) {
 	ASSERT_STR("Mozilla/5.0 Gecko/2009042316 Firefox/3.0.10", http_get_header(parser, "User-Agent"));
 	ASSERT_STR("aram", http_get_header(parser, "Host"));
 	ASSERT_STR("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", http_get_header(parser, "Accept"));
-	ASSERT_STR("541", http_get_header(parser, "Content-Length"));
+	ASSERT_STR("556", http_get_header(parser, "Content-Length"));
 	ASSERT_STR("keep-alive", http_get_header(parser, "Connection"));
 	ASSERT_STR("300", http_get_header(parser, "Keep-Alive"));
 	ASSERT_STR("en-us,en;q=0.5", http_get_header(parser, "Accept-Language"));
@@ -49,7 +49,7 @@ TEST(parse_multipart) {
 		&& http_multi_has(parser, "datafile3"));
 
 	ASSERT_STR("GIF87a.............,...........D..;", http_multi_body(parser, "datafile3"));
-	ASSERT_XEQ(35, http_multi_length(parser, "datafile3"));
+	ASSERT_XEQ(37, http_multi_length(parser, "datafile3"));
 	ASSERT_TRUE(http_multi_is_file(parser, "datafile2"));
 	ASSERT_STR("g.gif", http_multi_filename(parser, "datafile2"));
 	ASSERT_STR("image/gif", http_multi_type(parser, "datafile1"));

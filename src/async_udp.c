@@ -35,19 +35,22 @@ int udp_bind(char *addr, unsigned int flags) {
 }
 
 void udp_to(int fd, char *addr, unsigned int flags) {
+	u_saddr_t usa;
 	uint32_t ip = 0;
-	int port = 0;
+	int port = 0, ip_family = 0;
 	char *host = str_parseip(addr, &ip, &port, false);
 	udp_t packet = events_target(fd)->udp;
-	packet->addr = &events_get_sockaddr(fd)->storage;
+	packet->addr = events_get_sockaddr(fd);
+	char buf[ARRAY_SIZE] = {0};
+	if (port)
+		snprintf(buf, sizeof(buf) - 1, "%s:%d", host, port);
+	else
+		snprintf(buf, sizeof(buf) - 1, "%s", host);
 
 	packet->flags = flags;
-	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
-
+	async_parse_addr(buf, &usa, &ip_family);
 	memset(packet->addr, 0, sizeof(packet->addr));
-	memmove(&sa->sin_addr, &ip, 4);
-	sa->sin_family = AF_INET;
-	sa->sin_port = htons(port);
+	memcpy(packet->addr, &usa, sizeof(packet->addr));
 	if (!is_empty(host))
 		events_free(host);
 }
@@ -66,12 +69,15 @@ int async_sendto(int fd, void *buf, int n) {
 
 int udp_send(udp_t packet, void *buf, int n) {
 	int m;
-	socklen_t client_len = sizeof(packet->addr);
+	u_saddr_t *addr = events_get_sockaddr(fd2socket(packet->socket));
+	socklen_t client_len = addr->sa.sa_family == AF_INET6 ? sizeof(addr->sin6) : sizeof(addr->sin);
 
-	while ((m = sendto(fd2socket(packet->socket), (const char *)buf, n, packet->flags, (sockaddr_t *)packet->addr, client_len)) < 0
+	while ((m = sendto(fd2socket(packet->socket), (const char *)buf, n,
+		packet->flags, (sockaddr_t *)&addr->sa, client_len)) < 0
 		&& os_geterror() == EAGAIN) {
 		async_wait(packet->socket, 'w');
 	}
+
 	return m;
 }
 
@@ -89,13 +95,13 @@ int async_recvfrom(int fd, void *buf, int n, unsigned int flags) {
 udp_t udp_recv(int fd) {
 	int m;
 	uchar *ip;
-	char buf[Kb(48)] = {0};
+	char buf[Kb(48)] = {0}, buf1[64] = {0};
 	udp_t client = null, packet = events_target(fd)->udp;
-	packet->addr = &events_get_sockaddr(fd2socket(fd))->storage;
-	struct sockaddr_in *sa = (struct sockaddr_in *)packet->addr;
-	socklen_t client_len = sizeof(packet->addr);
+	packet->addr = events_get_sockaddr(fd2socket(fd));
+	u_saddr_t *usa = packet->addr;
+	socklen_t client_len = usa->sa.sa_family == AF_INET6 ? sizeof(usa->sin6) : sizeof(usa->sin);
 
-	while ((m = recvfrom(socket2fd(fd), buf, sizeof(buf), packet->flags, (struct sockaddr *)sa, &client_len)) < 0
+	while ((m = recvfrom(socket2fd(fd), buf, sizeof(buf), packet->flags, &usa->sa, &client_len)) < 0
 		&& os_geterror() == EAGAIN) {
 		async_wait(fd, 'r');
 	}
@@ -107,12 +113,10 @@ udp_t udp_recv(int fd) {
 			client->socket = fd;
 			client->flags = packet->flags;
 			client->nread = m;
-			ip = (uchar *)&sa->sin_addr;
-			snprintf(client->ip4addr, 16, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 			client->message = events_calloc(1, m + 1);
-			client->addr = events_calloc(1, sizeof(struct sockaddr_storage));
+			client->addr = events_calloc(1, sizeof(u_saddr_t));
 			if (!is_empty(client->message) && !is_empty(client->addr)) {
-				memcpy((void *)client->addr, packet->addr, sizeof(client->addr));
+				memcpy((void *)client->addr, usa, sizeof(client->addr));
 				memcpy(client->message, buf, m);
 				client->message_set = true;
 				client->type = DATA_UDP;
@@ -148,7 +152,10 @@ EVENTS_INLINE unsigned int udp_flags(udp_t packet) {
 }
 
 EVENTS_INLINE char *udp_ip(udp_t packet) {
-	return packet->ip4addr;
+	if (str_is_empty(packet->ipaddr))
+		async_sockaddr_str(packet->ipaddr, sizeof(packet->ipaddr), packet->addr);
+
+	return packet->ipaddr;
 }
 
 EVENTS_INLINE int udp_broadcast_set(int fd) {

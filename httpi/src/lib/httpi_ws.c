@@ -741,11 +741,6 @@ FORCEINLINE void http_websocket_wait(http_t *conn) {
 }
 
 static void websocket_client_thread_close(void_t data) {
-	http_t *conn = (http_t *)data;
-	if (is_type(conn, DATA_HTTPINFO)) {
-		close_connection(conn);
-	}
-
 	string_t err = guard_message();
 	if (!str_is_empty(err) && guard_caught(err))
 		cerr("Exception: %s caught, closing normally!"CLR_LN, err);

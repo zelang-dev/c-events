@@ -371,6 +371,7 @@ C_API int async_getnameinfo(const struct sockaddr *sa, socklen_t salen,
 
 C_API int async_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolve_src);
 C_API int async_parse_addr(char *host, u_saddr_t *dst, int *ip_version);
+C_API void async_sockaddr_str(char *dst, size_t dst_len, const u_saddr_t *usa);
 
 C_API int fs_open(const char *path, int flag, int mode);
 C_API int fs_read(int fd, void *buf, uint32_t count);

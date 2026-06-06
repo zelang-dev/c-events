@@ -21,8 +21,7 @@ TEST(parse_multibad) {
 	parse_http(HTTP_RESPONSE, parser, raw);
 	ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
 
-	ASSERT_STR("curl/7.21.2 (x86_64-apple-darwin)",
-		http_get_header(parser, "User-Agent"));
+	ASSERT_NULL(http_get_header(parser, "User-Agent"));
 	ASSERT_STR("localhost:8080", http_get_header(parser, "Host"));
 	ASSERT_STR("*/*", http_get_header(parser, "Accept"));
 	ASSERT_STR("1143", http_get_header(parser, "Content-Length"));

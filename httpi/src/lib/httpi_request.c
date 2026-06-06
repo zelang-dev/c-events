@@ -775,7 +775,7 @@ static int construct_local_link(http_t *conn,
 			}
 
 			if (!auth_domain_check_enabled || !server_domain) {
-				sockaddr_to_str(server_ip,
+				async_sockaddr_str(server_ip,
 					sizeof(server_ip),
 					&conn->client->lsa);
 				server_domain = server_ip;

@@ -428,30 +428,6 @@ unsigned short sockaddr_in_port(u_saddr_t *s) {
 	return 0;
 }
 
-void sockaddr_to_str(char *buf, size_t len, const u_saddr_t *usa) {
-	buf[0] = '\0';
-
-	if (!usa) {
-		return;
-	}
-	events_nameinfo_func namelookup = events_is_active() && tasks_is_active()
-		? async_getnameinfo : getnameinfo;
-	char service[NI_MAXSERV] = {0};
-	if (usa->sa.sa_family == AF_INET) {
-		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sin), buf, (unsigned)len,
-			service, NI_MAXSERV, NI_NUMERICHOST);
-	} else if (usa->sa.sa_family == AF_INET6) {
-		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sin6), buf, (unsigned)len,
-			service, NI_MAXSERV, NI_NUMERICHOST);
-	} else if (usa->sa.sa_family == AF_UNIX) {
-		/* TODO: Define a remote address for unix domain sockets.
-		* This code will always return "localhost", identical to http+tcp:*/
-		namelookup((const struct sockaddr *)&usa->sa, sizeof(usa->sun), buf, (unsigned)len,
-			service, NI_MAXSERV, NI_NUMERICHOST);
-			//str_lcpy(buf, UDS_SERVER_NAME, len);
-	}
-}
-
 static int http_error_send(http_t *conn, int status, string_t fmt, va_list args) {
 	char errmsg_buf[BUF_LEN];
 	va_list ap;
@@ -1609,7 +1585,7 @@ void close_socket_gracefully(http_t *conn) {
 	int linger_timeout = -2;
 	socklen_t opt_len = sizeof(error_code);
 
-	if (!conn) {
+	if (!conn || !conn->client) {
 		return;
 	}
 
@@ -1701,7 +1677,7 @@ void close_connection(http_t *conn) {
 }
 
 void http_close_connection(http_t *conn) {
-	if ((conn == NULL)) {
+	if ((conn == NULL) || conn->client == NULL) {
 		return;
 	}
 
@@ -2054,7 +2030,7 @@ static void http_log_access(http_t *conn) {
 		}
 
 		ri = &conn->req;
-		sockaddr_to_str(src_addr, sizeof(src_addr), &conn->client->rsa);
+		async_sockaddr_str(src_addr, sizeof(src_addr), &conn->client->rsa);
 		referer = header_val(conn, "Referer");
 		user_agent = header_val(conn, "User-Agent");
 		http_snprintf(

@@ -531,17 +531,17 @@ struct ex_guard_s {
 struct udp_packet_s {
 	data_types type;
 	int socket;
+	u_saddr_t *addr;
 	unsigned int flags;
 	bool message_set;
 	ssize_t nread;
-	char *message, ip4addr[16];
-	struct sockaddr_storage *addr;
+	char *message, ipaddr[48];
 };
 
 struct af_unix_s {
 	data_types type;
 	int socket;
-	struct sockaddr_un *addr;
+	u_saddr_t *addr;
 };
 
 static EVENTS_INLINE socklen_t socklen_get(const u_saddr_t *s) {

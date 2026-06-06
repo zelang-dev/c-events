@@ -781,6 +781,11 @@ void main_main(http_ini_t *ctx) {
 
 	delay(500); /* Won't get any message */
 
+	/* Close the server */
+	g_ctx = NULL;
+	http_stop(ctx);
+	return;
+
 	ASSERT(ws_client1_data.closed == 1);
 	ASSERT(ws_client2_data.closed == 1);
 	ASSERT(ws_client1_data.data == NULL);

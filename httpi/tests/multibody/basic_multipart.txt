@@ -9,7 +9,7 @@ Keep-Alive: 300
 Connection: keep-alive
 Referer: http://aram/~martind/banner.htm
 Content-Type: multipart/form-data; boundary=2a8ae6ad-f4ad-4d9a-a92c-6d217011fe0f
-Content-Length: 541
+Content-Length: 556
 
 --2a8ae6ad-f4ad-4d9a-a92c-6d217011fe0f
 Content-Disposition: form-data; name="datafile1"; filename="r.gif"

@@ -85,7 +85,7 @@
 #define OBJECT_INVALID_IX ((size_t)-1)
 
 static JSON_Malloc_Function parson_malloc = malloc;
-static JSON_Free_Function parson_free = free;
+static JSON_Free_Function parson_free = _free;
 
 static int parson_escape_slashes = 1;
 

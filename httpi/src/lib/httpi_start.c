@@ -165,7 +165,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	memset(&so->lsa.sa, 0, sizeof(so->lsa.sa));
 	len = sizeof(so->lsa.sa);
 	if (!http_check_acl(ctx, (const u_saddr_t *)&so->rsa)) {
-		sockaddr_to_str(src_addr, sizeof(src_addr), &so->rsa);
+		async_sockaddr_str(src_addr, sizeof(src_addr), &so->rsa);
 		http_log(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
 			__func__, src_addr);
 		tls_closer(sock);
@@ -213,7 +213,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 			conn->req.conn_birth_time = conn_birth_time;
 			conn->req.remote_port =	ntohs(USA_IN_PORT_UNSAFE(&conn->client->rsa));
 			conn->req.server_port = ntohs(USA_IN_PORT_UNSAFE(&conn->client->lsa));
-			sockaddr_to_str(conn->req.remote_addr, sizeof(conn->req.remote_addr), &conn->client->rsa);
+			async_sockaddr_str(conn->req.remote_addr, sizeof(conn->req.remote_addr), &conn->client->rsa);
 			conn->type = (data_types)DATA_HTTPINFO;
 			events_set_target_data(so->sock, (void *)conn);
 			debug_info("Incoming %sconnection from %s"CLR_LN,

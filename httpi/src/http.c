@@ -1223,7 +1223,7 @@ FORCEINLINE string http_get_message(http_t *this) {
 }
 
 FORCEINLINE string http_get_body(http_t *this) {
-	return is_empty(this) ? "" : this->body;
+	return is_empty(this) ? "" : trim(this->body);
 }
 
 FORCEINLINE string http_get_url(http_t *this) {

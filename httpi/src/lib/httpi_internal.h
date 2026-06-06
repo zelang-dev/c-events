@@ -969,7 +969,6 @@ void qjs_exec_script(http_t *conn, string_t script_name);
 
 int is_authorized_for_put(http_t *conn);
 void http_compressed_data(http_t *conn, struct file *filep);
-void sockaddr_to_str(char *buf, size_t len, const u_saddr_t *usa);
 unsigned short sockaddr_in_port(u_saddr_t *s);
 int http_switch_domain(http_t *conn);
 string_t http_fgets(char *buf, size_t size, struct file *filep, char **p);
