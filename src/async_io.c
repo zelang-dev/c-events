@@ -504,13 +504,19 @@ static EVENTS_INLINE void *os_getnameinfo(param_t args) {
 	return casting(getnameinfo((const struct sockaddr *)args[0].object, args[1].u_int,
 		args[2].char_ptr, args[3].u_int, args[4].char_ptr, args[5].u_int, args[6].integer));
 }
-
-EVENTS_INLINE int async_getnameinfo(const struct sockaddr *sa, socklen_t salen,
+#ifdef _WIN32
+EVENTS_INLINE INT async_getnameinfo(const SOCKADDR *sa, socklen_t salen,
+	PCHAR host, DWORD hostlen, PCHAR serv, DWORD servlen, INT flags) {
+	return queue_get(queue_work(futures_pool(), os_getnameinfo, 7, sa, casting(salen), host,
+		casting(hostlen), serv, casting(servlen), casting(flags))).integer;
+}
+#else
+EVENTS_INLINE int async_getnameinfo(sockaddr_t *sa, socklen_t salen,
 	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags) {
 	return queue_get(queue_work(futures_pool(), os_getnameinfo, 7, sa, casting(salen), host,
 		casting(hostlen), serv, casting(servlen), casting(flags))).integer;
 }
-
+#endif
 static EVENTS_INLINE void *os_getaddrinfo(param_t args) {
 	return casting(getaddrinfo(args[0].const_char_ptr, args[1].const_char_ptr,
 		(const struct addrinfo *)args[2].object, (addrinfo_t)args[3].object));

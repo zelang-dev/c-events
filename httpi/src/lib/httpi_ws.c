@@ -122,7 +122,7 @@ static void http_read_websocket(http_t *conn, ws_data_cb ws_data_handler, void_t
 		conn->req.remote_addr,
 		conn->req.remote_port);
 	conn->req.in_websocket_handling = 1;
-	if (conn->ws.type == DATA_WS_SERVER)
+	if (conn->ws.type == (data_types)DATA_WS_SERVER)
 		task_name("Websocket server #%d", task_id());
 
 	/* Loop continuously, reading messages from the socket, invoking the
@@ -559,7 +559,7 @@ void http_websocket_request(http_ini_t *ctx,
 
 	/* Step 7: Enter the read loop */
 	if (is_callback_resource) {
-		conn->ws.type = DATA_WS_SERVER;
+		conn->ws.type = (data_types)DATA_WS_SERVER;
 		http_read_websocket(conn, ws_data_handler, cbData);
 	}
 
@@ -748,12 +748,12 @@ static void websocket_client_thread_close(void_t data) {
 
 static void websocket_client_thread(opaque_t data) {
 	http_t *conn = (http_t *)data->object;
-	http_ini_t *ctx;
+	http_ini_t *ctx = conn->ctx;
 
 	if (is_type(conn, DATA_HTTPINFO)) {
 		ctx->status = HTTP_STATUS_RUNNING;
 		ctx->worker_taskid = task_id();
-		conn->ws.type = DATA_WS_CLIENT;
+		conn->ws.type = (data_types)DATA_WS_CLIENT;
 		task_name("Websocket client #%d", ctx->worker_taskid);
 		http_read_websocket(conn, conn->ws.data_handler, conn->ws.callback_data);
 		debug_info("%s", "Websocket client exited"CLR_LN);
@@ -917,7 +917,7 @@ static http_t *http_websocket_connect_impl(struct client_options *client_options
 		return NULL;
 	}
 
-	conn->ws.type = DATA_WS_CLIENT;
+	conn->ws.type = (data_types)DATA_WS_CLIENT;
 	conn->ws.is_data_ready = false;
 	conn->ws.data_handler = data_func;
 	conn->ws.close_handler = close_func;

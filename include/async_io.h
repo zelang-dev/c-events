@@ -157,14 +157,11 @@ typedef void (*watch_cb)(int wd, events_monitors mask, const char *namepath, voi
 typedef void (*exec_io_cb)(fds_t writeto, size_t nread, char *outputfrom);
 typedef void (*sigcall_t)(void);
 typedef exec_io_cb spawn_cb;
-typedef const struct sockaddr sockaddr_t;
 typedef struct udp_packet_s *udp_t;
 typedef void (*udp_packet_cb)(udp_t);
 typedef struct af_unix_s *uds_t;
 typedef client_cb uds_unix_cb;
 
-typedef int (*events_nameinfo_func)(const struct sockaddr *sa, socklen_t salen,
-	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
 typedef int (*events_addrinfo_func)(const char *name, const char *service,
 	const struct addrinfo *req, struct addrinfo **pai);
 
@@ -366,9 +363,6 @@ C_API struct hostent *async_gethostbyname(char *hostname);
 
 C_API int async_getaddrinfo(const char *name, const char *service,
 	const struct addrinfo *hints, addrinfo_t result);
-C_API int async_getnameinfo(const struct sockaddr *sa, socklen_t salen,
-	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
-
 C_API int async_inet_pton(int af, const char *src, void *dst, size_t dstlen, int resolve_src);
 C_API int async_parse_addr(char *host, u_saddr_t *dst, int *ip_version);
 C_API void async_sockaddr_str(char *dst, size_t dst_len, const u_saddr_t *usa);

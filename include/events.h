@@ -78,6 +78,11 @@ typedef unsigned long __sigset_t;
 #	endif
 #	include <WinSock2.h>
 #	include <ws2tcpip.h>
+#	include <afunix.h>
+typedef const SOCKADDR sockaddr_t;
+typedef INT (*events_nameinfo_func)(const SOCKADDR *, socklen_t, PCHAR, DWORD, PCHAR, DWORD, INT);
+C_API INT async_getnameinfo(const SOCKADDR *sa, socklen_t salen,
+	PCHAR host, DWORD hostlen, PCHAR serv, DWORD servlen, INT flags);
 #else
 #	ifndef SYS_CONSOLE
 		/* O.S. platform ~input/output~ console `DEVICE`. */
@@ -111,6 +116,11 @@ typedef unsigned long __sigset_t;
 #	else
 #   	include <sys/eventfd.h>
 #	endif
+typedef const struct sockaddr sockaddr_t;
+typedef int (*events_nameinfo_func)(const struct sockaddr *sa, socklen_t salen,
+	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
+C_API int async_getnameinfo(sockaddr_t *sa, socklen_t salen,
+	char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
 #endif
 
 #if defined(NO_RPMALLOC)

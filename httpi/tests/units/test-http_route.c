@@ -434,7 +434,7 @@ void main_main(http_ini_t *ctx) {
 #ifdef _WIN32
 	f = fs_fopen("test.cgi", "wb");
 	cgi_script_content = "#!test.cgi.cmd\r\n";
-	fs_fwrite(cgi_script_content, strlen(cgi_script_content), 1, f);
+	fs_fwrite((void_t)cgi_script_content, strlen(cgi_script_content), 1, f);
 	fs_fclose(f);
 	f = fs_fopen("test.cgi.cmd", "w");
 	cgi_script_content = "@echo off\r\n"
@@ -443,7 +443,7 @@ void main_main(http_ini_t *ctx) {
 		"echo.\r\n"
 		"echo CGI test\r\n"
 		"\r\n";
-	fs_fwrite(cgi_script_content, strlen(cgi_script_content), 1, f);
+	fs_fwrite((void_t)cgi_script_content, strlen(cgi_script_content), 1, f);
 	fs_fclose(f);
 #else
 	f = fs_fopen("test.cgi", "w");
