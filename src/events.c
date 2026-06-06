@@ -1251,7 +1251,7 @@ EVENTS_INLINE void tasks_info(tasks_t *t, int pos) {
 
 	char line[256];
 	snprintf(line, 256, CLR_LN"\r\033[%dA", pos);
-	fprintf(stderr, "\t\t - Thrd #%zx, id: %u cid: %u (%s) %s cycles: %zu%s",
+	cerr("\t\t - Thrd #%zx, id: %u cid: %u (%s) %s cycles: %zu%s",
 		os_self(),
 		t->tid,
 		t->cid,
@@ -2372,7 +2372,7 @@ EVENTS_INLINE void yield(void) {
 	t->ready = true;
 	enqueue(l, t);
 	suspend();
-	if (task_id() == 1 && __thrd()->sleep_count == 1) {
+	if (active_task() == atexit_ctr_c_task && __thrd()->sleep_count == 1) {
 #ifndef _WIN32
 		__thrd()->active_timer++;
 #endif
@@ -2388,7 +2388,7 @@ EVENTS_INLINE void tasks_stack_check(int n) {
 	if ((char *)&t <= (char *)t->stack_base
 		|| (char *)&t - (char *)t->stack_base < 256 + n
 		|| t->magic_number != TASK_MAGIC_NUMBER) {
-		fprintf(stderr, "task stack overflow: &t=%p stack=%p n=%d\n", &t, t->stack_base, 256 + n);
+		cerr("task stack overflow: &t=%p stack=%p n=%d\n", &t, t->stack_base, 256 + n);
 		abort();
 	}
 }

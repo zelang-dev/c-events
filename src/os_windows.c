@@ -227,7 +227,8 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].process->write_input[1] = inherit;
 		fdTable[index].process->read_output[0] = inherit;
 		fdTable[index].process->read_output[1] = inherit;
-		fdTable[index].process->error = inherit;
+		fdTable[index].process->error[0] = inherit;
+		fdTable[index].process->error[1] = inherit;
 		fdTable[index].process->context = NULL;
 		fdTable[index].process->ps = INVALID_HANDLE_VALUE;
 		if (type == FD_MONITOR_ASYNC)
@@ -715,7 +716,7 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 	si.cb = sizeof(STARTUPINFO);
 	if (!i->detached) {
 		si.wShowWindow = SW_HIDE;
-		if (i->write_input[1] != INVALID_HANDLE_VALUE || i->read_output[1] != INVALID_HANDLE_VALUE || i->error != INVALID_HANDLE_VALUE) {
+		if (i->write_input[1] != INVALID_HANDLE_VALUE || i->read_output[1] != INVALID_HANDLE_VALUE || i->error[1] != INVALID_HANDLE_VALUE) {
 			si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 			si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
 			si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
@@ -733,9 +734,9 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 			SetHandleInformation(i->read_output[1], HANDLE_FLAG_INHERIT, 1);
 		}
 
-		if (i->error != inherit) {
-			si.hStdError = i->error;
-			SetHandleInformation(i->error, HANDLE_FLAG_INHERIT, 1);
+		if (i->error[1] != inherit) {
+			si.hStdError = i->error[1];
+			SetHandleInformation(i->error[1], HANDLE_FLAG_INHERIT, 1);
 		}
 	}
 
@@ -753,6 +754,7 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 	if (is_spawn && i->io_func) {
 		CloseHandle(i->write_input[0]);
 		CloseHandle(i->read_output[1]);
+		CloseHandle(i->error[1]);
 		fdTable[i->fd].buffer = events_calloc(1, Kb(64) + 1);
 		fdTable[i->fd].ovList->length = Kb(64);
 		fdTable[i->fd].ovList->data = i;
@@ -796,7 +798,7 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_datached,
 		info->read_output[1] = io_out;
 
 	if (io_err != inherit)
-		info->error = io_err;
+		info->error[1] = io_err;
 
 	info->fd = pseudofd;
 	return info;
@@ -869,7 +871,7 @@ static void events_sig_handler(int sig) {
 	 * Make signal handlers persistent.
 	 */
 	if (signal(sig, events_sig_handler) == SIG_ERR) {
-		fprintf(stderr, "Cannot reinstall handler for signal (%d)\n", sig);
+		cerr("Cannot reinstall handler for signal (%d)\n", sig);
 	}
 
 	for (i = 0; i < max_event_sig; i++) {
@@ -893,7 +895,7 @@ void events_del_signal(int sig, int i) {
 		events_sig[i].is_running = false;
 		events_sig[i].sig = -1;
 		if (signal(sig, SIG_DFL) == SIG_ERR)
-			fprintf(stderr, "Cannot install handler for signal no %d\n", sig);
+			cerr("Cannot install handler for signal no %d\n", sig);
 	}
 }
 
@@ -919,7 +921,7 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 
 	events_sigblock;
 	if (signal(sig, events_sig_handler) == SIG_ERR) {
-		fprintf(stderr, "Cannot install handler for signal no (%d)\n", sig);
+		cerr("Cannot install handler for signal no (%d)\n", sig);
 		events_sigunblock;
 		return -1;
 	} else {

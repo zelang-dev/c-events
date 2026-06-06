@@ -84,29 +84,20 @@ void *on_send(param_t args) {
 	return 0;
 }
 
-void *main_main(param_t args) {
+void main_main(param_t args) {
 	uint32_t res = async_task(on_send, 0);
 	int recv_socket = udp_bind("0.0.0.0:68", 0);
 	udp_t cl_socket = udp_recv(recv_socket);
 	if (is_empty(cl_socket)) {
 		cerr("Read error %s\n", strerror(errno));
-		//abort();
-		return 0;
+		return;
 	}
 
 	udp_handler(on_read, cl_socket);
 	while (!task_is_ready(res))
 		yield();
-
-	return 0;
 }
 
 int main(int argc, char **argv) {
-	events_init(1024);
-	events_t *loop = events_create(6);
-	async_task(main_main, 0);
-	async_run(loop);
-	events_destroy(loop);
-
-	return 0;
+	return events_start(1024, main_main, 0);
 }

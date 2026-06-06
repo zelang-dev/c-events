@@ -47,14 +47,5 @@ void *main_main(param_t args) {
 }
 
 int main(int argc, char **argv) {
-	if (!events_init(1024)) {
-		async_task(main_main, 0);
-		events_t *loop = events_create(6);
-		async_run(loop);
-		events_destroy(loop);
-	} else {
-		perror("main");
-		return -1;
-	}
-	return 0;
+	return events_start(1024, (main_cb)main_main, 0);
 }

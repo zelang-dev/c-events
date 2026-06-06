@@ -284,8 +284,22 @@ C_API int os_mkfifo(const char *name, mode_t mode);
 C_API process_t exec(const char *command, const char *args, execinfo_t *info);
 
 /**
+ * @param env `NULL` or a previous allocated ~environment~ for the new process. MUST be in `key=value;` format.
+ * @param size length of `env`.
+ * @param num_pairs number of `key=value` pairs, use `kv()` macro to create
+ * `"Key1=Value1;Key2=Value2;Key3=Value3;..."`
+ *
+ * NOTE: This is indented to be use with `spawn_cgi()` for cleanup, or `exec_info()`
+ * and the returned ~pointer~ MUST be `freed` manually.
+ */
+C_API char *exec_addenv(char *env, size_t *size, uint32_t num_pairs, ...);
+C_API filefd_t exec_fdin(execinfo_t *child);
+C_API filefd_t exec_fdout(execinfo_t *child);
+C_API filefd_t exec_fderr(execinfo_t *child);
+
+/**
  * @param env ~environment~ for the new process. `key=value`, separated with semicolon like:
- * `"Key1=Value1;Key2=Value2;Key3=Value3;..."`. If `NULL` parents environment used.
+ * `"Key1=Value1;Key2=Value2;Key3=Value3;..."`, use `exec_addenv()`. If `NULL` parents environment used.
  * @param is_datached start child as ~detached~ background `process`
  * @param io_in for ~redirecting~ `stdin` or pass `inherit`
  * @param io_out for ~redirecting~ `stdout` or pass `inherit`
@@ -402,9 +416,12 @@ C_API int fs_events(const char *path, watch_cb handler, void *filter);
 C_API int fs_events_cancel(uint32_t rid);
 C_API const char *fs_events_path(int wd);
 
-C_API execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func);
+C_API execinfo_t *spawn(const char *command,
+	const char *args, spawn_cb io_func, exit_cb exit_func);
 C_API uintptr_t spawn_pid(execinfo_t *child);
 C_API bool spawn_is_finish(execinfo_t *child);
+C_API execinfo_t *spawn_cgi(const char *command, const char *args,
+	const char *env, spawn_cb io_func, exit_cb exit_func);
 
 C_API int udp_bind(char *addr, unsigned int flags);
 C_API int udp_connect(char *addr);

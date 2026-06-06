@@ -5,11 +5,11 @@
 #include <assert.h>
 
 inline void assert_expected(long res, long expected, const char *file, unsigned int line, const char *expr, const char *expected_str) {
-    if (res != expected) {
-        fflush(stdout);
-        fprintf(stderr, "%s:%u: %s: error %li, expected %s\033[0K\n", file, line, expr, res, expected_str);
-        abort();
-    }
+	if (res != expected) {
+		fflush(stdout);
+		fprintf(stderr, "%s:%u: %s: error %li, expected %s\033[0K\n", file, line, expr, res, expected_str);
+		abort();
+	}
 }
 
 #define CHK_EXPECTED(a, b) assert_expected(a, b, __FILE__, __LINE__, #a, #b)
@@ -18,7 +18,12 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
     if (test_##name() != 0) { result = -1; printf( #name ": fail\033[0K\n\n"); } \
     else { printf(#name ": pass\033[0K\n\n"); }
 
+#define EXEC_TEST_WITH(name, with) \
+    if (test_##name(with) != 0) { result = -1; printf( #name ": fail\033[0K\n\n"); } \
+    else { printf(#name ": pass\033[0K\n\n"); }
+
 #define TEST(name)  int test_##name(void)
+#define TEST_WITH(name, with)  int test_##name(int with)
 
 #ifdef __linux__
 #  define PRINT_COLOR
@@ -70,6 +75,17 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
     PRINT_OK(" %s == %s\033[0K\n", #expected, #actual); \
   } while (0)
 
+#define ASSERT_ABORT(expected, actual, cmp, print_op) do { \
+    if (!(cmp)) \
+      { \
+	PRINT_ERR(" %s %d:\n   * %s != %s\n   * Expected: " print_op	\
+          "\n   * Actual: " print_op "\n", __FILE__, __LINE__, \
+          #expected, #actual, expected, actual); \
+    	abort(); \
+      } \
+    PRINT_OK(" %s == %s\033[0K\n", #expected, #actual); \
+  } while (0)
+
 #define ASSERT_THREAD_ABORT(expected, actual, cmp, print_op) do { \
     if (!(cmp)) \
       { \
@@ -94,10 +110,12 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
   } while (0)
 
 #define ASSERT_STR(expected, actual) ASSERT_EQ_(expected, actual, strcmp(expected, actual) == 0, "%s")
+#define ASSERT_STR_ABORT(expected, actual) ASSERT_ABORT(expected, actual, strcmp(expected, actual) == 0, "%s")
 #define ASSERT_PTR(expected, actual) ASSERT_EQ_(expected, actual, memcmp(expected, actual, sizeof(actual)) == 0, "%p")
 #define ASSERT_UEQ(expected, actual) ASSERT_EQ_((long unsigned)expected, (long unsigned)actual, expected == actual, "%lu")
 #define ASSERT_DOUBLE(expected, actual) ASSERT_EQ_(expected, actual, expected == actual, "%f")
 #define ASSERT_EQ(expected, actual) ASSERT_EQ_((int)expected, (int)actual, expected == actual, "%d")
+#define ASSERT_EQ_ABORT(expected, actual) ASSERT_ABORT((int)expected, (int)actual, expected == actual, "%d")
 #define ASSERT_EQU(expected, actual) ASSERT_ERR_((int)expected, actual, expected == actual, "%d")
 #define ASSERT_CHAR(expected, actual) ASSERT_EQ_((char)expected, (char)actual, expected == actual, "%c")
 #define ASSERT_LEQ(expected, actual) ASSERT_EQ_(expected, actual, expected == actual, "%i")

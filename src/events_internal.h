@@ -487,7 +487,7 @@ struct execinfo_s {
 	/* Created `spawn` ~io~ controlled process */
 	bool is_spawn;
 	/* Standard ~pair~ `process` file descriptors */
-	filefd_t write_input[2], read_output[2], error;
+	filefd_t write_input[2], read_output[2], error[2];
 #ifdef _WIN32
 	POVERLAPPED_REQUEST req;
 	char *buffer;

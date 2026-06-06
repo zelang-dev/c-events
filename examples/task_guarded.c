@@ -53,19 +53,12 @@ void divByZero(param_t arg) guard {
 	unreachable;
 } guarded;
 
-void *main_main(param_t args) {
+void main_main(param_t args) {
     launch(divByZero, 0);
     printf("Although panicked. We recovered. We call mul() func\n");
     printf("mul func result: %d\n", mul(5, 10));
-    return 0;
 }
 
 int main(int argc, char **argv) {
-	events_init(1024);
-	events_t *loop = events_create(1);
-	async_task(main_main, 0);
-	async_run(loop);
-	events_destroy(loop);
-
-	return 0;
+	return events_start(1024, main_main, 0);
 }

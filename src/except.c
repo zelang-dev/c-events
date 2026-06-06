@@ -187,14 +187,14 @@ static void ex_unwind_stack(ex_context_t *ctx) {
 static void ex_print(const char *message) {
     fflush(stdout);
 #ifndef USE_DEBUG
-	fprintf(stderr, "\nFatal Error: %s in function(%s)\n\n", uncaught_message, uncaught_infunction);
+	cerr("\nFatal Error: %s in function(%s)\n\n", uncaught_message, uncaught_infunction);
 #else
-	fprintf(stderr, "\n%s: %s\n", message, uncaught_message);
+	cerr("\n%s: %s\n", message, uncaught_message);
 	if (!is_empty(uncaught_infile)) {
 		if (!is_empty(uncaught_infunction)) {
-			fprintf(stderr, "    thrown in %s at (%s:%s)\n\n", uncaught_infunction, uncaught_infile, uncaught_inline);
+			cerr("    thrown in %s at (%s:%s)\n\n", uncaught_infunction, uncaught_infile, uncaught_inline);
         } else {
-			fprintf(stderr, "    thrown at %s:%s\n\n", uncaught_infile, uncaught_inline);
+			cerr("    thrown at %s:%s\n\n", uncaught_infile, uncaught_inline);
         }
     }
 #endif
@@ -332,11 +332,11 @@ void try_backtrace(ex_backtrace_t *ex) {
 
         //try to get line
         if (SymGetLineFromAddr64(process, stack.AddrPC.Offset, &disp, line)) {
-            fprintf(stderr, "\tat %s in %s:%lu: address: 0x%0zx\033[0K\n", pSymbol->Name, line->FileName, line->LineNumber, pSymbol->Address);
+            cerr("\tat %s in %s:%lu: address: 0x%0zx\033[0K\n", pSymbol->Name, line->FileName, line->LineNumber, pSymbol->Address);
         } else {
             //failed to get line
             if (pSymbol->Address != TempAddress)
-                fprintf(stderr, "\tat %s, address 0x%0zx.\033[0K\n", pSymbol->Name, pSymbol->Address);
+                cerr("\tat %s, address 0x%0zx.\033[0K\n", pSymbol->Name, pSymbol->Address);
 
             TempAddress = pSymbol->Address;
             hModule = NULL;
@@ -348,14 +348,14 @@ void try_backtrace(ex_backtrace_t *ex) {
             if (hModule != NULL)GetModuleFileNameA(hModule, module, EX_MAX_NAME_LEN);
 
             if (!str_is_empty(module))
-                fprintf(stderr, "in %s\033[0K\n", module);
+                cerr("in %s\033[0K\n", module);
         }
 
         events_free(line);
         line = NULL;
     }
 #else
-    fprintf(stderr, "backtrace() returned %d addresses:\n", (int)ex->size);
+    cerr("backtrace() returned %d addresses:\n", (int)ex->size);
 	int i, trace_size = ex->size;
 	char **messages = (char **)backtrace_symbols(ex->ctx, trace_size);
 
@@ -642,7 +642,7 @@ void ex_handler(int sig) {
      * Make signal handlers persistent.
      */
     if (signal(sig, ex_handler) == SIG_ERR)
-        fprintf(stderr, "Cannot reinstall handler for signal no %d (%s)\n",
+        cerr("Cannot reinstall handler for signal no %d (%s)\n",
                 sig, ex);
 #endif
 
@@ -660,7 +660,7 @@ void ex_handler(int sig) {
 void ex_signal_reset(int sig) {
 #if defined(_WIN32) || defined(_WIN64)
     if (signal(sig, SIG_DFL) == SIG_ERR)
-        fprintf(stderr, "Cannot install handler for signal no %d\n",
+        cerr("Cannot install handler for signal no %d\n",
                 sig);
 #else
     /*
@@ -668,9 +668,9 @@ void ex_signal_reset(int sig) {
      */
     ex_sig_sa.sa_handler = SIG_DFL;
     if (sigemptyset(&ex_sig_sa.sa_mask) != 0)
-        fprintf(stderr, "Cannot setup handler for signal no %d\n", sig);
+        cerr("Cannot setup handler for signal no %d\n", sig);
     else if (sigaction(sig, &ex_sig_sa, NULL) != 0)
-        fprintf(stderr, "Cannot restore handler for signal no %d\n", sig);
+        cerr("Cannot restore handler for signal no %d\n", sig);
 #endif
     exception_signal_set = false;
 }
@@ -693,7 +693,7 @@ void ex_signal(int sig, const char *ex) {
 
 #if defined(_WIN32) || defined(_WIN64)
     if (signal(sig, ex_handler) == SIG_ERR)
-        fprintf(stderr, "Cannot install handler for signal no %d (%s)\n",
+        cerr("Cannot install handler for signal no %d (%s)\n",
                       sig, ex);
     else
         ex_sig[i].ex = ex, ex_sig[i].sig = sig;
@@ -704,10 +704,10 @@ void ex_signal(int sig, const char *ex) {
     ex_sig_sa.sa_handler = ex_handler;
     ex_sig_sa.sa_flags = SA_RESTART;
     if (sigemptyset(&ex_sig_sa.sa_mask) != 0)
-        fprintf(stderr, "Cannot setup handler for signal no %d (%s)\n",
+        cerr("Cannot setup handler for signal no %d (%s)\n",
                       sig, ex);
     else if (sigaction(sig, &ex_sig_sa, NULL) != 0)
-        fprintf(stderr, "Cannot install handler for signal no %d (%s)\n",
+        cerr("Cannot install handler for signal no %d (%s)\n",
                 sig, ex);
     else
         ex_sig[i].ex = ex, ex_sig[i].sig = sig;

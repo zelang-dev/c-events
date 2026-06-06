@@ -6,41 +6,34 @@ a much simpler version of libuv https://github.com/libuv/libuv/blob/master/docs/
 const char *command;
 
 void run_command(int wd, events_monitors events, const char *filename, void *filter) {
-	fprintf(stderr, CLR"Change detected in: %s ", fs_events_path(wd));
+	cerr(CLR"Change detected in: %s ", fs_events_path(wd));
 
 	if (events & WATCH_ADDED || events & WATCH_REMOVED)
-        fprintf(stderr, "renamed");
+		cerr("renamed");
 	if (events & WATCH_MODIFIED)
-        fprintf(stderr, "changed");
+		cerr("changed");
 
-	fprintf(stderr, " %s"CLR_LN, filename ? filename : "");
+	cerr(" %s"CLR_LN, filename ? filename : "");
     system(command);
 }
 
-void *main_main(param_t args) {
+void main_main(param_t params) {
+	array_t args = (array_t)params->object;
 	int argc = args[0].integer;
 	char **argv = args[1].array_char;
+	$delete(args);
 
 	command = argv[1];
 	while (argc-- > 2) {
-        fprintf(stderr, "Adding watch on %s\n", argv[argc]);
+        cerr("Adding watch on %s\n", argv[argc]);
         fs_events(argv[argc], run_command, null);
     }
-
-    return 0;
 }
 
 int main(int argc, char **argv) {
     if (argc <= 2) {
-        fprintf(stderr, "Usage: %s <command> <file1> [file2 ...]\n", argv[0]);
-        return 1;
+        return cerr("Usage: %s <command> <file1> [file2 ...]\n", argv[0]);
 	}
 
-	events_init(1024);
-	events_t *loop = events_create(1);
-	async_task(main_main, 2, casting(argc), argv);
-	async_run(loop);
-	events_destroy(loop);
-
-	return 0;
+	return events_start(1024, main_main, arrays(2, casting(argc), argv));
 }

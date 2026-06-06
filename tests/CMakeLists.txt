@@ -11,6 +11,7 @@ set(TARGET_LIST
  test-thrd_static
  test-dns
  test-spawn
+ test-spawn_cgi
  test-fs
  test-waitgroup
  test-fs_events
@@ -29,6 +30,9 @@ add_executable(test-getopts test-getopts.c)
 target_link_libraries(test-getopts  ${PROJECT_NAME})
 add_test(NAME test-getopts COMMAND test-getopts garbage -n nothing -bool
 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(child_cgi child_cgi.c)
+target_link_libraries(child_cgi ${PROJECT_NAME})
 
 add_executable(child child.c)
 target_link_libraries(child ${PROJECT_NAME})

@@ -787,20 +787,61 @@ static void *spawning(param_t args) {
 		if (info->exit_func)
 			info->exit_func(status, status);
 	} else {
-		fprintf(stderr, "Process launch failed with: %s"CLR_LN, strerror(os_geterror()));
+		cerr("Process launch failed with: %s"CLR_LN, strerror(os_geterror()));
 	}
 
 	return 0;
 }
 
-execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_cb exit_func) {
-	execinfo_t *info = exec_info(NULL, false, inherit, inherit, inherit);
+char *exec_addenv(char *env, size_t *size, uint32_t num_pairs, ...) {
+	char *k, *v, buf[Kb(2)] = {0}, *data = env;
+	int i, len;
+	va_list ap;
+
+	if (num_pairs > 0) {
+		va_start(ap, num_pairs);
+		for (i = 0; i < num_pairs; i++) {
+			/* Copy VARIABLE=VALUE;\0 string into the free space */
+			k = va_arg(ap, char *);
+			v = va_arg(ap, char *);
+			len = snprintf(buf, sizeof(buf), "%s=%s;", k, v);
+			*size += len;
+			data = events_realloc(data, *size);
+			memcpy(data + *size - len, buf, len);
+		}
+		va_end(ap);
+	}
+
+	return data;
+}
+
+EVENTS_INLINE filefd_t exec_fdin(execinfo_t *child) {
+	return child->write_input[1];
+}
+
+EVENTS_INLINE filefd_t exec_fdout(execinfo_t *child) {
+	return child->read_output[0];
+}
+
+EVENTS_INLINE filefd_t exec_fderr(execinfo_t *child) {
+	return child->error[0];
+}
+
+static execinfo_t *spawn_ex(const char *command, const char *args, const char *env,
+	bool is_datached, spawn_cb io_func, exit_cb exit_func) {
+	execinfo_t *info = exec_info(env, is_datached, inherit, inherit, inherit);
 	if (io_func) {
 #ifdef _WIN32
 		if (os_create_pipe("spawn_in", &info->write_input[0], &info->write_input[1])
 			|| os_create_pipe("spawn_out", &info->read_output[0], &info->read_output[1])) {
 			perror("os_create_pipe");
 			return NULL;
+		}
+		if (!is_empty(env)) {
+			if (os_create_pipe("spawn_err", &info->error[0], &info->error[1])) {
+				perror("os_create_pipe");
+				return NULL;
+			}
 		}
 #elif defined(__APPLE__) || defined(__MACH__)
 		if (pipe(_2fd(info->write_input))
@@ -812,11 +853,26 @@ execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_
 		events_set_nonblocking(info->write_input[1]);
 		events_set_nonblocking(info->read_output[0]);
 		events_set_nonblocking(info->read_output[1]);
+		if (!is_empty(env)) {
+			if (pipe(_2fd(info->error))) {
+				perror("pipe");
+				return NULL;
+			}
+			events_set_nonblocking(info->error[0]);
+			events_set_nonblocking(info->error[1]);
+		}
 #else
 		if (pipe2(_2fd(info->write_input), O_NONBLOCK)
 			|| pipe2(_2fd(info->read_output), O_NONBLOCK)) {
 			perror("pipe2");
 			return NULL;
+		}
+
+		if (!is_empty(env)) {
+			if (pipe2(_2fd(info->error), O_NONBLOCK)) {
+				perror("pipe2");
+				return NULL;
+			}
 		}
 #endif
 	}
@@ -828,6 +884,19 @@ execinfo_t *spawn(const char *command, const char *args, spawn_cb io_func, exit_
 		(data_func_t)spawning, arrays(3, command, args, info), false, true), true);
 	yield();
 	return info->context == NULL ? NULL : info;
+}
+
+EVENTS_INLINE execinfo_t *spawn(const char *command,
+	const char *args, spawn_cb io_func, exit_cb exit_func) {
+	return spawn_ex(command, args, null, false, io_func, exit_func);
+}
+
+EVENTS_INLINE execinfo_t *spawn_cgi(const char *command, const char *args,
+	const char *env, spawn_cb io_func, exit_cb exit_func) {
+	execinfo_t *pid = spawn_ex(command, args, env, false, io_func, exit_func);
+	if (!is_empty(env))
+		events_free((void *)env);
+	return pid;
 }
 
 EVENTS_INLINE uintptr_t spawn_pid(execinfo_t *child) {

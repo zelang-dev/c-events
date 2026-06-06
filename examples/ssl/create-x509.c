@@ -1,6 +1,6 @@
 #include <events.h>
 
-void *main_main(param_t args) {
+void main_main(param_t args) {
 	const char *name = events_hostname();
 
 	/* Generate the key. */
@@ -21,19 +21,13 @@ void *main_main(param_t args) {
 	puts("Writing key and certificate to disk..."CLR_LN);
 	if (x509_pkey_write(pkey, x509)) {
 		puts("Success!"CLR_LN);
-		return 0;
+		return;
 	}
 
 	panicking("Failed!"CLR_LN);
-	return 0;
 }
 
-int main(int argc, char **argv) {
-	events_init(1024);
-	events_t *loop = events_create(1);
-	async_task(main_main, 0);
-	async_run(loop);
-	events_destroy(loop);
 
-	return 0;
+int main(int argc, char **argv) {
+	return events_start(1024, main_main, 0);
 }

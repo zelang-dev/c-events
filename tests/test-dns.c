@@ -2,10 +2,8 @@
 #include "assertions.h"
 
 void *main_main(param_t args) {
-	ASSERT_TASK(is_data(args));
-	ASSERT_EQU($size(args), 1);
 	struct hostent *host = NULL;
-	future *thrd = events_create_future(args->object);
+	future *thrd = events_create_future(event_loop());
 	ASSERT_TASK((data_type(thrd) == DATA_THREAD));
 	ASSERT_TASK((data_type(futures_pool()) == DATA_THREAD));
 	ASSERT_TASK((futures_pool() == thrd));
@@ -15,13 +13,7 @@ void *main_main(param_t args) {
 }
 
 TEST(queue_work) {
-	events_init(1024);
-	events_t *loop = events_create(6);
-	async_task(main_main, 1, loop);
-	async_run(loop);
-	events_destroy(loop);
-
-	return 0;
+	return events_start(1024, (main_cb)main_main, 0);
 }
 
 TEST(list) {

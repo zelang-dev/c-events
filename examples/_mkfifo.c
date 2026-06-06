@@ -8,7 +8,7 @@ Mainly for Windows modified from https://github.com/chocolateboy/mcfifo
 #define _BAD_PROCESS 5
 
 int usage(char *prgname) {
-	fprintf(stderr, "usage: %s name cmd [ arg1, ... ]\r\n", prgname);
+	cerr("usage: %s name cmd [ arg1, ... ]\r\n", prgname);
 	return _USAGE;
 }
 
@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	fprintf(stderr, "Connect to: %s\n", mkfifo_name());
+	cerr("Connect to: %s\n", mkfifo_name());
 	int other = open(piped, O_RDONLY, 0);
 	process_t ps = exec(argv[2], str, exec_info(NULL, false, mkfifo_fd(), mkfifo_fd(), inherit));
 	if (ps > 0) {

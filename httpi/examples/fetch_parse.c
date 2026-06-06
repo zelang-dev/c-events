@@ -1,6 +1,6 @@
 #include <httpi.h>
 
-void *main_main(param_t args) {
+void main_main(param_t args) {
 	if (getopt_has(null, true)) {
 		char data[Kb(16)] = {0};
 		int client, chunks = 0;
@@ -51,19 +51,11 @@ void *main_main(param_t args) {
 
 		cout("\n\nReceived: %d chunks.\n", chunks);
 	}
-
-	return 0;
 }
 
 int main(int argc, char **argv) {
 	getopt_arguments_set(argc, argv);
 	getopt_message_set("\turl - website\n", 1, false);
 
-	events_init(1024);
-	events_t *loop = events_create(1);
-	async_task(main_main, 0);
-	async_run(loop);
-	events_destroy(loop);
-
-	return 0;
+	return events_start(1024, main_main, 0);
 }

@@ -19,17 +19,21 @@ int _on_exit(int64_t exit_status, int term_signal) {
 
 int _on_output(fds_t writeto, size_t count, char *outputfrom) {
     output_count++;
-	ASSERT_TRUE(str_has(outputfrom, "This is stdout")
-		|| str_has(outputfrom, "Sleeping...")
-		|| str_has(outputfrom, "`test-dir` argument received"));
-	ASSERT_FALSE(str_has(outputfrom, "Exiting"));
+	ASSERT_TRUE(str_has(outputfrom, "The REQUEST_METHOD GET")
+		|| str_has(outputfrom, "Sleeping... ZeLang!")
+		|| str_has(outputfrom, "CONTENT_LENGTH `14`")
+		|| str_has(outputfrom, "`php.js` argument received"));
+	ASSERT_FALSE(str_has(outputfrom, "environment"));
 
 	return 0;
 }
 
 TEST(spawn) {
+	size_t len = 0;
 	uint32_t res = async_task(worker_misc, 3, 700, "spawn", "finish");
-	execinfo_t *child = spawn("child", "test-dir", (spawn_cb)_on_output, (exit_cb)_on_exit);
+	execinfo_t *child = spawn_cgi("child_cgi", "php.js",
+		exec_addenv(null, &len, 3, kv("REQUEST_METHOD", "GET"), kv("HTTP_X_POWER_BY", "ZeLang"), kv("CONTENT_LENGTH", "14")),
+		(spawn_cb)_on_output, (exit_cb)_on_exit);
 
 	ASSERT_TASK((task_is_ready(res) == false));
 	ASSERT_TASK((spawn_pid(child) > 0));
@@ -43,7 +47,7 @@ TEST(spawn) {
 
 	ASSERT_TASK((task_is_ready(res) == true));
 	ASSERT_TASK(str_is(results_for(res).char_ptr, "finish"));
-	ASSERT_TASK((3 == output_count));
+	ASSERT_TASK((4 == output_count));
 
     return 0;
 }

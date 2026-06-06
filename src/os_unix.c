@@ -444,7 +444,8 @@ int events_new_fd(FILE_TYPE type, int fd, int desiredFd) {
 		fdTable[index].process->write_input[1] = inherit;
 		fdTable[index].process->read_output[0] = inherit;
 		fdTable[index].process->read_output[1] = inherit;
-		fdTable[index].process->error = inherit;
+		fdTable[index].process->error[0] = inherit;
+		fdTable[index].process->error[1] = inherit;
 		fdTable[index].process->ps = DATA_INVALID;
 	}
 
@@ -544,7 +545,7 @@ static inline process_t os_exec_info(const char *filename, execinfo_t *info) {
 		}
 
 		if (info->read_output[1] != -1) {
-			if (dup2(info->read_output[1], STDOUT_FILENO) < 0){
+			if (dup2(info->read_output[1], STDOUT_FILENO) < 0) {
 				perror("dup2");
 				goto end;
 			}
@@ -554,8 +555,16 @@ static inline process_t os_exec_info(const char *filename, execinfo_t *info) {
 				close(info->read_output[0]);
 		}
 
-		if (info->error != -1)
-			dup2(info->error, STDERR_FILENO);
+		if (info->error[1] != -1) {
+			if (dup2(info->error[1], STDERR_FILENO) < 0) {
+				perror("dup2");
+				goto end;
+			}
+
+			// Close the unwanted read side
+			if (is_spawn)
+				close(info->error[0]);
+		}
 	}
 
 	if (info->workdir != NULL && 0 != chdir(info->workdir))
@@ -587,7 +596,7 @@ EVENTS_INLINE execinfo_t *exec_info(const char *env, bool is_detached,
 		info->read_output[1] = io_out;
 
 	if (io_err)
-		info->error = io_err;
+		info->error[1] = io_err;
 
 	info->fd = pseudofd;
 	return info;
@@ -667,9 +676,9 @@ void events_del_signal(int sig, int i) {
 		events_sig[i].sig = -1;
 		events_sig_sa.sa_handler = SIG_DFL;
 		if (sigemptyset(&events_sig_sa.sa_mask) != 0)
-			fprintf(stderr, "Cannot setup handler for signal no %d\n", sig);
+			cerr("Cannot setup handler for signal no %d\n", sig);
 		else if (sigaction(sig, &events_sig_sa, NULL) != 0)
-			fprintf(stderr, "Cannot restore handler for signal no %d\n", sig);
+			cerr("Cannot restore handler for signal no %d\n", sig);
 	}
 }
 
@@ -699,11 +708,11 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 	events_sig_sa.sa_handler = events_sig_handler;
 	events_sig_sa.sa_flags = SA_RESTART;
 	if (sigemptyset(&events_sig_sa.sa_mask) != 0) {
-		fprintf(stderr, "Cannot setup handler for signal no (%d)\n", sig);
+		cerr("Cannot setup handler for signal no (%d)\n", sig);
 		events_sigunblock;
 		return -1;
 	} else if (sigaction(sig, &events_sig_sa, NULL) != 0) {
-		fprintf(stderr, "Cannot install handler for signal no (%d)\n", sig);
+		cerr("Cannot install handler for signal no (%d)\n", sig);
 		events_sigunblock;
 		return -1;
 	} else {

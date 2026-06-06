@@ -10,7 +10,7 @@ static char *command_line_message = NULL;
 static char *command_line_option = NULL;
 
 static void usage(const char *program, char *message) {
-	fprintf(stderr, CLR_LN"Usage: %s OPTIONS\n%s"CLR_LN, program, (message == NULL ? "" : message));
+	cerr(CLR_LN"Usage: %s OPTIONS\n%s"CLR_LN, program, (message == NULL ? "" : message));
 }
 
 void getopt_message_set(const char *message, int minium, bool is_ordered) {
@@ -79,7 +79,7 @@ bool getopt_has(const char *flag, bool is_single) {
 		events_free(flags);
 
 	if (is_unknown)
-		fprintf(stderr, "\nUnknown flag provided: %s", unknown);
+		cerr("\nUnknown flag provided: %s", unknown);
 
 	if (show_help || is_unknown || command_line_argc <= 1)
 		usage(command_line_argv[0], command_line_message);

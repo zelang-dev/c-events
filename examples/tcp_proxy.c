@@ -26,7 +26,7 @@ int *mkfd2(int fd1, int fd2) {
 
 	a = malloc(2 * sizeof a[0]);
 	if (a == 0) {
-		fprintf(stderr, "out of memory\n");
+		cerr("out of memory\n");
 		abort();
 	}
 	a[0] = fd1;
@@ -45,7 +45,7 @@ void *proxytask(param_t v) {
 		return 0;
 	}
 
-	fprintf(stderr, "\nconnected to %s:%d"CLR_LN, server, port);
+	cerr("\nconnected to %s:%d"CLR_LN, server, port);
 
 	async_task(rwtask, 1, mkfd2(fd, remotefd));
 	async_task(rwtask, 1, mkfd2(remotefd, fd));
@@ -53,7 +53,8 @@ void *proxytask(param_t v) {
 	return 0;
 }
 
-void *main_main(param_t args) {
+void main_main(param_t param) {
+	array_t args = (array_t)param->object;
 	fds_t cfd, fd;
 	int rport;
 	char remote[16];
@@ -61,31 +62,24 @@ void *main_main(param_t args) {
 	local = atoi(args[0].char_ptr);
 	server = args[1].char_ptr;
 	port = atoi(args[2].char_ptr);
+	$delete(args);
 
 	if ((fd = async_bind(OS_NULL, local, 128, true)) < 0) {
-		fprintf(stderr, "cannot listen on tcp port %d: %s\n", local, strerror(errno));
+		cerr("cannot listen on tcp port %d: %s\n", local, strerror(errno));
 		exit(1);
 	}
 
 	while ((cfd = async_accept(fd, remote, &rport)) >= 0) {
-		fprintf(stderr, "connection from %s:%d"CLR_LN, remote, rport);
+		cerr("connection from %s:%d"CLR_LN, remote, rport);
 		async_task(proxytask, 1, casting(cfd));
 	}
-
-	return 0;
 }
 
 int main(int argc, char **argv) {
 	if (argc != 4) {
-		fprintf(stderr, "usage: tcpproxy localport server remoteport\n");
+		cerr("usage: tcpproxy localport server remoteport\n");
 		exit(1);
 	}
 
-	events_init(1024);
-	events_t *loop = events_create(6);
-	async_task(main_main, 3, argv[1], argv[2], argv[3]);
-	async_run(loop);
-	events_destroy(loop);
-
-	return 0;
+	return events_start(1024, main_main, arrays(3, argv[1], argv[2], argv[3]));
 }

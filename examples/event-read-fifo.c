@@ -15,13 +15,13 @@ static void fifo_read(fds_t fd, int event, void *arg) {
 	char buf[255];
 	int len;
 
-	fprintf(stderr, "fifo_read called with fd: %d, event: %d, arg: %p\n", socket2fd(fd), event, arg);
+	cerr("fifo_read called with fd: %d, event: %d, arg: %p\n", socket2fd(fd), event, arg);
 	len = read(fd, buf, sizeof(buf) - 1);
 	if (len <= 0) {
 		if (len == -1)
 			perror("read");
 		else if (len == 0)
-			fprintf(stderr, "Connection closed\n");
+			cerr("Connection closed\n");
 		events_del(fd);
 		return;
 	}
@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	fprintf(stderr, "Write data to %s\n", mkfifo_name());
+	cerr("Write data to %s\n", mkfifo_name());
 
 	/* catch SIGINT so that event.fifo can be cleaned up*/
 	events_add(base, SIGINT, EVENTS_SIGNAL, 0, signal_cb, NULL);

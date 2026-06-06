@@ -1,3 +1,7 @@
+
+/* a redo of https://github.com/zelang-dev/c-asio/tree/main/examples/queue-work.c
+a much simpler version of libuv https://github.com/libuv/libuv/blob/master/docs/code/queue-work/main.c */
+
 #include <events.h>
 
 #define FIB_UNTIL 25
@@ -16,13 +20,13 @@ void *fib(param_t req) {
     else
         os_sleep(3000);
 	long fib = fib_(n);
-	fprintf(stderr, "%dth fibonacci is %lu"CLR_LN, n, fib);
+	cerr("%dth fibonacci is %lu"CLR_LN, n, fib);
 
 	return $$(n, fib);
 }
 
 void after_fib(tuple_t req) {
-	fprintf(stderr, "Done calculating %dth fibonacci, result: %d"CLR_LN,
+	cerr("Done calculating %dth fibonacci, result: %d"CLR_LN,
 		req[0].integer, req[1].integer);
 }
 
@@ -41,10 +45,12 @@ void *main_main(param_t args) {
 
 int main(int argc, char **argv) {
 	events_init(1024);
+	events_set_main((main_cb)main_main);
 	events_t *loop = events_init_pool(4);
 	async_task(main_main, 0);
 	async_run(loop);
 	events_destroy(loop);
+	events_deinit();
 
 	return 0;
 }

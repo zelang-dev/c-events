@@ -61,11 +61,5 @@ void main_main(param_t na) {
 }
 
 int main(int argc, char **argv) {
-	events_init(1024);
-	events_t *loop = events_create(1);
-	async_ex(Kb(64), main_main, 0);
-	async_run(loop);
-	events_destroy(loop);
-
-	return 0;
+	return events_start(1024, main_main, 0);
 }
