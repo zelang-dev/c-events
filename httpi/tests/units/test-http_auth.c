@@ -16,7 +16,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }
@@ -101,7 +101,7 @@ void main_main(http_ini_t *ctx) {
 	client_ri = http_request_info(client_conn);
 	ASSERT(client_ri != NULL);
 
-	ASSERT(http_get_code(client_conn) == 401);
+	ASSERT_EQ_ABORT(http_get_code(client_conn), 401);
 
 	auth_request = http_get_header(client_conn, "WWW-Authenticate");
 	ASSERT(auth_request != NULL);

@@ -21,7 +21,7 @@
 #define EVENTS_RND_UP(v, d) (((v) + (d) - 1) / (d) * (d))
 
 #define EVENTS_PAGE_SIZE 		4096
-#define EVENTS_CACHE_LINE_SIZE 	32 /* in bytes, ok if greater than the actual */
+#define EVENTS_CACHE_LINE_SIZE 	__ATOMIC_CACHE_LINE /* in bytes, ok if greater than the actual. */
 #define EVENTS_SIMD_BITS 		128
 #define EVENTS_TIMEOUT_VEC_SIZE 128
 #define EVENTS_SHORT_BITS (sizeof(short) * 8)

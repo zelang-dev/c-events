@@ -676,9 +676,9 @@ void events_del_signal(int sig, int i) {
 		events_sig[i].sig = -1;
 		events_sig_sa.sa_handler = SIG_DFL;
 		if (sigemptyset(&events_sig_sa.sa_mask) != 0)
-			cerr("Cannot setup handler for signal no %d\n", sig);
+			cerr("Cannot setup handler for signal no %d"CLR_LN, sig);
 		else if (sigaction(sig, &events_sig_sa, NULL) != 0)
-			cerr("Cannot restore handler for signal no %d\n", sig);
+			cerr("Cannot restore handler for signal no %d"CLR_LN, sig);
 	}
 }
 
@@ -694,9 +694,8 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 	}
 
 	if (i == max_event_sig) {
-		fprintf(stderr,
-			"Cannot install exception handler for signal no (%d), "
-			"too many signal exception handlers installed (max %d)\n",
+		cerr("Cannot install exception handler for signal no (%d), "
+			"too many signal exception handlers installed (max %d)"CLR_LN,
 			sig, max_event_sig);
 		return -1;
 	}
@@ -708,11 +707,11 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 	events_sig_sa.sa_handler = events_sig_handler;
 	events_sig_sa.sa_flags = SA_RESTART;
 	if (sigemptyset(&events_sig_sa.sa_mask) != 0) {
-		cerr("Cannot setup handler for signal no (%d)\n", sig);
+		cerr("Cannot setup handler for signal no (%d)"CLR_LN, sig);
 		events_sigunblock;
 		return -1;
 	} else if (sigaction(sig, &events_sig_sa, NULL) != 0) {
-		cerr("Cannot install handler for signal no (%d)\n", sig);
+		cerr("Cannot install handler for signal no (%d)"CLR_LN, sig);
 		events_sigunblock;
 		return -1;
 	} else {

@@ -21,7 +21,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }
@@ -29,14 +29,6 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 #define ASSERT(expr)                                                           \
 	do {                                                                       \
 		check_func(expr, #expr, __LINE__);                                     \
-	} while (0)
-
-#define REQUIRE(expr)                                                          \
-	do {                                                                       \
-		check_func(expr, #expr, __LINE__);                                     \
-		if (!(expr)) {                                                         \
-			exit(EXIT_FAILURE);                                                \
-		}                                                                      \
 	} while (0)
 
 #define HTTP_PORT "8080"
@@ -185,25 +177,66 @@ TEST(http_match_prefix) {
 }
 
 TEST(remove_double_dots_slashes) {
+	int i;
+
 	struct {
-		char before[20], after[20];
+		char before[256];
+		const char after[256];
 	} data[] = {
-		{"////a", "/a"},
-		{"/.....", "/."},
-		{"/......", "/"},
-		{"...", "..."},
-		{"/...///", "/./"},
-		{"/a...///", "/a.../"},
-		{"/.x", "/.x"},
-		{"/\\", "/"},
-		{"/a\\", "/a\\"},
-		{"/a\\\\...", "/a\\."},
-	};
-	size_t i;
+		{"/path/to/file.ext", "/path/to/file.ext"},
+		{"/file.ext", "/file.ext"},
+		{"/path/../file.ext", "/file.ext"},
+		{"/../to/file.ext", "/to/file.ext"},
+		{"/../../file.ext", "/file.ext"},
+		{"/./../file.ext", "/file.ext"},
+		{"/.././file.ext", "/file.ext"},
+		{"/././file.ext", "/file.ext"},
+		{"/././file.ext", "/file.ext"},
+		{"/path/.to/..file.ext", "/path/.to/..file.ext"},
+		{"/file", "/file"},
+		{"/path/", "/path/"},
+
+		{"file.ext", "file.ext"},
+		{"./file.ext", "file.ext"},
+		{"../file.ext", "file.ext"},
+		{".file.ext", ".file.ext"},
+		{"..file.ext", "..file.ext"},
+		{"file", "file"},
+		{"/x/../", "/"},
+		{"/x/../../", "/"},
+		{"/x/.././", "/"},
+		{"/./x/.././", "/"},
+
+		/* Windows specific */
+		{"\\file.ext", "/file.ext"},
+		{"\\..\\file.ext", "/file.ext"},
+		{"/file.", "/file"},
+		{"/path\\to.\\.\\file.", "/path/to/file"},
+
+		/* Multiple dots and slashes */
+		{"\\//\\\\x", "/x"},
+		{"//", "/"},
+		{"/./", "/"},
+		{"/../", "/"},
+		{"/.../", "/"},
+		{"/..../", "/"},
+		{"/...../", "/"},
+		{"/...../", "/"},
+		{"/...//", "/"},
+		{"/..././", "/"},
+		{"/.../../", "/"},
+		{"/.../.../", "/"},
+
+		/* Test cases from issues */
+		{"/foo/bar/baz/../qux.txt", "/foo/bar/qux.txt"},
+		{"/../alice/bob/../carol/david/frank/../../grace.ext/hugo/../irene.jpg",
+		 "/alice/carol/grace.ext/irene.jpg"},
+		{"/a/b/..", "/a/"},
+		{"/a/b/c/../d/../..", "/a/"}};
 
 	for (i = 0; i < get_array_size(data); i++) {
 		remove_double_dots_slashes(data[i].before);
-		ASSERT_EQ(strcmp(data[i].before, data[i].after), 0);
+		ASSERT(str_is(data[i].before, data[i].after));
 	}
 
 	return 0;

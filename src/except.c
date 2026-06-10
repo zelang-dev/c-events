@@ -363,7 +363,7 @@ void try_backtrace(ex_backtrace_t *ex) {
 	   our handler) and also skip the last frame as it's (always?) junk. */
 	for (i = 1; i < trace_size - 1; ++i) {
 		if (addr2line(except_program_name, (ex->ctx[i] - 1)) != 0)
-			fprintf(stderr,"  error determining line # for: %s\n", messages[i]);
+			cerr("  error determining line # for: %s\n", messages[i]);
 	}
 
 	if (messages) { free(messages); }
@@ -475,9 +475,12 @@ void ex_terminate(void) {
 			guard_terminate_func();
 		else if (exception_terminate_func)
 			exception_terminate_func();
-    }
+	}
 
-    exit(EXIT_FAILURE);
+	if (got_signal)
+		_Exit(EXIT_FAILURE);
+    else
+        exit(EXIT_FAILURE);
 }
 
 void ex_throw(const char *ex, const char *file, int line, const char *function, const char *message, ex_backtrace_t *dump) {
@@ -620,9 +623,8 @@ void ex_signal_seh(DWORD sig, const char *ex) {
             break;
 
     if (i == max_ex_sig)
-        fprintf(stderr,
-            "Cannot install exception handler for signal no %d (%s), "
-            "too many signal exception handlers installed (max %d)\n",
+        cerr("Cannot install exception handler for signal no %d (%s), "
+			"too many signal exception handlers installed (max %d)"CLR_LN,
             sig, ex, max_ex_sig);
     else
         ex_sig[i].ex = ex, ex_sig[i].seh = sig;
@@ -642,8 +644,7 @@ void ex_handler(int sig) {
      * Make signal handlers persistent.
      */
     if (signal(sig, ex_handler) == SIG_ERR)
-        cerr("Cannot reinstall handler for signal no %d (%s)\n",
-                sig, ex);
+		cerr("Cannot reinstall handler for signal no %d (%s)"CLR_LN, sig, ex);
 #endif
 
     for (i = 0; i < max_ex_sig; i++) {
@@ -660,17 +661,16 @@ void ex_handler(int sig) {
 void ex_signal_reset(int sig) {
 #if defined(_WIN32) || defined(_WIN64)
     if (signal(sig, SIG_DFL) == SIG_ERR)
-        cerr("Cannot install handler for signal no %d\n",
-                sig);
+		cerr("Cannot install handler for signal no %d"CLR_LN, sig);
 #else
     /*
      * Make signal handlers persistent.
      */
     ex_sig_sa.sa_handler = SIG_DFL;
     if (sigemptyset(&ex_sig_sa.sa_mask) != 0)
-        cerr("Cannot setup handler for signal no %d\n", sig);
+		cerr("Cannot setup handler for signal no %d"CLR_LN, sig);
     else if (sigaction(sig, &ex_sig_sa, NULL) != 0)
-        cerr("Cannot restore handler for signal no %d\n", sig);
+		cerr("Cannot restore handler for signal no %d"CLR_LN, sig);
 #endif
     exception_signal_set = false;
 }
@@ -684,17 +684,15 @@ void ex_signal(int sig, const char *ex) {
     }
 
     if (i == max_ex_sig) {
-        fprintf(stderr,
-                "Cannot install exception handler for signal no %d (%s), "
-                "too many signal exception handlers installed (max %d)\n",
-                sig, ex, max_ex_sig);
+		cerr("Cannot install exception handler for signal no %d (%s), "
+			"too many signal exception handlers installed (max %d)"CLR_LN,
+			sig, ex, max_ex_sig);
         return;
     }
 
 #if defined(_WIN32) || defined(_WIN64)
     if (signal(sig, ex_handler) == SIG_ERR)
-        cerr("Cannot install handler for signal no %d (%s)\n",
-                      sig, ex);
+		cerr("Cannot install handler for signal no %d (%s)"CLR_LN, sig, ex);
     else
         ex_sig[i].ex = ex, ex_sig[i].sig = sig;
 #else
@@ -704,11 +702,9 @@ void ex_signal(int sig, const char *ex) {
     ex_sig_sa.sa_handler = ex_handler;
     ex_sig_sa.sa_flags = SA_RESTART;
     if (sigemptyset(&ex_sig_sa.sa_mask) != 0)
-        cerr("Cannot setup handler for signal no %d (%s)\n",
-                      sig, ex);
+		cerr("Cannot setup handler for signal no %d (%s)"CLR_LN, sig, ex);
     else if (sigaction(sig, &ex_sig_sa, NULL) != 0)
-        cerr("Cannot install handler for signal no %d (%s)\n",
-                sig, ex);
+		cerr("Cannot install handler for signal no %d (%s)"CLR_LN, sig, ex);
     else
         ex_sig[i].ex = ex, ex_sig[i].sig = sig;
 
@@ -1122,6 +1118,9 @@ void *fence(void *ptr, func_t func) {
 
 ex_guard_t *guard_init(void) {
 	ex_guard_t *gd = (ex_guard_t *)events_calloc(1, sizeof(ex_guard_t));
+	if (is_empty(gd))
+		return null;
+
 	gd->scope->defer_arr = array();
 	gd->scope->status = DATA_GUARDED_STATUS;
 
@@ -1182,12 +1181,18 @@ EVENTS_INLINE bool guard_caught(const char *err) {
 }
 
 void guard_set(ex_context_t *ctx, const char *ex, const char *message) {
-	ex_memory_t *scope = (ex_memory_t *)scope_local()->arena;
-	scope->err = (void *)ex;
-	scope->_panic = message;
-	ctx->is_guarded = true;
-	ex_swap_set(ctx, (void *)scope);
-	ex_unwind_set(ctx, scope->is_protected);
+    ex_memory_t* scope = scope_local();
+    if (!is_empty(scope)) {
+        scope = (ex_memory_t*)scope->arena;
+        if (is_empty(scope))
+            return;
+
+        scope->err = (void*)ex;
+        scope->_panic = message;
+        ctx->is_guarded = true;
+        ex_swap_set(ctx, (void*)scope);
+        ex_unwind_set(ctx, scope->is_protected);
+    }
 }
 
 void guard_reset(ex_guard_t *block, void *scope, ex_setup_func set, ex_unwind_func unwind) {

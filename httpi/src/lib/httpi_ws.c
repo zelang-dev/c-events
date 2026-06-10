@@ -599,25 +599,54 @@ void mask_data(string_t _in, size_t in_len, uint32_t masking_key, string out) {
 	}
 }
 
+/* Get a random number (independent of C rand function) */
+static uint64_t get_random(void) {
+	static uint64_t lfsr = 0; /* Linear feedback shift register */
+	static uint64_t lcg = 0;  /* Linear congruential generator */
+	uint64_t now = events_now();
+
+	if (lfsr == 0) {
+		/* lfsr will be only 0 if has not been initialized,
+		 * so this code is called only once. */
+		lfsr = events_now();
+		lcg = events_now();
+	} else {
+		/* Get the next step of both random number generators. */
+		lfsr = (lfsr >> 1)
+			| ((((lfsr >> 0) ^ (lfsr >> 1) ^ (lfsr >> 3) ^ (lfsr >> 4)) & 1)
+				<< 63);
+		lcg = lcg * 6364136223846793005LL + 1442695040888963407LL;
+	}
+
+	/* Combining two pseudo-random number generators and a high resolution
+	 * part
+	 * of the current server time will make it hard (impossible?) to guess
+	 * the
+	 * next number. */
+	return (lfsr ^ lcg ^ now);
+}
+
+
 int http_websocket_client_write(http_t *conn, websocket_type opcode, string_t data, size_t dataLen) {
-	int retval;
-	string masked_data;
-	uint32_t masking_key;
+	int retval = -1;
+	string masked_data = null;
+	uint32_t masking_key = 0;
 
 	if (conn == NULL) return -1;
 
-	retval = -1;
 	masked_data = malloc(((dataLen + 7) / 4) * 4);
 	if (masked_data == NULL) {
 		http_log(DEBUG_ERROR, conn, "%s: cannot allocate buffer for masked websocket response: Out of memory", __func__);
 		return -1;
 	}
 
-	http_get_random((uint64_t*)&masking_key);
+	do {
+		/* Get a masking key - but not 0 */
+		masking_key = (uint32_t)get_random();
+	} while (masking_key == 0);
 	mask_data(data, dataLen, masking_key, masked_data);
 	retval = http_websocket_write_exec(conn, opcode, masked_data, dataLen, masking_key);
 	free(masked_data);
-	masked_data = null;
 	return retval;
 }
 
@@ -733,7 +762,6 @@ FORCEINLINE int http_websocket_continuation(http_t *conn, string_t data, size_t 
 }
 
 FORCEINLINE void http_websocket_wait(http_t *conn) {
-	delay(5);
 	while (is_type(conn, DATA_HTTPINFO) && !conn->ws.is_data_ready)
 		yield_active_info();
 

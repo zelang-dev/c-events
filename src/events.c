@@ -53,6 +53,7 @@ typedef struct {
 	bool started;
 	/* has the task sleep/wait system started. */
 	bool sleep_activated;
+	bool stopped;
 	int active_timer;
 	int in_callback;
 	/* number of tasks waiting in sleep mode. */
@@ -65,6 +66,13 @@ typedef struct {
 	uint32_t thrd_id;
 	/* number of other task that ran while the current task was waiting.*/
 	uint32_t num_others_ran;
+	/* random seed (for work stealing) */
+	uint32_t seed;
+	uint32_t stolen_count;
+	/* record thread integration code */
+	uint32_t reserve_code;
+	/* array for thread integration data */
+	array_t reserve_data;
 	/* per thread event loop */
 	events_t *loop;
 	future *pool;
@@ -157,16 +165,11 @@ EVENTS_INLINE int events_set_allocator(malloc_cb local_malloc, realloc_cb local_
 }
 
 void *events_realloc(void *ptr, size_t size) {
-	if (size > 0)
-		return events_allocators.local_realloc(ptr, size);
-	events_free(ptr);
-	return NULL;
+	return events_allocators.local_realloc(ptr, size);
 }
 
 void *events_malloc(size_t size) {
-	if (size > 0)
-		return events_allocators.local_malloc(size);
-	return NULL;
+	return events_allocators.local_malloc(size);
 }
 
 void events_free(void *ptr) {
@@ -1076,7 +1079,7 @@ static EVENTS_INLINE tasks_t *task_dequeue(tasklist_t *l) {
 
 void task_delete(tasks_t *co) {
 	if (!co) {
-		cerr("attempt to delete an invalid task");
+		cerr("attempt to delete an invalid task"CLR_LN);
 	} else if (!(co->status == TASK_NORMAL
 		|| co->status == TASK_DEAD
 		|| co->status == TASK_ERRED
@@ -1533,7 +1536,7 @@ void task_switch(tasks_t *co) {
 		perror("Error! `swapcontext`");
 }
 #else
-void task_switch(tasks_t *co) {
+EVENTS_INLINE void task_switch(tasks_t *co) {
 #if defined(_M_X64) || defined(_M_IX86)
 	register tasks_t *task_previous_handle = __thrd()->active_handle;
 #else
@@ -1687,8 +1690,8 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	}
 
 #if !defined(_WIN32) && !defined(USE_FIBER)
-	if (is_thread && heapsize <= Kb(32))
-		heapsize = Kb(32) + heapsize;
+	if (is_thread && heapsize <= Kb(18))
+		heapsize = Kb(18) + heapsize;
 #endif
 
 	heapsize = _tasks_align_forward(heapsize + sizeof(tasks_t), 16); /* Stack size should be aligned to 16 bytes. */
@@ -2354,7 +2357,7 @@ EVENTS_INLINE void resume(tasks_t *co) {
 			suspend();
 		else
 			task_switch(co);
-		if (task_id() == 1 && __thrd()->sleep_count == 1) {
+		if (active_task() == atexit_ctr_c_task && __thrd()->sleep_count == 1) {
 #ifndef _WIN32
 			__thrd()->active_timer++;
 #endif
@@ -2388,7 +2391,7 @@ EVENTS_INLINE void tasks_stack_check(int n) {
 	if ((char *)&t <= (char *)t->stack_base
 		|| (char *)&t - (char *)t->stack_base < 256 + n
 		|| t->magic_number != TASK_MAGIC_NUMBER) {
-		cerr("task stack overflow: &t=%p stack=%p n=%d\n", &t, t->stack_base, 256 + n);
+		cerr("task stack overflow: &t=%p stack=%p n=%d"CLR_LN, &t, t->stack_base, 256 + n);
 		abort();
 	}
 }

@@ -3093,6 +3093,6 @@ no_callback_resource:
 		return;
 	}
 	/* 17. Static file - not cached */
-	handle_static_file_request(conn, path, &file, NULL, NULL);
+	handle_static_file_request(conn, path, &file, NULL, NULL);// `path` buffer overrun issue
 	debug_info("handling %s request to %s done (static)"CLR_LN, conn->method, path);
 }

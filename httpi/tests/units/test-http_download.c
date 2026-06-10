@@ -26,25 +26,12 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 		check_func(expr, #expr, __LINE__);                                     \
 	} while (0)
 
-#define REQUIRE(expr)                                                          \
-	do {                                                                       \
-		check_func(expr, #expr, __LINE__);                                     \
-		if (!(expr)) {                                                         \
-			exit(EXIT_FAILURE);                                                \
-		}                                                                      \
-	} while (0)
-
 #define HTTP_PORT "8080"
-#ifdef NO_SSL
-#define HTTPS_PORT HTTP_PORT
-#define LISTENING_ADDR "127.0.0.1:" HTTP_PORT
-#else
 #define HTTP_REDIRECT_PORT "8088"
 #define HTTPS_PORT "8443"
 #define LISTENING_ADDR                                                         \
 	"127.0.0.1:" HTTP_PORT ",127.0.0.1:" HTTP_REDIRECT_PORT "r"                \
 	",127.0.0.1:" HTTPS_PORT "s"
-#endif
 
 static char *read_conn(http_t *conn, int *size) {
 	string data = NULL;
@@ -103,7 +90,6 @@ static void upload_cb(http_t *conn, string_t path) {
 		ASSERT(memcmp(p1, p2, len1) == 0);
 		fs_unlink(upload_filename);
 	} else if (atoi(http_get_query(conn)) == 2) {
-		trace;
 		if (!strcmp(path, "./upload_test.txt")) {
 			ASSERT((p1 = read_file("test-httpi_setup.c", &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
@@ -394,8 +380,6 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(!strncmp(ebuf, "Error 404", 9));
 
 	http_close_connection(conn);
-
-	delay(1000);
 
 	/* Stop the test server */
 	http_stop(ctx);

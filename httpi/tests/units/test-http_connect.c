@@ -10,7 +10,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }

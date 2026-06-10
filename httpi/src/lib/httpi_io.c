@@ -1661,6 +1661,7 @@ void close_connection(http_t *conn) {
 		|| conn->client->sock == INVALID_SOCKET)
 		return;
 
+	delay(thrd_cpu_count() * 125);
 	atomic_lock(&conn->ctx->nonce_mutex);
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
@@ -2257,7 +2258,7 @@ void http_process_connection(http_ini_t *ctx, http_t *conn) {
 		conn->req.handled_requests++;
 	} while (keep_alive);
 
-	debug_info("Done processing connection from %s (%f sec)"CLR_LN,
+	debug_info("Done processing connection from %s (%f sec)"CLR_LN"\n",
 		conn->req.remote_addr, difftime(time(NULL), conn->req.conn_birth_time));
 }
 
@@ -2265,8 +2266,7 @@ http_t *http_connect_impl(const struct client_options *client_options,
 	int use_ssl, struct error_data *error) {
 	http_t *conn = NULL;
 	fds_t sock;
-	u_saddr_t sa;
-	struct sockaddr *psa;
+	u_saddr_t sa, *psa;
 	socklen_t len;
 	unsigned max_req_size =	(unsigned)atoi(http_get_default_option(MAX_REQUEST_SIZE));
 
@@ -2382,12 +2382,12 @@ http_t *http_connect_impl(const struct client_options *client_options,
 	sa = *events_get_sockaddr(sock);
 	conn->client->sock = sock;
 	conn->client->lsa = sa;
-	len = sizeof(conn->client->rsa.sin);
-	psa = (struct sockaddr *)&(conn->client->rsa.sin);
-	if (!use_ssl && getsockname(sock, psa, &len) != 0) {
+	psa = &conn->client->rsa;
+	memset(&psa->storage, 0, sizeof(psa->storage));
+	len = conn->client->lsa.sa.sa_family == AF_INET6 ? sizeof(conn->client->lsa.sin6) : sizeof(conn->client->lsa.sin);
+	if (getsockname(sock, &psa->sa, &len) != 0) {
 		http_log(DEBUG_ERROR, conn,
-			"%s: getsockname() failed: %s",
-			__func__,
+			"%s: socket #%d getsockname() failed: %s", __func__, socket2fd(sock),
 			ex_strerror(os_geterror()));
 	}
 
@@ -2631,8 +2631,8 @@ void http_set_handler(http_ini_t *ctx,
 				} else {
 					/* remove existing handler */
 					*lastref = tmp_rh->next;
-					free(tmp_rh->uri);
-					free(tmp_rh);
+					tmp_rh->uri = null;
+					tmp_rh = null;
 				}
 				atomic_unlock(&ctx->nonce_mutex);
 				return;
@@ -2648,38 +2648,31 @@ void http_set_handler(http_ini_t *ctx,
 		return;
 	}
 
-	tmp_rh = (struct http_cb_info *)calloc(1, sizeof(struct http_cb_info));
-	if (tmp_rh == NULL) {
+	if (defer_free(tmp_rh = (struct http_cb_info *)calloc(1, sizeof(struct http_cb_info)))) {
+		tmp_rh->uri = str_dup(uri);
+		tmp_rh->uri_len = urilen;
+		if (handler_type == REQUEST_HANDLER) {
+			tmp_rh->handler = handler;
+		} else if (handler_type == WEBSOCKET_HANDLER) {
+			tmp_rh->subprotocols = subprotocols;
+			tmp_rh->connect_handler = connect_handler;
+			tmp_rh->ready_handler = ready_handler;
+			tmp_rh->data_handler = data_handler;
+			tmp_rh->close_handler = close_handler;
+		} else { /* AUTH_HANDLER */
+			tmp_rh->auth_handler = auth_handler;
+		}
+		tmp_rh->cbdata = cbdata;
+		tmp_rh->handler_type = handler_type;
+		tmp_rh->next = NULL;
+
+		*lastref = tmp_rh;
+	} else {
 		atomic_unlock(&ctx->nonce_mutex);
 		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
 		return;
 	}
 
-	tmp_rh->uri = str_dup_ex(uri);
-	if (!tmp_rh->uri) {
-		atomic_unlock(&ctx->nonce_mutex);
-		free(tmp_rh);
-		http_log(DEBUG_ERROR, NULL, "%s: cannot create new request handler struct, OOM", __func__);
-		return;
-	}
-
-	tmp_rh->uri_len = urilen;
-	if (handler_type == REQUEST_HANDLER) {
-		tmp_rh->handler = handler;
-	} else if (handler_type == WEBSOCKET_HANDLER) {
-		tmp_rh->subprotocols = subprotocols;
-		tmp_rh->connect_handler = connect_handler;
-		tmp_rh->ready_handler = ready_handler;
-		tmp_rh->data_handler = data_handler;
-		tmp_rh->close_handler = close_handler;
-	} else { /* AUTH_HANDLER */
-		tmp_rh->auth_handler = auth_handler;
-	}
-	tmp_rh->cbdata = cbdata;
-	tmp_rh->handler_type = handler_type;
-	tmp_rh->next = NULL;
-
-	*lastref = tmp_rh;
 	atomic_unlock(&ctx->nonce_mutex);
 }
 

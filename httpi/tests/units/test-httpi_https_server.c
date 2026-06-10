@@ -10,7 +10,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }
@@ -18,14 +18,6 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 #define ASSERT(expr)                                                           \
 	do {                                                                       \
 		check_func(expr, #expr, __LINE__);                                     \
-	} while (0)
-
-#define REQUIRE(expr)                                                          \
-	do {                                                                       \
-		check_func(expr, #expr, __LINE__);                                     \
-		if (!(expr)) {                                                         \
-			exit(EXIT_FAILURE);                                                \
-		}                                                                      \
 	} while (0)
 
 static void minimal_http_https_client_impl(const char *server,
@@ -148,8 +140,6 @@ static int minimal_test_request_handler(http_t *conn, void *cbdata) {
 const char *lastMessage;
 static int test_log_message(const http_t *conn, const char *message) {
 	(void)conn;
-	trace;
-	trace;
 	printf("LOG_MESSAGE: %s\n", message);
 	lastMessage = message;
 

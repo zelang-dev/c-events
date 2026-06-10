@@ -871,7 +871,7 @@ static void events_sig_handler(int sig) {
 	 * Make signal handlers persistent.
 	 */
 	if (signal(sig, events_sig_handler) == SIG_ERR) {
-		cerr("Cannot reinstall handler for signal (%d)\n", sig);
+		cerr("Cannot reinstall handler for signal (%d)"CLR_LN, sig);
 	}
 
 	for (i = 0; i < max_event_sig; i++) {
@@ -895,7 +895,7 @@ void events_del_signal(int sig, int i) {
 		events_sig[i].is_running = false;
 		events_sig[i].sig = -1;
 		if (signal(sig, SIG_DFL) == SIG_ERR)
-			cerr("Cannot install handler for signal no %d\n", sig);
+			cerr("Cannot install handler for signal no %d"CLR_LN, sig);
 	}
 }
 
@@ -912,16 +912,15 @@ int events_add_signal(int sig, sig_cb proc, void *data) {
 	}
 
 	if (i == max_event_sig) {
-		fprintf(stderr,
-			"Cannot install exception handler for signal no (%d), "
-			"too many signal exception handlers installed (max %d)\n",
+		cerr("Cannot install exception handler for signal no (%d), "
+			"too many signal exception handlers installed (max %d)"CLR_LN,
 			sig, max_event_sig);
 		return -1;
 	}
 
 	events_sigblock;
 	if (signal(sig, events_sig_handler) == SIG_ERR) {
-		cerr("Cannot install handler for signal no (%d)\n", sig);
+		cerr("Cannot install handler for signal no (%d)"CLR_LN, sig);
 		events_sigunblock;
 		return -1;
 	} else {

@@ -11,7 +11,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }
@@ -19,14 +19,6 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 #define ASSERT(expr)                                                           \
 	do {                                                                       \
 		check_func(expr, #expr, __LINE__);                                     \
-	} while (0)
-
-#define REQUIRE(expr)                                                          \
-	do {                                                                       \
-		check_func(expr, #expr, __LINE__);                                     \
-		if (!(expr)) {                                                         \
-			exit(EXIT_FAILURE);                                                \
-		}                                                                      \
 	} while (0)
 
 const char *lastMessage;

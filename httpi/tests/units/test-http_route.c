@@ -16,7 +16,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }
@@ -329,8 +329,7 @@ void main_main(http_ini_t *ctx) {
 	if ((i >= 0) && ((size_t)i < sizeof(buf))) {
 		buf[i] = 0;
 	} else {
-		cerr(
-			"ERROR: test_request_handlers: read returned %i (>=0, <%i)",
+		cerr("ERROR: test_request_handlers: read returned %i (>=0, <%i)",
 			(int)i,
 			(int)sizeof(buf));
 		abort();
@@ -479,14 +478,13 @@ void main_main(http_ini_t *ctx) {
 
 /* Test with CGI test executable */
 #if defined(_WIN32)
-	sprintf(cmd_buf, "%s\\cgi_test.cgi", locate_test_exes());
-	fs_copyfile(cmd_buf, "cgi_test.exe");
+	sprintf(cmd_buf, "%s\\cgi_test.exe", locate_test_exes());
+	fs_copyfile(cmd_buf, "cgi_test.cgi");
 #else
 	sprintf(cmd_buf, "%s/cgi_test", locate_test_exes());
 	fs_copyfile(cmd_buf, "cgi_test.cgi");
 #endif
 
-#if !defined(_WIN32)
 	/* TODO: add test for windows, check with POST */
 	client_conn = http_download("localhost", ipv4_port, 0, "%s", "POST /cgi_test.cgi HTTP/1.0\r\nContent-Length: 3\r\n\r\nABC");
 	ASSERT(client_conn != NULL);
@@ -495,7 +493,6 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(ri != NULL);
 	ASSERT(http_get_code(client_conn) == 200);
 	http_close_connection(client_conn);
-#endif
 
 	/* Get zipped static data - will not work if Accept-Encoding is not set */
 	client_conn = http_download("localhost", ipv4_port, 0, "%s", "GET /test_gz.txt HTTP/1.0\r\n\r\n");
@@ -523,7 +520,7 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(http_get_length(client_conn) == 52);
 	ASSERT_STR_ABORT(buf, encoded_file_content);
 
-	delay(1000);
+	delay(100);
 	http_close_connection(client_conn);
 
 	/* Get CGI generated data */
@@ -556,7 +553,7 @@ void main_main(http_ini_t *ctx) {
 	ASSERT(i > 21);
 	buf[21] = 0;
 	ASSERT_STR_ABORT(buf, "<!DOCTYPE html><html>");
-	delay(1000);
+	delay(100);
 	http_close_connection(client_conn);
 
 	/* POST to static file (will not work) */
@@ -779,12 +776,7 @@ void main_main(http_ini_t *ctx) {
 
 	http_close_connection(ws_client2_conn);
 
-	delay(500); /* Won't get any message */
-
-	/* Close the server */
-	g_ctx = NULL;
-	http_stop(ctx);
-	return;
+	/* Won't get any message */
 
 	ASSERT(ws_client1_data.closed == 1);
 	ASSERT(ws_client2_data.closed == 1);
@@ -904,7 +896,7 @@ TEST(http_route) {
 	//OPTIONS[opt_idx++] = "ssl_certificate";
 	//OPTIONS[opt_idx++] = ".";
 
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, null, &g_ctx, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(2048, null, &g_ctx, server_opts(OPTIONS)), DATA_HTTP_SERVER));
 	g_ctx = ctx;
 	httpi_start(ctx, main_main);
 

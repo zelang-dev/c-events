@@ -27,8 +27,8 @@ void *main_main(param_t args) {
     array_t wgr = waitfor(wg);
 
 	printf("\n\nWorkers has (%zd) results. \n\n", $size(wgr));
-	printf("Worker # %d returned: %d\n", cid[3], results_for(cid[3]).integer);
-    printf("Worker # %d returned: %s\n", cid[2], results_for(cid[2]).char_ptr);
+	printf("Worker # %d returned: %d"CLR_LN, cid[3], results_for(cid[3]).integer);
+    printf("Worker # %d returned: %s"CLR_LN, cid[2], results_for(cid[2]).char_ptr);
     return 0;
 }
 

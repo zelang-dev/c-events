@@ -125,7 +125,7 @@ int *mkfd2(int fd1, int fd2) {
 
  a = malloc(2 * sizeof a[0]);
  if (a == 0) {
-  fprintf(stderr, "out of memory\n");
+  cerr("out of memory\n");
   abort();
  }
  a[0] = fd1;
@@ -144,7 +144,7 @@ void *proxytask(param_t v) {
   return 0;
  }
 
- fprintf(stderr, "\nconnected to %s:%d"CLR_LN, server, port);
+ cerr("\nconnected to %s:%d"CLR_LN, server, port);
 
  async_task(rwtask, 1, mkfd2(fd, remotefd));
  async_task(rwtask, 1, mkfd2(remotefd, fd));
@@ -162,12 +162,12 @@ void *main_main(param_t args) {
  port = atoi(args[2].char_ptr);
 
  if ((fd = async_bind(OS_NULL, local, 128, true)) < 0) {
-  fprintf(stderr, "cannot listen on tcp port %d: %s\n", local, strerror(errno));
+  cerr("cannot listen on tcp port %d: %s\n", local, strerror(errno));
   exit(1);
  }
 
  while ((cfd = async_accept(fd, remote, &rport)) >= 0) {
-  fprintf(stderr, "connection from %s:%d"CLR_LN, remote, rport);
+  cerr("connection from %s:%d"CLR_LN, remote, rport);
   async_task(proxytask, 1, casting(cfd));
  }
 
@@ -176,7 +176,7 @@ void *main_main(param_t args) {
 
 int main(int argc, char **argv) {
  if (argc != 4) {
-  fprintf(stderr, "usage: tcpproxy localport server remoteport\n");
+  cerr("usage: tcpproxy localport server remoteport\n");
   exit(1);
  }
 
@@ -1023,13 +1023,13 @@ static void fifo_read(fds_t fd, int event, void *arg) {
  char buf[255];
  int len;
 
- fprintf(stderr, "fifo_read called with fd: %d, event: %d, arg: %p\n", socket2fd(fd), event, arg);
+ cerr("fifo_read called with fd: %d, event: %d, arg: %p\n", socket2fd(fd), event, arg);
  len = read(fd, buf, sizeof(buf) - 1);
  if (len <= 0) {
   if (len == -1)
    perror("read");
   else if (len == 0)
-   fprintf(stderr, "Connection closed\n");
+   cerr("Connection closed\n");
   events_del(fd);
   return;
  }
@@ -1075,7 +1075,7 @@ int main(int argc, char **argv) {
   exit(1);
  }
 
- fprintf(stderr, "Write data to %s\n", mkfifo_name());
+ cerr("Write data to %s\n", mkfifo_name());
 
  /* catch SIGINT so that event.fifo can be cleaned up*/
  events_add(base, SIGINT, EVENTS_SIGNAL, 0, signal_cb, NULL);
@@ -1103,13 +1103,13 @@ A much simpler version of **libuv** [dns](https://github.com/libuv/libuv/blob/ma
 void *main_main(param_t args) {
  char text[1024] = {0};
  int len;
- fprintf(stderr, "irc.libera.chat is..."CLR_LN);
+ cerr("irc.libera.chat is..."CLR_LN);
  struct hostent *dns = async_gethostbyname("irc.libera.chat");
 
- fprintf(stderr, "%s"CLR_LN, gethostbyname_ip(dns));
+ cerr("%s"CLR_LN, gethostbyname_ip(dns));
  fds_t server = async_connect(gethostbyname_ip(dns), 6667, true);
  while ((len = async_read(server, text, sizeof(text)) > 0)) {
-  fprintf(stderr, CLR"%s", text);
+  cerr(CLR"%s", text);
   memset(text, 0, sizeof(text));
  }
 
@@ -1147,7 +1147,7 @@ void *main_main(param_t args) {
 
 int main(int argc, char **argv) {
  if (argc < 2) {
-  fprintf(stderr, "usage: _cat filepath\n");
+  cerr("usage: _cat filepath\n");
   exit(1);
  }
 
@@ -1168,14 +1168,14 @@ A much simpler version of **libuv** [spawn](https://github.com/libuv/libuv/blob/
 #include "events.h"
 
 void _on_exit(int exit_status, int term_signal) {
- fprintf(stderr, "\nProcess exited with status %d, signal %d\n",
+ cerr("\nProcess exited with status %d, signal %d\n",
   exit_status, term_signal);
 }
 
 void *main_main(param_t args) {
  execinfo_t *child = spawn("child_command", "test-dir", NULL, _on_exit);
  if (child != NULL) {
-  fprintf(stderr, "\nLaunched process with ID %zu\n", spawn_pid(child));
+  cerr("\nLaunched process with ID %zu\n", spawn_pid(child));
   while (!spawn_is_finish(child))
    yield();
  }

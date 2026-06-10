@@ -304,7 +304,11 @@ static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 				&truncated,
 				name,
 				sizeof(name),
+#ifdef _WIN32
 				"%s%s%s",
+#else
+				"%s%s%s",
+#endif
 				path,
 				SYS_DIRSEP,
 				PASSWORDS_FILE_NAME);
@@ -322,12 +326,16 @@ static void open_auth_file(http_t *conn, string_t path, struct file *filep) {
 					break;
 				}
 			}
-
 			http_snprintf(
 				&truncated,
 				name,
 				sizeof(name),
+
+#ifdef _WIN32
+				".%.*s%s%s",
+#else
 				"%.*s%s%s",
+#endif
 				(int)(e - p),
 				p,
 				SYS_DIRSEP,
@@ -705,7 +713,7 @@ static int modify_passwords_file_ha1(string_t fname,
 
 		memset(&fp, 0, sizeof(fp));
 		/* File exists. Read it into a memory buffer. */
-		fp.fp = fopen(fname, "r");
+		fp.fp = fopen(fname, "rb");
 		if (fp.fp == NULL) {
 			/* Cannot read file. No permission? */
 			free(temp_file);
@@ -755,7 +763,7 @@ static int modify_passwords_file_ha1(string_t fname,
 	}
 
 	/* Create new file */
-	fp.fp = fopen(fname, "w");
+	fp.fp = fopen(fname, "wb");
 	if (!fp.fp) {
 		free(temp_file);
 		return 0;

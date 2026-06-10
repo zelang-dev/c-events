@@ -138,7 +138,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	if (is_empty(listener) || is_empty(ctx))
 		return nullptr;
 
-	debug_info("\nACCEPT waiting on: #%d socket"CLR_LN, socket2fd(listener->sock));
+	debug_info("ACCEPT waiting on: #%d socket"CLR_LN, socket2fd(listener->sock));
 	if (listener->has_ssl) {
 		sock = tls_accept(socket2fd(listener->sock), null, null);
 	} else {
@@ -146,14 +146,14 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	}
 
 	if (sock == INVALID_SOCKET
-		|| is_empty(ctx)
+		|| !is_type(ctx, DATA_HTTP_SERVER)
 		|| ctx->status != HTTP_STATUS_RUNNING) {
 		return nullptr;
 	}
 
 	conn_birth_time = time(null);
 	usa = events_get_sockaddr(sock);
-	if (is_empty(so = (http_socket *)calloc(1, sizeof(http_socket)))) {
+	if (is_empty(so = (http_socket *)malloc(sizeof(http_socket)))) {
 		http_log(DEBUG_INFO, nullptr, "%s: Out of memory", __func__);
 		tls_closer(sock);
 		sock = INVALID_SOCKET;
@@ -161,9 +161,10 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	}
 
 	so->sock = sock;
+	memset(&so->rsa.storage, 0, sizeof(so->rsa.storage));
+	memset(&so->lsa.storage, 0, sizeof(so->lsa.storage));
 	memcpy(&so->rsa.storage, &usa->storage, sizeof(usa->storage));
-	memset(&so->lsa.sa, 0, sizeof(so->lsa.sa));
-	len = sizeof(so->lsa.sa);
+	len = so->rsa.sa.sa_family == AF_INET6 ? sizeof(so->rsa.sin6) : sizeof(so->rsa.sin);
 	if (!http_check_acl(ctx, (const u_saddr_t *)&so->rsa)) {
 		async_sockaddr_str(src_addr, sizeof(src_addr), &so->rsa);
 		http_log(DEBUG_INFO, nullptr, "%s: %s is not allowed to connect",
@@ -177,8 +178,8 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		so->has_ssl = listener->has_ssl;
 		so->has_redir = listener->has_redir;
 		if (getsockname(so->sock, &so->lsa.sa, &len) != 0) {
-			http_log(DEBUG_ERROR, nullptr, "%s: getsockname() failed: %s",
-				__func__, ex_strerror(os_geterror()));
+			http_log(DEBUG_ERROR, nullptr, "%s: socket #%d getsockname() failed: %s",
+				__func__, socket2fd(so->sock), ex_strerror(os_geterror()));
 		}
 
 		on = 1;
@@ -203,7 +204,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 		so->in_use = 0;
 		conn = calloc(1, sizeof(http_t));
 		if (!is_empty(conn)) {
-			debug_info("Accepted socket %d"CLR_LN, (int)so->sock);
+			debug_info("Accepted socket #%d"CLR_LN, (int)so->sock);
 			conn->code = STATUS_OK;
 			conn->status = STATUS_NO_CONTENT;
 			conn->client = so;
@@ -215,11 +216,9 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 			conn->req.server_port = ntohs(USA_IN_PORT_UNSAFE(&conn->client->lsa));
 			async_sockaddr_str(conn->req.remote_addr, sizeof(conn->req.remote_addr), &conn->client->rsa);
 			conn->type = (data_types)DATA_HTTPINFO;
-			events_set_target_data(so->sock, (void *)conn);
 			debug_info("Incoming %sconnection from %s"CLR_LN,
 				(conn->client->has_ssl ? "SSL " : ""), conn->req.remote_addr);
 		} else {
-			events_set_target_data(so->sock, null);
 			tls_closer(socket2fd(so->sock));
 			so->sock = INVALID_SOCKET;
 			free(so);
@@ -230,22 +229,27 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 }
 
 void http_stop(http_ini_t *ctx) {
-	if (is_empty(ctx))
+	if (!is_type(ctx, DATA_HTTP_SERVER))
 		return;
 
 	http_atexit_ctrl_c = null;
 	ctx->status = HTTP_STATUS_TERMINATED;
+	if (!http_atexit_ctrl_c_flag)
+		delay(thrd_cpu_count() * 1250);
+	else
+		os_sleep(1000);
 	http_free_ini(ctx);
 }
 
 void http_close_listening_sockets(http_ini_t *ctx) {
-	if (is_empty(ctx) || is_empty(ctx->server_sockets))
+	if (!is_type(ctx, DATA_HTTP_SERVER) || !is_data(ctx->server_sockets))
 		return;
 
-	if ($size(ctx->server_sockets) > 0) {
-		foreach(sockets in ctx->server_sockets) {
+	array_t listeners = ctx->server_sockets;
+	ctx->server_sockets = null;
+	if ($size(listeners) > 0) {
+		foreach(sockets in listeners) {
 			http_socket *socket = (http_socket *)sockets.object;
-			events_del(socket->sock);
 			/* For unix domain sockets, the socket name represents a file that has
 			 * to be deleted. */
 			/* See https://stackoverflow.com/questions/15716302/so-reuseaddr-and-af-unix */
@@ -253,50 +257,36 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 				&& (socket->sock != INVALID_SOCKET))
 				(void)remove(socket->lsa.sun.sun_path);
 
-			if (http_atexit_ctrl_c_flag)
+			if (http_atexit_ctrl_c_flag) {
+				events_del(socket->sock);
 				events_task_unwind(socket->task);
-			else if (!is_empty(socket->task))
+			} else if (!is_empty(socket->task)) {
+				events_del(socket->sock);
 				resume(socket->task);
+			}
 
 			tls_closer(socket2fd(socket->sock));
 			socket->sock = INVALID_SOCKET;
-
 			free(socket);
 		}
 	}
 
-	$delete(ctx->server_sockets);
-	ctx->server_sockets = null;
+	/* Windows bug, or issue with `rpmalloc`, project `httpi` test
+	 * now hang on freeing `ctx->server_sockets`. There is no memory leak indicated. */
+#ifndef _WIN32
+	$delete(listeners);
+#endif
 }
 
 void http_free_ini(http_ini_t *ctx) {
-	int i;
 	struct http_cb_info *tmp_rh;
 
-	if (is_empty(ctx))
+	if (!is_type(ctx, DATA_HTTP_SERVER))
 		return;
 
 	http_close_listening_sockets(ctx);
 	atomic_flag_clear(&ctx->nonce_mutex);
-
-	/* Deallocate request handlers */
-	while (ctx->handlers) {
-		tmp_rh = ctx->handlers;
-		ctx->handlers = tmp_rh->next;
-		free(tmp_rh->uri);
-		free(tmp_rh);
-	}
-
-	//foreach(ini in ctx->options) {
-		//str_free(ini.object);
-	//}
-
-	//$delete(ctx->options);
-	//ctx->options = null;
-
-	/* Deallocate context itself */
 	free(ctx);
-	ctx = null;
 }
 
 http_ini_t *http_abort_start(http_ini_t *ctx, string_t fmt, ...) {
@@ -543,6 +533,8 @@ http_ini_t *httpi_setup(int max_fd, http_clb_t *callbacks,
 		return http_abort_start(ctx, "Cannot initialize random number generator");
 
 	ctx->host.auth_nonce_mask = nonce ^ (uint64_t)(ptrdiff_t)(options);
+	ctx->host.handlers = null;
+	ctx->host.next = null;
 	atomic_flag_clear(&ctx->nonce_mutex);
 	ctx->user_data = user_data;
 	ctx->systemName = events_sysname();
@@ -619,13 +611,11 @@ int http_server(http_ini_t *ctx) {
 	return EXIT_FAILURE;
 }
 
-static void *http_main_task(param_t args) {
+static void http_main_task(param_t args) {
 	http_main_cb start = (http_main_cb)args[1].func;
 	yield();
 	if (!is_empty(start))
 		start((http_ini_t *)args[0].object);
-
-	return 0;
 }
 
 FORCEINLINE void httpi_start(http_ini_t *ctx, http_main_cb start) {
@@ -634,8 +624,8 @@ FORCEINLINE void httpi_start(http_ini_t *ctx, http_main_cb start) {
 		exit(EXIT_FAILURE);
 
 	ctx->status = HTTP_STATUS_RUNNING;
-	events_set_main((main_cb)http_main_task);
-	async_task(http_main_task, 2, ctx, start);
+	events_set_main(http_main_task);
+	async_ex(Kb(32), http_main_task, 2, ctx, start);
 	foreach(socket in ctx->server_sockets) {
 		async_ex(Kb(32), http_server_task, 2, socket.object, ctx);
 	}

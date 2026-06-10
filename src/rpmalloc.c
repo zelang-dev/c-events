@@ -2933,8 +2933,17 @@ rpmalloc(size_t size) {
 	return _rpmalloc_allocate(heap, size);
 }
 
+static FORCEINLINE bool rpmalloc_is_valid(void *ptr) {
+	span_t *span = (span_t *)((uintptr_t)ptr & _memory_span_mask);
+	if (span->heap == NULL || (uintptr_t)span->heap >= -1)
+		return false;
+
+	return true;
+}
+
 extern void rpfree(void *ptr) {
-	_rpmalloc_deallocate(ptr);
+	if (rpmalloc_is_valid(ptr))
+		_rpmalloc_deallocate(ptr);
 }
 
 extern RPMALLOC_ALLOCATOR void *

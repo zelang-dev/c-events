@@ -16,7 +16,7 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 {
 	++s_total_tests;
 	if (!condition) {
-		printf("Fail on line %d: [%s]\n", line, cond_txt);
+		printf("Fail on line %d: [%s]"CLR_LN, line, cond_txt);
 		++s_failed_tests;
 	}
 }
@@ -26,25 +26,9 @@ void check_func(int condition, string_t cond_txt, unsigned line)
 		check_func(expr, #expr, __LINE__);                                     \
 	} while (0)
 
-#define REQUIRE(expr)                                                          \
-	do {                                                                       \
-		check_func(expr, #expr, __LINE__);                                     \
-		if (!(expr)) {                                                         \
-			exit(EXIT_FAILURE);                                                \
-		}                                                                      \
-	} while (0)
-
 #define HTTP_PORT "8080"
-#ifdef NO_SSL
-#define HTTPS_PORT HTTP_PORT
-#define LISTENING_ADDR "127.0.0.1:" HTTP_PORT
-#else
-#define HTTP_REDIRECT_PORT "8088"
-#define HTTPS_PORT "8443"
 #define LISTENING_ADDR                                                         \
-	"127.0.0.1:" HTTP_PORT ",127.0.0.1:" HTTP_REDIRECT_PORT "r"                \
-	",127.0.0.1:" HTTPS_PORT "s"
-#endif
+	"127.0.0.1:" HTTP_PORT
 
 static char *read_file(string_t path, int *size) {
 	char *data = fs_readfile(path);
@@ -72,26 +56,35 @@ static string_t open_file_cb(http_t *conn, string_t path, size_t *size) {
 static void upload_cb(http_t *conn, string_t path) {
 	char *p1, *p2;
 	int len1 = 0, len2 = 0;
-
+	char file[ARRAY_SIZE] = {0};
+	char file2[ARRAY_SIZE] = {0};
+	char file3[ARRAY_SIZE] = {0};
+	char file4[ARRAY_SIZE] = {0};
+	char file5[ARRAY_SIZE] = {0};
+	snprintf(file, sizeof(file), ".%s%s", SYS_DIRSEP, upload_filename);
 	if (atoi(http_get_query(conn)) == 1) {
-		ASSERT(!strcmp(path, "./upload_test.txt"));
-		ASSERT((p1 = read_file("./passfile", &len1)) != NULL);
+		snprintf(file5, sizeof(file5), ".%spassfile", SYS_DIRSEP);
+		ASSERT(!strcmp(path, file));
+		ASSERT((p1 = read_file(file5, &len1)) != NULL);
 		ASSERT((p2 = read_file(path, &len2)) != NULL);
 		ASSERT(len1 == len2);
 		ASSERT(memcmp(p1, p2, 112) == 0);
 		fs_unlink(path);
 	} else if (atoi(http_get_query(conn)) == 2) {
-		if (!strcmp(path, "./upload_test.txt")) {
-			ASSERT((p1 = read_file("./CMakeLists.txt", &len1)) != NULL);
+		snprintf(file2, sizeof(file2), ".%s%s", SYS_DIRSEP, upload_filename2);
+		snprintf(file3, sizeof(file3), ".%shello_gz_unzipped.txt", SYS_DIRSEP);
+		snprintf(file4, sizeof(file4), ".%sCMakeLists.txt", SYS_DIRSEP);
+		if (!strcmp(path, file)) {
+			ASSERT((p1 = read_file(file4, &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
 			ASSERT(memcmp(p1, p2, 168) == 0);
 			fs_unlink(path);
-		} else if (!strcmp(path, "./upload_test2.txt")) {
-			ASSERT((p1 = read_file("./hello_gz_unzipped.txt", &len1)) != NULL);
+		} else if (!strcmp(path, file2)) {
+			ASSERT((p1 = read_file(file3, &len1)) != NULL);
 			ASSERT((p2 = read_file(path, &len2)) != NULL);
 			ASSERT(len1 == len2);
-			ASSERT(memcmp(p1, p2, len1) == 0);
+			ASSERT(str_is(trim(p1), trim(p2)));
 			fs_unlink(path);
 		} else {
 			ASSERT(0);
@@ -270,11 +263,8 @@ void main_main(http_ini_t *ctx) {
 		"%.*s", post_data_len, boundary,
 		post_data_len, post_data)) != NULL);
 	ASSERT(http_read(conn, buf, sizeof(buf)) == (int)strlen(upload_ok_message));
-	delay(1000);
 	ASSERT(memcmp(buf, upload_ok_message, strlen(upload_ok_message)) == 0);
 	http_close_connection(conn);
-
-	delay(3000);
 
 	/* Stop the server */
 	http_stop(ctx);

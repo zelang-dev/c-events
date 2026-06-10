@@ -1025,7 +1025,6 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	socklen_t len;
 	string_t opt_txt;
 	long opt_listen_backlog;
-	char address[MAXHOSTNAMELEN] = {0};
 
 	opt_txt = phys_ctx->host.config[LISTEN_BACKLOG_SIZE];
 	opt_listen_backlog = strtol(opt_txt, NULL, 10);
@@ -1045,13 +1044,14 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 			: (ip_version == 4 ? 1 : 0));
 	if (so->has_ssl) {
 		if ((so->sock = tls_socket_set(&so->lsa.sa, vec.hostname, opt_listen_backlog, ip_family)) < 0) {
-			http_log(DEBUG_CRASH, NULL, "cannot create secure socket (entry %i)", portsTotal);
+			http_log(DEBUG_CRASH, NULL, "cannot create secure socket on %s (entry %i)", vec.hostname, portsTotal);
 			free(so);
 			return portsOk;
 		}
 	} else {
+
 		if ((so->sock = async_socket(&so->lsa.sa, vec.hostname, opt_listen_backlog, ip_family)) == INVALID_SOCKET) {
-			http_log(DEBUG_CRASH, NULL, "cannot create socket or listen (entry %i)", portsTotal);
+			http_log(DEBUG_CRASH, NULL, "cannot create socket or listen on %s (entry %i)", vec.hostname, portsTotal);
 			if (so->is_optional) {
 				portsOk++; /* it's okay if we couldn't create a socket,
 						this port is optional anyway */
@@ -1062,12 +1062,12 @@ static int http_set_ports(http_ini_t *phys_ctx, struct vec vec,
 	}
 
 	so->lsa.sa = events_get_sockaddr(so->sock)->sa;
-	memset(&usa.sa, 0, sizeof(usa.sa));
-	len = sizeof(usa.sa);
-	if ((getsockname(so->sock, &(usa.sa), &len) != 0) || (usa.sa.sa_family != so->lsa.sa.sa_family)) {
+	memset(&usa.storage, 0, sizeof(usa.storage));
+	len = so->lsa.sa.sa_family == AF_INET6 ? sizeof(so->lsa.sin6) : sizeof(so->lsa.sin);
+	if ((getsockname(so->sock, &usa.sa, &len) != 0) || (usa.sa.sa_family != so->lsa.sa.sa_family)) {
 		int err = os_geterror();
-		http_log(DEBUG_CRASH, NULL, "call to getsockname failed %s: %d (%s)"CLR_LN,
-			address, err, ex_strerror(err));
+		http_log(DEBUG_CRASH, NULL, "call to getsockname failed `%s` : %d (%s)",
+			vec.hostname, err, ex_strerror(err));
 		tls_closer(so->sock);
 		so->sock = INVALID_SOCKET;
 		free(so);

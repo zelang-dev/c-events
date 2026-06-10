@@ -7,7 +7,7 @@
 inline void assert_expected(long res, long expected, const char *file, unsigned int line, const char *expr, const char *expected_str) {
 	if (res != expected) {
 		fflush(stdout);
-		fprintf(stderr, "%s:%u: %s: error %li, expected %s\033[0K\n", file, line, expr, res, expected_str);
+		cerr("%s:%u: %s: error %li, expected %s\033[0K\n", file, line, expr, res, expected_str);
 		abort();
 	}
 }
@@ -39,8 +39,8 @@ inline void assert_expected(long res, long expected, const char *file, unsigned 
 #  define COLOR_RESET
 #endif
 
-#define PRINT_ERR(...) fprintf(stderr, COLOR_RED "Failure" COLOR_RESET __VA_ARGS__)
-#define PRINT_OK(...) fprintf(stderr, COLOR_GREEN "Passed" COLOR_RESET __VA_ARGS__)
+#define PRINT_ERR(...) cerr(COLOR_RED "Failure" COLOR_RESET __VA_ARGS__)
+#define PRINT_OK(...) cerr(COLOR_GREEN "Passed" COLOR_RESET __VA_ARGS__)
 
 #define ASSERT_EQ_(expected, actual, cmp, print_op) do { \
     if (!(cmp)) \

@@ -185,13 +185,49 @@ static string_t OPTIONS[] = {
 	NULL,
 };
 
+static int websock_server_connect(http_t *conn, void *udata) {
+	(void)conn;
+	cout("Server: Websocket connected"CLR_LN);
+	return 0; /* return 0 to accept every connection */
+}
+
+static void websock_server_ready(http_t *conn, void *udata) {
+	ASSERT((void *)conn != (void *)NULL);
+	http_websocket_write(conn, WS_OPS_TEXT, "welcome", 7);
+}
+
+static int websock_server_data(http_t *conn,
+	int bits,
+	char *data,
+	size_t data_len,
+	void *udata) {
+	(void)bits;
+	(void)data;
+	(void)udata;
+	(void)data_len;
+	(void)conn;
+
+	return 1; /* return 1 to keep the connection open */
+}
+
+static void websock_server_close(http_t *conn, void *udata) {
+	(void)conn;
+	(void)udata;
+#if !defined(__MACH__) && !defined(__APPLE__)
+	cout("Server: Close connection"CLR_LN);
+
+	/* Can not send a websocket goodbye message here -
+	 * the connection is already closed */
+#endif
+}
+
 static int websocket_data_handler(const http_t *conn, int flags, char *data, size_t data_len, void *cbdata) {
 	(void)conn;
 	(void)flags;
 	(void)data;
 	(void)data_len;
 	(void)cbdata;
-	return 200;
+	return 1;
 }
 
 void main_main(http_ini_t *ctx) {
@@ -206,6 +242,14 @@ void main_main(http_ini_t *ctx) {
 		port = atoi(HTTPS_PORT);
 	else
 		port = atoi(HTTP_PORT);
+
+	http_websocket_route(ctx,
+		"/",
+		websock_server_connect,
+		websock_server_ready,
+		websock_server_data,
+		websock_server_close,
+		null);
 
 	/* Try to connect to our own server */
 	/* Invalid port test */
@@ -229,6 +273,7 @@ void main_main(http_ini_t *ctx) {
 		NULL,
 		NULL);
 	ASSERT(conn != NULL);
+	http_websocket_wait(conn);
 	http_close_connection(conn);
 
 	/* Try an external server test */
@@ -270,7 +315,6 @@ void main_main(http_ini_t *ctx) {
 		NULL);
 	ASSERT(conn != NULL);
 	http_close_connection(conn);
-	delay(2000);
 
 	http_stop(ctx);
 }

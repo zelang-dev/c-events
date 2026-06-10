@@ -57,7 +57,8 @@ built/
 *.crt
 *.key
 *.local
-httpi/tests/units/test.txt
-httpi/tests/units/test.cgi
-httpi/tests/units/test_gz.txt.gz
-httpi/tests/units/cgi_test.cgi
+test.txt
+test.cgi
+test_gz.txt.gz
+cgi_test.cgi
+test.cgi.cmd

@@ -147,7 +147,7 @@ static bool config_check(const char *section_label, const char *config_filename,
     X509V3_set_nconf(&ctx, config);
     if (!X509V3_EXT_add_nconf(config, &ctx, (char *)sections, NULL)) {
         events_ssl_error();
-        cerr("Error loading %s section %s of %s", section_label, sections, config_filename);
+		cerr("Error loading %s section %s of %s"CLR_LN, section_label, sections, config_filename);
         return false;
     }
 
@@ -262,7 +262,7 @@ static int evp_pkey_type(int key_type) {
 #define PKEY_MIN_LENGTH		384
 static EVP_PKEY *gen_private_key(struct x509_request *req) {
     if (req->priv_key_bits < PKEY_MIN_LENGTH) {
-        cerr("Private key length must be at least %d bits, configured to %d", PKEY_MIN_LENGTH, req->priv_key_bits);
+		cerr("Private key length must be at least %d bits, configured to %d"CLR_LN, PKEY_MIN_LENGTH, req->priv_key_bits);
         return NULL;
     }
 
@@ -722,7 +722,7 @@ const char *default_cert_path(char *path) {
 	char *dir = is_empty(path) ? ".." SYS_DIRSEP : path;
 	if (str_is_empty((const char *)events_directory)) {
 		if (!(snprintf(events_directory, sizeof(events_directory), "%s", dir)))
-			cerr("Invalid certificate path %s names:", events_directory);
+			cerr("Invalid certificate path %s names:"CLR_LN, events_directory);
 	}
 
 	return (const char *)events_directory;
@@ -897,7 +897,7 @@ int tls_socket_bind(int fd) {
 			if (!tls_configure(starget->tls, starget->tls_config))
 				return fd;
 
-			cerr("\nfailed to tls_configure: %s", tls_error(starget->tls));
+			cerr("\nfailed to tls_configure: %s"CLR_LN, tls_error(starget->tls));
 		}
 	} else {
 		cerr("\nfailed to set tls_config_set_keypair_file: %s"CLR_LN, tls_config_error(starget->tls_config));
