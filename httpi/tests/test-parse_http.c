@@ -19,7 +19,7 @@ Content-Length: 192\n\
 Content-Type: text/xml\n\n";
 
     parse_http(HTTP_RESPONSE, parser, raw);
-    ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
+    ASSERT_TRUE(is_type(parser, (data_types)DATA_HTTPINFO));
 
     ASSERT_STR("Tue, 12 Apr 2016 13:58:01 GMT", http_get_header(parser, "Date"));
     ASSERT_STR("Apache/2.2.14 (Ubuntu)", http_get_header(parser, "Server"));

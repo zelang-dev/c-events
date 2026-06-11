@@ -659,7 +659,7 @@ int parse_http(http_parser_type action, http_t *this, string raw) {
 }
 
 void http_free(http_t *this) {
-	if (is_ptr_usable(this) && is_type(this, DATA_HTTPINFO)) {
+	if (is_ptr_usable(this) && is_type(this, (data_types)DATA_HTTPINFO)) {
 		this->type = DATA_INVALID;
 		if (is_data(this->cookies)) {
 			$delete(this->cookies);

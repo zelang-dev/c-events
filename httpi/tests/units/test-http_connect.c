@@ -40,7 +40,7 @@ static void minimal_http_https_client_impl(const char *server,
 	int r;
 
 	client = http_connect(server, port, use_ssl, client_err_buf, sizeof(client_err_buf));
-	ASSERT_EQ_ABORT(is_type(client, DATA_HTTPINFO), true);
+	ASSERT_EQ_ABORT(is_type(client, (data_types)DATA_HTTPINFO), true);
 	if (0 != strcmp(client_err_buf, "")) {
 		cerr("%s connection to server [%s] port [%u] failed: [%s]",
 			use_ssl ? "HTTPS" : "HTTP",

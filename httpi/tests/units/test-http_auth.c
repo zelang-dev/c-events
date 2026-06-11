@@ -252,7 +252,7 @@ TEST(http_authentication) {
 	};
 
 	/* Initialize the library */
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, null, null, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, null, null, server_opts(OPTIONS)), (data_types)DATA_HTTP_SERVER));
 
 	/* Start the server */
 	httpi_start(ctx, main_main);

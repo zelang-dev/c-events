@@ -18,6 +18,11 @@
 #undef X509_EXTENSIONS
 #else
 #include <netdb.h>
+
+#if defined(__APPLE__)
+#	include <sys/utsname.h>
+#	define _UTSNAME_LENGTH _SYS_NAMELEN
+#endif
 #endif
 
 #ifndef NI_NUMERICHOST

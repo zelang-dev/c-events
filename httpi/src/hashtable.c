@@ -262,7 +262,7 @@ hash_pair_t *hash_operation(hash_t *hash, const_t key, const_t value, data_types
         }
     }
 
-    atomic_store_explicit(&hash->buckets, buckets, memory_order_release);
+	atomic_store_explicit(&hash->buckets, (atomic_hash_pair_t **)buckets, memory_order_release);
     atomic_fetch_add(&hash->size, 1);
     return buckets[idx];
 }
@@ -334,7 +334,7 @@ void_t hash_replace(hash_t *htable, const_t key, const_t value) {
 	}
 
     buckets[idx]->value = buckets[idx]->extended;
-    atomic_store_explicit(&htable->buckets, buckets, memory_order_release);
+	atomic_store_explicit(&htable->buckets, (atomic_hash_pair_t **)buckets, memory_order_release);
     return buckets[idx];
 }
 
@@ -357,7 +357,7 @@ static FORCEINLINE void hash_put_tombstone(hash_t *htable, size_t idx) {
         buckets[idx]->key = nullptr;
         buckets[idx]->value = nullptr;
         buckets[idx]->type = DATA_NULL;
-        atomic_store_explicit(&htable->buckets, buckets, memory_order_release);
+		atomic_store_explicit(&htable->buckets, (atomic_hash_pair_t **)buckets, memory_order_release);
     }
 }
 
@@ -442,7 +442,7 @@ void hash_delete(hash_t *htable, const_t key) {
     if (buckets[idx]->type == DATA_PTR)
         htable->key_ops._free(buckets[idx]->value);
 
-    atomic_store_explicit(&htable->buckets, buckets, memory_order_release);
+	atomic_store_explicit(&htable->buckets, (atomic_hash_pair_t **)buckets, memory_order_release);
     atomic_fetch_sub(&htable->size, 1);
 
     hash_put_tombstone(htable, idx);

@@ -2756,6 +2756,7 @@ int main(int argc, char *argv[]) {
 }
 
 #elif __APPLE__ || __MACH__
+/*
 #import <Cocoa/Cocoa.h>
 
 @interface Civetweb : NSObject <NSApplicationDelegate>
@@ -2788,68 +2789,70 @@ int main(int argc, char *argv[]) {
 	[NSApp terminate:nil] ;
 }
 @end
-
+*/
 int main(int argc, char *argv[]) {
 	init_server_name();
 	init_system_info();
-	start_civetweb(argc, argv);
+	/*start_civetweb(argc, argv);
+
 
 	[NSAutoreleasePool new] ;
-	[NSApplication sharedApplication] ;
+	[NSApplication sharedApplication] ;*/
 
-	/* Add delegate to process menu item actions */
+	/* Add delegate to process menu item actions
 	Civetweb *myDelegate = [[Civetweb alloc]autorelease];
-	[NSApp setDelegate:myDelegate] ;
+	[NSApp setDelegate:myDelegate] ;*/
 
-	/* Run this app as agent */
+	/* Run this app as agent
 	ProcessSerialNumber psn = {0, kCurrentProcess};
 	TransformProcessType(&psn, kProcessTransformToBackgroundApplication);
-	SetFrontProcess(&psn);
+	SetFrontProcess(&psn);*/
 
-	/* Add status bar menu */
-	id menu = [[NSMenu new]autorelease];
+	/* Add status bar menu
+	id menu = [[NSMenu new]autorelease];*/
 
-	/* Add version menu item */
+	/* Add version menu item
 	[menu
-		addItem:[[[NSMenuItem alloc]
+		addItem:[[[NSMenuItem alloc]*/
 					/*initWithTitle:[NSString stringWithFormat:@"%s",
-					   server_name]*/
+					   server_name]
 		initWithTitle:[NSString stringWithUTF8String:g_server_name]
 		action : @selector(noexist)
-		keyEquivalent:@""] autorelease] ] ;
+		keyEquivalent:@""] autorelease] ] ;*/
 
-/* Add configuration menu item */
+/* Add configuration menu item
 	[menu addItem:[[[NSMenuItem alloc]initWithTitle:@"Edit configuration"
 		action:@selector(editConfig)
-		keyEquivalent:@""] autorelease] ] ;
+		keyEquivalent:@""] autorelease] ] ;*/
 
-/* Add connect menu item */
+/* Add connect menu item
 	[menu
 		addItem:[[[NSMenuItem alloc]initWithTitle:@"Open web root in a browser"
 		action:@selector(openBrowser)
-		keyEquivalent:@""] autorelease] ] ;
+		keyEquivalent:@""] autorelease] ] ;*/
 
-/* Separator */
-	[menu addItem:[NSMenuItem separatorItem] ] ;
+/* Separator
+	[menu addItem:[NSMenuItem separatorItem] ] ;*/
 
-	/* Add quit menu item */
+	/* Add quit menu item
 	[menu addItem:[[[NSMenuItem alloc]initWithTitle:@"Quit"
 		action:@selector(shutDown)
-		keyEquivalent:@"q"] autorelease] ] ;
+		keyEquivalent:@"q"] autorelease] ] ;*/
 
-/* Attach menu to the status bar */
+	/* Attach menu to the status bar
 	id item = [[[NSStatusBar systemStatusBar]
 		statusItemWithLength:NSVariableStatusItemLength] retain];
 	[item setHighlightMode:YES] ;
 	[item setImage:[NSImage imageNamed:@"civetweb_22x22.png"] ] ;
 	[item setMenu:menu] ;
+	*/
 
-	/* Run the app */
+	/* Run the app
 	[NSApp activateIgnoringOtherApps:YES] ;
 	[NSApp run] ;
 
 	stop_civetweb();
-	free_system_info();
+	free_system_info();*/
 
 	return EXIT_SUCCESS;
 }

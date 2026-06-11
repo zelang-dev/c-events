@@ -94,16 +94,6 @@ extern "C" {
 #endif
 /* End Architecture Detection */
 
-#if defined(__APPLE__)
-#	define __CLANG_ATOMICS
-#elif defined(__GNUC__)
-#	if __has_feature(c_atomic)
-#		define __GNUC_ATOMICS
-#	endif
-#elif defined(_WIN32)
-#	define __WIN32_ATOMICS
-#endif
-
 #if !defined(__CLANG_ATOMICS) && !defined(__GNUC_ATOMICS)
 #	if __has_feature(c_atomic)
 #		define __CLANG_ATOMICS

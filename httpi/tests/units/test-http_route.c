@@ -896,7 +896,7 @@ TEST(http_route) {
 	//OPTIONS[opt_idx++] = "ssl_certificate";
 	//OPTIONS[opt_idx++] = ".";
 
-	ASSERT_TRUE(is_type(ctx = httpi_setup(2048, null, &g_ctx, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(2048, null, &g_ctx, server_opts(OPTIONS)), (data_types)DATA_HTTP_SERVER));
 	g_ctx = ctx;
 	httpi_start(ctx, main_main);
 
@@ -918,12 +918,12 @@ TEST(list) {
 	cout("HttPi %s full api/request/route test\n\n", httpi_version());
 	getcwd(buffer, sizeof(buffer));
 	cout("Test directory is \"%s\"\n", buffer); /* should be the "test" directory */
-	if (f = fopen("hello.txt", "r"))
+	if ((f = fopen("hello.txt", "r")))
 		fclose(f);
 	else
 		cout("Error: Test directory does not contain hello.txt\n");
 
-	if (f = fopen("test-http_route.c", "r"))
+	if ((f = fopen("test-http_route.c", "r")))
 		fclose(f);
 	else
 		cout("Error: Test directory does not contain test-http_route.c\n");

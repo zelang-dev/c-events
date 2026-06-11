@@ -965,7 +965,7 @@ int http_read(http_t *conn, void_t buf, size_t len) {
 }
 
 int http_chunk_state(http_t *conn) {
-	return is_type((void_t)conn, DATA_HTTPINFO) ? conn->req.is_chunked : false;
+	return is_type((void_t)conn, (data_types)DATA_HTTPINFO) ? conn->req.is_chunked : false;
 }
 
 int http_chunk(http_t *conn, string_t chunk, unsigned int chunk_len) {

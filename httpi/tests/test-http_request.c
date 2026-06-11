@@ -2,7 +2,7 @@
 
 TEST(http_request_str) {
 	http_t *parser = http_for(nullptr, 1.1);
-	ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
+	ASSERT_TRUE(is_type(parser, (data_types)DATA_HTTPINFO));
 
     string request = str_cat_ex(6, "GET /index.html HTTP/1.1" CRLF,
                                   "Host: url.com" CRLF,

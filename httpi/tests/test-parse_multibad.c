@@ -19,7 +19,7 @@ TEST(parse_multibad) {
 	string raw = json_read_file("multibody/bad_multipart.txt");
 
 	parse_http(HTTP_RESPONSE, parser, raw);
-	ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
+	ASSERT_TRUE(is_type(parser, (data_types)DATA_HTTPINFO));
 
 	ASSERT_NULL(http_get_header(parser, "User-Agent"));
 	ASSERT_STR("localhost:8080", http_get_header(parser, "Host"));

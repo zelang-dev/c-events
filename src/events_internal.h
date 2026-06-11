@@ -544,24 +544,6 @@ struct af_unix_s {
 	u_saddr_t *addr;
 };
 
-static EVENTS_INLINE socklen_t socklen_get(const u_saddr_t *s) {
-	switch (s->storage.ss_family) {
-		case AF_UNIX:
-			return sizeof(&s->sun.sun_path);
-			break;
-		case AF_INET:
-			return sizeof(struct sockaddr_in);
-			break;
-		case AF_INET6:
-			return sizeof(struct sockaddr_in6);
-			break;
-		default:
-			return sizeof(u_saddr_t);
-			break;
-	}
-	return 0;
-}
-
 void events_set_destroy(void);
 int events_add_signal(int sig, sig_cb proc, void *data);
 void events_del_signal(int sig, int i);

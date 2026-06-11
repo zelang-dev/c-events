@@ -660,7 +660,7 @@ int http_websocket_write_exec(http_t *conn, websocket_type opcode, string_t data
 
 	atomic_lock(&conn->req.mutex);
 	// Deflate websocket messages over 100kb
-	if (use_deflate = (data_len > Kb(100)) && conn->req.accept_gzip) {
+	if ((use_deflate = (data_len > Kb(100))) && conn->req.accept_gzip) {
 		if (!conn->req.websocket_deflate_initialized) {
 			if (http_websocket_deflate_init(conn, 1) != Z_OK)
 				return 0;
@@ -762,7 +762,7 @@ FORCEINLINE int http_websocket_continuation(http_t *conn, string_t data, size_t 
 }
 
 FORCEINLINE void http_websocket_wait(http_t *conn) {
-	while (is_type(conn, DATA_HTTPINFO) && !conn->ws.is_data_ready)
+	while (is_type(conn, (data_types)DATA_HTTPINFO) && !conn->ws.is_data_ready)
 		yield_active_info();
 
 	conn->ws.is_data_ready = false;
@@ -778,7 +778,7 @@ static void websocket_client_thread(opaque_t data) {
 	http_t *conn = (http_t *)data->object;
 	http_ini_t *ctx = conn->ctx;
 
-	if (is_type(conn, DATA_HTTPINFO)) {
+	if (is_type(conn, (data_types)DATA_HTTPINFO)) {
 		ctx->status = HTTP_STATUS_RUNNING;
 		ctx->worker_taskid = task_id();
 		conn->ws.type = (data_types)DATA_WS_CLIENT;
@@ -798,7 +798,7 @@ static void generate_websocket_magic(string magic25) {
 	memcpy(buffer + sizeof(rnd), &rnd, sizeof(rnd));
 
 	size_t dst_len = 24 + 1;
-	str_encode64(buffer, magic25, dst_len);
+	str_encode64((string_t)buffer, magic25, dst_len);
 }
 
 static http_t *http_websocket_connect_impl(struct client_options *client_options,

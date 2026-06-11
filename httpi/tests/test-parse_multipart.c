@@ -19,7 +19,7 @@ TEST(parse_multipart) {
 	string raw = json_read_file("multibody/basic_multipart.txt");
 
 	parse_http(HTTP_REQUEST, parser, raw);
-	ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
+	ASSERT_TRUE(is_type(parser, (data_types)DATA_HTTPINFO));
 
 	ASSERT_STR("Mozilla/5.0 Gecko/2009042316 Firefox/3.0.10", http_get_header(parser, "User-Agent"));
 	ASSERT_STR("aram", http_get_header(parser, "Host"));

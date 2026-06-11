@@ -324,7 +324,7 @@ TEST(http_websocket_connect) {
 
 	http_ini_t *ctx;
 	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, NULL, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, NULL, server_opts(OPTIONS)), (data_types)DATA_HTTP_SERVER));
 	httpi_start(ctx, main_main);
 
 	return result;

@@ -275,7 +275,7 @@ TEST(http_upload) {
 	http_clb_t cb = http_callbacks(begin_request_handler_cb, log_message_cb, NULL, open_file_cb, NULL, upload_cb);
 
 	/* Initialize the library */
-	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, server_opts(OPTIONS)), DATA_HTTP_SERVER));
+	ASSERT_TRUE(is_type(ctx = httpi_setup(0, &cb, null, server_opts(OPTIONS)), (data_types)DATA_HTTP_SERVER));
 
 	/* Start the server */
 	httpi_start(ctx, main_main);

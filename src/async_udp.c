@@ -41,6 +41,7 @@ void udp_to(int fd, char *addr, unsigned int flags) {
 	char *host = str_parseip(addr, &ip, &port, false);
 	udp_t packet = events_target(fd)->udp;
 	packet->addr = events_get_sockaddr(fd);
+	memset(&packet->addr->storage, 0, sizeof(packet->addr->storage));
 	char buf[ARRAY_SIZE] = {0};
 	if (port)
 		snprintf(buf, sizeof(buf) - 1, "%s:%d", host, port);
@@ -49,8 +50,7 @@ void udp_to(int fd, char *addr, unsigned int flags) {
 
 	packet->flags = flags;
 	async_parse_addr(buf, &usa, &ip_family);
-	memset(packet->addr, 0, sizeof(packet->addr));
-	memcpy(packet->addr, &usa, sizeof(packet->addr));
+	memcpy(&packet->addr->storage, &usa.storage, sizeof(packet->addr->storage));
 	if (!is_empty(host))
 		events_free(host);
 }
@@ -116,7 +116,7 @@ udp_t udp_recv(int fd) {
 			client->message = events_calloc(1, m + 1);
 			client->addr = events_calloc(1, sizeof(u_saddr_t));
 			if (!is_empty(client->message) && !is_empty(client->addr)) {
-				memcpy((void *)client->addr, usa, sizeof(client->addr));
+				memcpy(&client->addr->storage, &usa->storage, sizeof(usa->storage));
 				memcpy(client->message, buf, m);
 				client->message_set = true;
 				client->type = DATA_UDP;

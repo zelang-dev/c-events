@@ -1826,7 +1826,7 @@ EVENTS_INLINE bool task_is_canceled(void) {
 }
 
 EVENTS_INLINE void task_set_canceled(uint32_t id) {
-	if ((int)id > 0 && id < (uint32_t)atomic_load(&sys_event.result_id_generate)); {
+	if ((int)id > 0 && id < (uint32_t)atomic_load(&sys_event.result_id_generate)) {
 		results_data_t *results = (results_data_t *)atomic_load_explicit(&sys_event.results, memory_order_acquire);
 		results[id]->is_canceled = true;
 		atomic_store_explicit(&sys_event.results, results, memory_order_release);

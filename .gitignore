@@ -62,3 +62,4 @@ test.cgi
 test_gz.txt.gz
 cgi_test.cgi
 test.cgi.cmd
+.DS_Store

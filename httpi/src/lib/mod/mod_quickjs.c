@@ -30,7 +30,7 @@ static JSValue qjs_write(JSContext *ctx, JSValue this_val,
 	if (!JS_IsNumber(argv[1]))
 		return JS_ThrowTypeError(ctx, "[QuickJS] len is not a number");
 
-	if (JS_ToBigUint64(ctx, &n, argv[1]))
+	if (JS_ToBigUint64(ctx, (uint64_t *)&n, argv[1]))
 		return JS_EXCEPTION;
 
 	if (!(buf = JS_ToCString(ctx, argv[0])))
@@ -61,7 +61,7 @@ static JSValue qjs_read(JSContext *ctx, JSValue this_val,
 	if (!JS_IsNumber(argv[1]))
 		return JS_ThrowTypeError(ctx, "[QuickJS] len is not a number");
 
-	if (JS_ToBigUint64(ctx, &n, argv[1]))
+	if (JS_ToBigUint64(ctx, (uint64_t *)&n, argv[1]))
 		return JS_EXCEPTION;
 
 	uint8_t *buf = JS_GetUint8Array(ctx, &buf_len, argv[0]);

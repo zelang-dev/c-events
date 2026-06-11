@@ -79,7 +79,7 @@ static int http_check_acl(http_ini_t *phys_ctx, const u_saddr_t *sa) {
 static void httpi_cleanup(void_t ptr) {
 	http_t *conn = (http_t *)ptr;
 	string_t err = guard_message();
-	if (is_type(conn, DATA_HTTPINFO)) {
+	if (is_type(conn, (data_types)DATA_HTTPINFO)) {
 		int fd = socket2fd(conn->client->sock);
 		if (!str_is_empty(err)) {
 			events_del(conn->client->sock);
@@ -146,7 +146,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 	}
 
 	if (sock == INVALID_SOCKET
-		|| !is_type(ctx, DATA_HTTP_SERVER)
+		|| !is_type(ctx, (data_types)DATA_HTTP_SERVER)
 		|| ctx->status != HTTP_STATUS_RUNNING) {
 		return nullptr;
 	}
@@ -229,7 +229,7 @@ http_t *http_accept(http_socket *listener, http_ini_t *ctx) {
 }
 
 void http_stop(http_ini_t *ctx) {
-	if (!is_type(ctx, DATA_HTTP_SERVER))
+	if (!is_type(ctx, (data_types)DATA_HTTP_SERVER))
 		return;
 
 	http_atexit_ctrl_c = null;
@@ -242,7 +242,7 @@ void http_stop(http_ini_t *ctx) {
 }
 
 void http_close_listening_sockets(http_ini_t *ctx) {
-	if (!is_type(ctx, DATA_HTTP_SERVER) || !is_data(ctx->server_sockets))
+	if (!is_type(ctx, (data_types)DATA_HTTP_SERVER) || !is_data(ctx->server_sockets))
 		return;
 
 	array_t listeners = ctx->server_sockets;
@@ -281,7 +281,7 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 void http_free_ini(http_ini_t *ctx) {
 	struct http_cb_info *tmp_rh;
 
-	if (!is_type(ctx, DATA_HTTP_SERVER))
+	if (!is_type(ctx, (data_types)DATA_HTTP_SERVER))
 		return;
 
 	http_close_listening_sockets(ctx);
@@ -575,18 +575,18 @@ static void http_server_task(param_t args) {
 	listener->task = active_scheduler_task();
 	task_data_set(listener->task, (void_t)args);
 	if (listener->has_ssl) {
-		if (is_type(ctx, DATA_HTTP_SERVER) && is_empty(certpath))
+		if (is_type(ctx, (data_types)DATA_HTTP_SERVER) && is_empty(certpath))
 			use_certificate(null, 0); // creates a self sign cert base on host system name
 		//TODO: refactor setup, cert filenames currently *.crt and *.key, where `system host name = domain name` as filename
 		//else if(certpath)
 		//	use_certificate(certpath, 0);
-		if (is_type(ctx, DATA_HTTP_SERVER) && ctx->status == HTTP_STATUS_RUNNING)
+		if (is_type(ctx, (data_types)DATA_HTTP_SERVER) && ctx->status == HTTP_STATUS_RUNNING)
 			tls_socket_bind(socket2fd(listener->sock));
 	} else {
 		yield();
 	}
 
-	while (is_type(ctx, DATA_HTTP_SERVER) && ctx->status == HTTP_STATUS_RUNNING) {
+	while (is_type(ctx, (data_types)DATA_HTTP_SERVER) && ctx->status == HTTP_STATUS_RUNNING) {
 		if (!is_empty(conn = http_accept(listener, ctx))) {
 			conn->ctx = ctx;
 			go_guard(Kb(64), http_handler, httpi_cleanup, conn);

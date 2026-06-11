@@ -416,19 +416,13 @@ char *ex_strerror(int error_code) {
 	size_t buf_len = sizeof(local->scrape);
 #ifdef _WIN32
 	int return_val = strerror_s(buf, buf_len, error_code);
-	if (return_val != 0)
-		return NULL;
-
-	return buf;
-#elif defined(__FreeBSD__) || ((_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && !defined(_GNU_SOURCE))
+#else
 	int return_val = strerror_r(error_code, buf, buf_len);
+#endif
 	if (return_val != 0)
 		return NULL;
 
 	return buf;
-#else /* GNU version of strerror_r */
-	return strerror_r(error_code, buf, buf_len);
-#endif
 }
 
 ex_context_t *ex_init(void) {

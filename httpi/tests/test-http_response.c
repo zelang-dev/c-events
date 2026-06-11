@@ -3,7 +3,7 @@
 
 TEST(http_response_str) {
 	http_t *parser = http_for(nullptr, 1.1);
-    ASSERT_TRUE(is_type(parser, DATA_HTTPINFO));
+    ASSERT_TRUE(is_type(parser, (data_types)DATA_HTTPINFO));
 
     string response = str_cat_ex(3, "HTTP/1.1 200 OK" CRLF
                                  "Date: ", http_std_date(0), CRLF
