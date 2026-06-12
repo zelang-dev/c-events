@@ -234,10 +234,12 @@ void http_stop(http_ini_t *ctx) {
 
 	http_atexit_ctrl_c = null;
 	ctx->status = HTTP_STATUS_TERMINATED;
-	if (!http_atexit_ctrl_c_flag)
-		delay(thrd_cpu_count() * 1250);
+#ifdef USE_DEBUG
+	if (!http_atexit_ctrl_c_flag && events_is_active() && tasks_is_active())
+		delay(thrd_cpu_count() * 625);
 	else
 		os_sleep(1000);
+#endif
 	http_free_ini(ctx);
 }
 
@@ -271,11 +273,12 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 		}
 	}
 
-	/* Windows bug, or issue with `rpmalloc`, project `httpi` test
-	 * now hang on freeing `ctx->server_sockets`. There is no memory leak indicated. */
-#ifndef _WIN32
+	/* TODO: recheck a Windows bug, a issue with `rpmalloc`, project `httpi` test
+	 * now hang on freeing `ctx->server_sockets`. There is no memory leak indicated.
+	 * Memory already released. A check has been added to `rpfree()` to just return, do nothing. */
+//#if !defined(_WIN32) && !defined(__APPLE__)
 	$delete(listeners);
-#endif
+//#endif
 }
 
 void http_free_ini(http_ini_t *ctx) {

@@ -366,11 +366,11 @@ TEST(mask_data) {
 
 	/* TODO: check this for big endian */
 	mask_data(_in, 5, 0x01020304, out);
-	ASSERT_UEQ((unsigned char)out[0], 0u ^ 4u);
-	ASSERT_UEQ((unsigned char)out[1], 1u ^ 3u);
-	ASSERT_UEQ((unsigned char)out[2], 2u ^ 2u);
-	ASSERT_UEQ((unsigned char)out[3], 3u ^ 1u);
-	ASSERT_UEQ((unsigned char)out[4], 4u ^ 4u);
+	ASSERT_UEQ((unsigned char)out[0], (0u ^ 4u));
+	ASSERT_UEQ((unsigned char)out[1], (1u ^ 3u));
+	ASSERT_UEQ((unsigned char)out[2], (2u ^ 2u));
+	ASSERT_UEQ((unsigned char)out[3], (3u ^ 1u));
+	ASSERT_UEQ((unsigned char)out[4], (4u ^ 4u));
 
 	return 0;
 }
@@ -558,7 +558,7 @@ TEST(str_encode64) {
 	int i;
 
 	for (i = 0; _in[i] != NULL; i++) {
-		str_encode64((unsigned char *)_in[i], buf, sizeof(buf));
+		str_encode64(_in[i], buf, sizeof(buf));
 		ASSERT(!strcmp(buf, out[i]));
 	}
 

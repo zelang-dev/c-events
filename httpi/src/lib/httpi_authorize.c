@@ -705,7 +705,7 @@ static int modify_passwords_file_ha1(string_t fname,
 		temp_buf_len = (int)st.st_size + 1024;
 
 		/* Allocate memory (instead of using a temporary file) */
-		temp_file = (char *)calloc((size_t)temp_buf_len, 1);
+		temp_file = (char *)calloc(1, (size_t)temp_buf_len + 1);
 		if (!temp_file) {
 			/* Out of memory */
 			return 0;

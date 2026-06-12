@@ -2935,7 +2935,7 @@ rpmalloc(size_t size) {
 
 static FORCEINLINE bool rpmalloc_is_valid(void *ptr) {
 	span_t *span = (span_t *)((uintptr_t)ptr & _memory_span_mask);
-	if (span->heap == NULL || (uintptr_t)span->heap >= -1)
+	if (UNEXPECTED(!span) || ptr == NULL || span->heap == NULL || span->block_size == 0)
 		return false;
 
 	return true;

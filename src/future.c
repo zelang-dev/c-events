@@ -282,7 +282,7 @@ promise *alloc_promise(void) {
 promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...) {
 	if (is_promise(f)) {
 		va_list ap;
-		future *thrd = futures_pool();
+		future *thrded, *thrd = futures_pool();
 
 		va_start(ap, num_args);
 		array_t args = data_ex(num_args, ap);
@@ -300,9 +300,18 @@ promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...) {
 			atomic_flag_clear(&f->mutex);
 			atomic_flag_clear(&f->done);
 			/* determent which thread tasks pool receive next `future` job. */
-			if (thrd->id == sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
-				% ($size(sys_event.future_cpu_idx)))].u_int]->pool->id)
+			thrded = sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
+				% ($size(sys_event.future_cpu_idx)))].u_int]->pool;
+			if (is_empty(thrded)) {
+				do {
+					atomic_fetch_add(&sys_event.future_id_count, 1);
+					thrded = sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
+						% ($size(sys_event.future_cpu_idx)))].u_int]->pool;
+				} while (data_type(thrded) != (data_types)DATA_THREAD);
+				thrd = thrded;
+			} else {
 				atomic_fetch_add(&sys_event.future_id_count, 1);
+			}
 
 			array_t data = arrays(2, thrd, f);
 			tasks_t *t = create_task(Kb(32), (data_func_t)queue_work_handler, data, false, true);
@@ -329,6 +338,7 @@ promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...) {
 promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 	va_list ap;
 	promise *f = null;
+	future *thrded = null;
 
 	va_start(ap, num_args);
 	array_t args = data_ex(num_args, ap);
@@ -342,9 +352,18 @@ promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 			atomic_flag_clear(&f->mutex);
 			atomic_flag_clear(&f->done);
 			/* determent which thread tasks pool receive next `future` job. */
-			if (thrd->id == sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
-				% ($size(sys_event.future_cpu_idx)))].u_int]->pool->id)
+			thrded = sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
+				% ($size(sys_event.future_cpu_idx)))].u_int]->pool;
+			if (is_empty(thrded)) {
+				do {
+					atomic_fetch_add(&sys_event.future_id_count, 1);
+					thrded = sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
+							% ($size(sys_event.future_cpu_idx)))].u_int]->pool;
+				} while (data_type(thrded) != (data_types)DATA_THREAD);
+				thrd = thrded;
+			} else {
 				atomic_fetch_add(&sys_event.future_id_count, 1);
+			}
 
 			array_t data = arrays(2, thrd, f);
 			tasks_t *t = create_task(Kb(32), (data_func_t)queue_work_handler, data, false, true);

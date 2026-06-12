@@ -2638,7 +2638,8 @@ static int __future_wrapper(void *arg) {
 			promise *worker = (promise *)$shift(queue->jobs).object;
 			atomic_unlock(&work->mutex);
 
-			res->object = worker->func(worker->args);
+			if (worker && worker->func)
+				res->object = worker->func(worker->args);
 			promise_set(worker, res->object);
 
 			$delete(worker->args);

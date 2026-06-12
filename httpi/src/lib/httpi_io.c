@@ -1661,7 +1661,9 @@ void close_connection(http_t *conn) {
 		|| conn->client->sock == INVALID_SOCKET)
 		return;
 
-	delay(thrd_cpu_count() * 125);
+#ifdef USE_DEBUG
+	delay(thrd_cpu_count() * 75);
+#endif
 	atomic_lock(&conn->ctx->nonce_mutex);
 	/* Set close flag, so keep-alive loops will stop */
 	conn->req.must_close = 1;
