@@ -2,7 +2,7 @@
 
 [![Windows & Ubuntu & macOS x86_64](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci.yml) [![CentOS Stream 9+](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_centos.yml) [![armv7, aarch64, riscv64](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu.yml) [![Apple M1](https://github.com/zelang-dev/c-events/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci-macos.yml) [![ppc64le](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-ppc64le.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-ppc64le.yml) [![s390x](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-s390x.yml/badge.svg)](https://github.com/zelang-dev/c-events/actions/workflows/ci_cpu-s390x.yml)
 
-A *tiny*, *lightning fast* **event loop**, utilizing single interface for **epoll**, **kqueue**, **iocp**.
+A *tiny*, *lightning fast* **event loop**, powered by [Green Threads](https://en.wikipedia.org/wiki/Green_thread), utilizing single interface for **epoll**, **kqueue**, **iocp**.
 
 This project takes up where [picoev](https://github.com/kazuho/picoev) left off, it forks and remake, bringing in aspects from [FastCGI_A_High-Performance_Web_Server_Interface_FastCGI.html](https://fastcgi-archives.github.io/FastCGI_A_High-Performance_Web_Server_Interface_FastCGI.html) source [fcgi2](https://github.com/FastCGI-Archives/fcgi2), specificity, how to make **Windows** `file descriptors` aka *fake* behave like on **Linux**. As such, this **events** library handles general non-blocking file I/O.
 
@@ -1227,8 +1227,8 @@ Add to **CMakeLists.txt**
 find_package(events QUIET)
 if(NOT events_FOUND)
     FetchContent_Declare(events
-        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.7.1.zip
-        URL_MD5 0353278d6be4142db9e5b7ce85213a3d
+        URL https://github.com/zelang-dev/c-events/archive/refs/tags/0.8.0.zip
+        URL_MD5 7dba0729f74fbb1711a2aca4e32ba1ba
     )
     FetchContent_MakeAvailable(events)
 endif()
