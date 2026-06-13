@@ -151,7 +151,11 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME} PUBLIC ${OPENSSL_SSL_LIBRARY})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${OPENSSL_CRYPTO_LIBRARY})
-target_link_libraries(${PROJECT_NAME} PUBLIC opentls)
+if(UNIX AND NOT APPLE)
+	target_link_libraries(${PROJECT_NAME} PUBLIC opentls crypto dl)
+else()
+	target_link_libraries(${PROJECT_NAME} PUBLIC opentls)
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
 	OUTPUT_NAME ${PROJECT_NAME}

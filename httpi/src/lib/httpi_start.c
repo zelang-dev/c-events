@@ -273,12 +273,12 @@ void http_close_listening_sockets(http_ini_t *ctx) {
 		}
 	}
 
-	/* TODO: recheck a Windows bug, a issue with `rpmalloc`, project `httpi` test
+	/* Windows bug, a issue with `rpmalloc`, project `httpi` test
 	 * now hang on freeing `ctx->server_sockets`. There is no memory leak indicated.
 	 * Memory already released. A check has been added to `rpfree()` to just return, do nothing. */
-//#if !defined(_WIN32) && !defined(__APPLE__)
+#if !defined(_WIN32) || (defined(_WIN32) && defined(NO_RPMALLOC))
 	$delete(listeners);
-//#endif
+#endif
 }
 
 void http_free_ini(http_ini_t *ctx) {

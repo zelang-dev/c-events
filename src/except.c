@@ -416,11 +416,15 @@ char *ex_strerror(int error_code) {
 	size_t buf_len = sizeof(local->scrape);
 #ifdef _WIN32
 	int return_val = strerror_s(buf, buf_len, error_code);
-#else
-	int return_val = strerror_r(error_code, buf, buf_len);
-#endif
 	if (return_val != 0)
 		return NULL;
+#elif defined(__FreeBSD__) || defined(__APPLE__)
+	int return_val = strerror_r(error_code, buf, buf_len);
+	if (return_val != 0)
+		return NULL;
+#else /* GNU version of strerror_r */
+	return strerror_r(error_code, buf, buf_len);
+#endif
 
 	return buf;
 }
