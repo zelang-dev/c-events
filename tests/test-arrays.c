@@ -6,9 +6,9 @@ int some_func(int args) {
 }
 
 TEST(arrays) {
-	array_t d = arrays(8, "hello", "world", 32,
-		"hello world", 123, some_func,
-		"four", 600);
+	array_t d = arrays(8, "hello", "world", casting(32),
+		"hello world", casting(123), some_func,
+		"four", casting(600));
 	ASSERT_TRUE(is_data(d));
 	ASSERT_TRUE(($size(d) == 8));
 
