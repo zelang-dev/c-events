@@ -11,7 +11,7 @@ int main(int argc, char *argv[]) {
 	os_sleep(500);
 
 	cout("`%s` argument received"CLR_LN, argv[1]);
-	os_sleep(200);
+	os_sleep(100);
 
 	cerr("Exiting"CLR_LN);
 

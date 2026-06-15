@@ -263,7 +263,7 @@ struct sys_events_s {
 	mach_timebase_info_data_t timer;
 #endif
 	filefd_t pHandle;
-	char pNamed[FILENAME_MAX];
+	char pNamed[ARRAY_SIZE];
 	array_t gc;
 	/* `future` thread id index for `promise` pool */
 	array_t future_cpu_idx;

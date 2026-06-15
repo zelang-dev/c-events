@@ -626,6 +626,7 @@ EVENTS_INLINE int fs_close(int fd) {
 
 	int r = queue_get(queue_work(thrd, _os_close, 1, casting(fd))).integer;
 	thrd->last_fd = fd;
+	fd = TASK_ERRED;
 
 	return r;
 }
@@ -823,7 +824,7 @@ char *exec_addenv(char *env, size_t *size, uint32_t num_pairs, ...) {
 			len = snprintf(buf, sizeof(buf), "%s=%s;", k, v);
 			*size += len;
 			data = events_realloc(data, *size);
-			memcpy(data + *size - len, buf, len);
+			memcpy(data + (*size - len), buf, len);
 		}
 		va_end(ap);
 	}

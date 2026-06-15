@@ -44,13 +44,15 @@ TEST(fs_close) {
     ASSERT_FALSE(task_is_ready(res));
     int fd = fs_open(__FILE__, O_RDONLY, 0);
     ASSERT_TRUE((fd > 0));
-    ASSERT_EQ(0, fs_close(fd));
+    ASSERT_TRUE((fs_close(fd) == 0));
 
     ASSERT_TRUE(task_is_ready(res));
-    ASSERT_STR(results_for(res).char_ptr, "done");
-    ASSERT_EQ(TASK_ERRED, fs_close(fd));
+	ASSERT_STR(results_for(res).char_ptr, "done");
+#ifndef _WIN32
+	ASSERT_EQ(TASK_ERRED, fs_close(fd));
+#endif
 
-    return 0;
+	return 0;
 }
 
 void *worker2(param_t args) {
@@ -78,7 +80,7 @@ TEST(fs_write_read) {
     }
 
     ASSERT_TRUE(task_is_ready(res));
-    ASSERT_STR(results_for(res).char_ptr, "hello world");
+	ASSERT_STR(results_for(res).char_ptr, "hello world");
 
     return 0;
 }

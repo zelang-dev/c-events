@@ -1323,6 +1323,12 @@ static void *task_wait_system(void *v) {
 		if (is_empty(__thrd()->loop))
 			return 0;
 
+		if (__thrd()->is_main
+			&& atomic_flag_load_explicit(&__thrd()->pool->queue->shutdown, memory_order_relaxed)) {
+			__thrd()->loop = null;
+			return 0;
+		}
+
 		while ((t = __thrd()->sleep_queue->head) && now >= t->alarm_time || (t && t->halt)) {
 			l = __thrd()->sleep_queue;
 			dequeue(l, t);
@@ -1661,11 +1667,6 @@ static results_data_t tasks_create_result(void) {
 	return result;
 }
 
-/* Utility for aligning addresses. */
-static EVENTS_INLINE size_t _tasks_align_forward(size_t addr, size_t align) {
-	return (addr + (align - 1)) & ~(align - 1);
-}
-
 /* Create new task. */
 tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thread, bool is_skipping) {
 	void *memory = NULL;
@@ -1684,7 +1685,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 		heapsize = MINSIGSTKSZ + heapsize;
 #endif
 
-	if (events_main_func == (main_cb)func && !events_tasks_started && !is_skipping) {
+	if (!events_tasks_started && events_main_func == (main_cb)func && !is_skipping) {
 		is_main = true;
 		heapsize = heapsize * 6;
 	}
@@ -1693,8 +1694,8 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	if (is_thread && heapsize <= Kb(18))
 		heapsize = Kb(18) + heapsize;
 #endif
-
-	heapsize = _tasks_align_forward(heapsize + sizeof(tasks_t), 16); /* Stack size should be aligned to 16 bytes. */
+	/* Stack size should be aligned to 16 bytes. */
+	heapsize = _mem_align_up(heapsize + sizeof(tasks_t), 16);
 	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL) {
 		perror("Error! calloc");
 		return NULL;
@@ -1742,6 +1743,7 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 		co->garbage = array();
 		atexit_ctr_c_task = co;
 		exception_ctrl_c_func = events_ctr_c_unwind;
+		events_tasks_started = true;
 	}
 
 	return co;

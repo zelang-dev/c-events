@@ -307,7 +307,7 @@ promise *promise_work(promise *f, param_func_t fn, size_t num_args, ...) {
 					atomic_fetch_add(&sys_event.future_id_count, 1);
 					thrded = sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
 						% ($size(sys_event.future_cpu_idx)))].u_int]->pool;
-				} while (data_type(thrded) != (data_types)DATA_THREAD);
+				} while (data_type(thrded) != DATA_THREAD);
 				thrd = thrded;
 			} else {
 				atomic_fetch_add(&sys_event.future_id_count, 1);
@@ -359,7 +359,7 @@ promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 					atomic_fetch_add(&sys_event.future_id_count, 1);
 					thrded = sys_event.local[sys_event.future_cpu_idx[(atomic_load(&sys_event.future_id_count)
 							% ($size(sys_event.future_cpu_idx)))].u_int]->pool;
-				} while (data_type(thrded) != (data_types)DATA_THREAD);
+				} while (data_type(thrded) != DATA_THREAD);
 				thrd = thrded;
 			} else {
 				atomic_fetch_add(&sys_event.future_id_count, 1);

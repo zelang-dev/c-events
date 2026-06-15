@@ -812,9 +812,6 @@ int err_check_handle(HANDLE handle) {
 
 #define array_count(a) (sizeof(a) / (sizeof((a)[0])))
 
-#define container_of(ptr, type, member) \
-  ((type*) ((uintptr_t) (ptr) - offsetof(type, member)))
-
 #define unused_var(v) ((void) (v))
 
 /* Polyfill `inline` for older versions of msvc (up to Visual Studio 2013) */

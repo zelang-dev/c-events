@@ -741,7 +741,7 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 	}
 
 	BOOL b = CreateProcessA(filename, cmd, NULL, NULL, inherit_handles, i->detached ? DETACHED_PROCESS : 0,
-		/*env*/ i->env,
+		/*env*/ (i->env == null ? null : (LPVOID)*i->env),
 		/*startup dir*/ NULL,
 		&si,
 		&info);

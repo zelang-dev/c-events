@@ -376,6 +376,15 @@ C_API void getopt_message_set(const char *message, int minium, bool is_ordered);
 /** Set/store ~main~ `argc`, `**argv` arguments. */
 C_API void getopt_arguments_set(int argc, char **argv);
 
+#ifndef _mem_align_up
+/* Utility for aligning addresses to the nearest power of two. */
+#	define _mem_align_up(sz_addr, align)	(((sz_addr) + ((align) - 1)) & ~((align) - 1))
+#endif
+
+#ifndef container_of
+#	define container_of(ptr, type, member)	((type *) ((uintptr_t)(ptr) - offsetof(type, member)))
+#endif
+
 #ifndef casting
 	/* Cast ~val~, a `non-pointer` to `pointer` like value,
 	makes reference if variable. */

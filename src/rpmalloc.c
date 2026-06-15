@@ -179,6 +179,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 
 #if defined(_WIN32) && defined(_MSC_VER)
 #include <fibersapi.h>
@@ -2935,7 +2936,7 @@ rpmalloc(size_t size) {
 
 static FORCEINLINE bool rpmalloc_is_valid(void *ptr) {
 	span_t *span = (span_t *)((uintptr_t)ptr & _memory_span_mask);
-	if (UNEXPECTED(!span) || ptr == NULL || span->heap == NULL || (uintptr_t)span->heap >= -1) {
+	if (UNEXPECTED(!span) || ptr == NULL || span->heap == NULL || (intptr_t)span->heap == LLONG_MAX) {
 		return false;
 	}
 
