@@ -38,7 +38,7 @@ typedef unsigned long __sigset_t;
 # endif
 
 #if (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(__i386__) \
-|| defined(_M_IX86) || defined(_M_ARM64) || defined(__arm64__)) && !defined(_WIN32) /* && !defined(__APPLE__) */
+|| defined(_M_IX86) || defined(_M_ARM64) || defined(__arm64__)) /* && !defined(_WIN32)  && !defined(__APPLE__) */
 #	undef USE_ASSEMBLY
 #	define USE_ASSEMBLY 1
 # 	undef USE_UCONTEXT
