@@ -531,10 +531,10 @@ struct ex_guard_s {
 struct udp_packet_s {
 	data_types type;
 	int socket;
-	u_saddr_t *addr;
+	int message_set;
 	unsigned int flags;
-	bool message_set;
 	ssize_t nread;
+	u_saddr_t *addr;
 	char *message, ipaddr[48];
 };
 

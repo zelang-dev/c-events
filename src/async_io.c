@@ -710,7 +710,7 @@ char *fs_readfile(const char *path) {
 	int fd = 0;
 	size_t len = fs_filesize(path);
 	if (len > 0 && (fd = fs_open(path, O_RDONLY, 0)) > 0) {
-		if (defer_free(buffer = events_calloc(1, len + 1))) {
+		if (defer_free(buffer = events_calloc(1, _mem_align_up(len + 1, 2)))) {
 			fs_read(fd, buffer, len);
 			fs_close(fd);
 		}

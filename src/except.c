@@ -1115,7 +1115,7 @@ void *fence(void *ptr, func_t func) {
 }
 
 ex_guard_t *guard_init(void) {
-	ex_guard_t *gd = (ex_guard_t *)events_calloc(1, sizeof(ex_guard_t));
+	ex_guard_t *gd = (ex_guard_t *)events_calloc(1, _mem_align_up(sizeof(ex_guard_t), 2));
 	if (is_empty(gd))
 		return null;
 

@@ -286,7 +286,7 @@ array_t data_ex(size_t num_of, va_list ap_copy) {
 array_t arrays(size_t count, ...) {
 	va_list ap;
 	array_t params = NULL;
-	size_t i, size = count ? count + 1 : data_queue_size();
+	size_t i, size = count ? _mem_align_up((count + 1), 2) : data_queue_size();
 	array_grow(params, size);
 
 	if (count > 0) {
@@ -364,7 +364,7 @@ EVENTS_INLINE char *str_cpy(char *dest, const char *src, size_t len) {
 }
 
 static EVENTS_INLINE char *str_memdup_ex(const void *src, size_t len, bool autofree) {
-	void *ptr = events_calloc(1, len + 1);
+	void *ptr = events_calloc(1, _mem_align_up((len + 1), 2));
 	if (ptr != NULL) {
 		if (autofree)
 			defer_free(ptr);
@@ -402,7 +402,7 @@ char *str_cat_ex(int num_args, ...) {
 			strsize += strlen(va_arg(ap, char *));
 		va_end(ap);
 
-		if ((res = events_calloc(1, strsize + 1)) != NULL) {
+		if ((res = events_calloc(1, _mem_align_up(strsize + 1, 2))) != NULL) {
 			strsize = 0;
 			va_start(ap, num_args);
 			for (i = 0; i < num_args; i++) {
@@ -458,7 +458,7 @@ char *str_swap_ex(const char *haystack, const char *needle, const char *swap) {
 	if (cnt == 0)
 		return NULL;
 
-	result = (char *)events_calloc(1, i + cnt * (newWlen - oldWlen) + 1);
+	result = (char *)events_calloc(1, _mem_align_up((i + cnt * (newWlen - oldWlen) + 1), 2));
 	i = 0;
 	while (*haystack) {
 		if (strstr(haystack, needle) == haystack) {
@@ -513,7 +513,7 @@ void **mem_split_ex(const void *src, size_t src_len, const char *delim, int *cou
 	}
 
 	ptrsSize = (nbWords + 1) * sizeof(char *);
-	ptrs = data = events_calloc(1, ptrsSize + src_len + 1);
+	ptrs = data = events_calloc(1, _mem_align_up(ptrsSize + src_len + 1, 2));
 
 	if (data) {
 		*ptrs = _s = str_cpy((char *)data + ptrsSize, (const char *)src, src_len);
@@ -556,7 +556,7 @@ char **str_split_ex(const char *s, const char *delim, int *count) {
 	}
 
 	ptrsSize = (nbWords + 1) * sizeof(char *);
-	ptrs = data = events_calloc(1, ptrsSize + sLen + 1);
+	ptrs = data = events_calloc(1, _mem_align_up(ptrsSize + sLen + 1, 2));
 
 	if (data) {
 		*ptrs = _s = str_cpy((char *)data + ptrsSize, s, sLen);
@@ -596,7 +596,7 @@ array_t str_explode(const char *s, const char *delim) {
 
 	if (nbWords > 0) {
 		ptrsSize = nbWords * sizeof(char *);
-		if (defer_free(ptrs = events_calloc(1, ptrsSize + sLen + 1))) {
+		if (defer_free(ptrs = events_calloc(1, _mem_align_up(ptrsSize + sLen + 1, 2)))) {
 			first = _s = str_cpy((char *)ptrs, s, sLen);
 			while ((_s = strstr(_s, delim))) {
 				*_s = '\0';
@@ -631,7 +631,7 @@ char *str_repeat(char *str, int mult) {
 
 	/* Initialize the result char **/
 	result_len = len * mult;
-	if (defer_free(result = events_calloc(1, result_len + 1))) {
+	if (defer_free(result = events_calloc(1, _mem_align_up(result_len + 1, 2)))) {
 		/* Heavy optimization for situations where input char *is 1 byte long */
 		if (len == 1) {
 			memset(result, *str, mult);
@@ -685,7 +685,7 @@ char *str_pad(char *str, int length, char *pad, str_pad_type pad_type) {
 	}
 
 	num_pad_chars = length - input_len;
-	if (defer_free(result = events_calloc(1, input_len + num_pad_chars + 1))) {
+	if (defer_free(result = events_calloc(1, _mem_align_up(input_len + num_pad_chars + 1, 2)))) {
 		/* We need to figure out the left/right padding lengths. */
 		switch (pad_type) {
 			case STR_PAD_RIGHT:
@@ -1211,7 +1211,7 @@ char *str_parseip(char *name, uint32_t *ip, int *port, bool autofree) {
 }
 
 static EVENTS_INLINE char *uri_dup(const void *src, size_t len) {
-	char *ptr = (char *)events_calloc(1, len + 1);
+	char *ptr = (char *)events_calloc(1, _mem_align_up(len + 1, 2));
 	return is_empty(ptr) ? null : memcpy(ptr, src, len);
 }
 

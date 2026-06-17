@@ -24,7 +24,7 @@ void deque_init(events_deque_t *q, int size_hint) {
 	atomic_init(&q->top, 0);
 	atomic_init(&q->bottom, 0);
 	atomic_init(&q->available, 0);
-	deque_array_t *a = events_calloc(1, sizeof(deque_array_t) + sizeof(tasks_t *) * size_hint);
+	deque_array_t *a = events_calloc(1, _mem_align_up((sizeof(deque_array_t) + sizeof(tasks_t *) * size_hint), 2));
 	if (a == NULL)
 		abort();
 
@@ -45,7 +45,7 @@ void deque_resize(events_deque_t *q) {
 	deque_array_t *a = (deque_array_t *)atomic_load_explicit(&q->array, memory_order_relaxed);
 	size_t old_size = a->size;
 	size_t new_size = old_size * 2;
-	deque_array_t *new = events_calloc(1, sizeof(deque_array_t) + sizeof(tasks_t *) * new_size);
+	deque_array_t *new = events_calloc(1, _mem_align_up((sizeof(deque_array_t) + sizeof(tasks_t *) * new_size), 2));
 	if (new == NULL)
 		abort();
 

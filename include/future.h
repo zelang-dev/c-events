@@ -25,7 +25,6 @@ typedef struct ex_guard_s ex_guard_t;
 typedef struct ex_ptr_s ex_ptr_t;
 typedef struct ex_context_s ex_context_t;
 typedef struct ex_backtrace_s ex_backtrace_t;
-typedef struct server_socket_s server_socket;
 typedef void (*ex_setup_func)(ex_context_t *, const char *, const char *);
 typedef void (*ex_terminate_func)(void);
 typedef void (*ex_unwind_func)(void *);

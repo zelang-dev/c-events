@@ -113,7 +113,7 @@ udp_t udp_recv(int fd) {
 			client->socket = fd;
 			client->flags = packet->flags;
 			client->nread = m;
-			client->message = events_calloc(1, m + 1);
+			client->message = events_calloc(1, _mem_align_up(m + 1, 2));
 			client->addr = events_calloc(1, sizeof(u_saddr_t));
 			if (!is_empty(client->message) && !is_empty(client->addr)) {
 				memcpy(&client->addr->storage, &usa->storage, sizeof(usa->storage));

@@ -1,7 +1,7 @@
 #include "events_internal.h"
 
 static future_t future_create(thrd_func_t func, void *args) {
-	future_t fut = events_calloc(1, sizeof(struct future_s));
+	future_t fut = events_calloc(1, _mem_align_up(sizeof(struct future_s), 2));
 	if (defer_free(fut)) {
 		fut->promise->scope = get_scope();
 		fut->promise->result->is_array = false;
@@ -267,7 +267,7 @@ static void queue_work_handler(param_t args) {
 
 promise *alloc_promise(void) {
 	promise *f = null;
-	if (!is_empty(f = (promise *)events_malloc(sizeof(promise)))) {
+	if (!is_empty(f = (promise *)events_malloc(_mem_align_up(sizeof(promise), 2)))) {
 		f->args = null;
 		f->result->is_array = false;
 		f->result->value.integer = 0;
@@ -345,7 +345,7 @@ promise *queue_work(future *thrd, param_func_t fn, size_t num_args, ...) {
 	va_end(ap);
 
 	if (!is_empty(args)) {
-		if (!is_empty(f = (promise *)events_calloc(1, sizeof(promise)))) {
+		if (!is_empty(f = (promise *)events_calloc(1, _mem_align_up(sizeof(promise), 2)))) {
 			f->args = args;
 			f->func = fn;
 			f->result->is_array = false;

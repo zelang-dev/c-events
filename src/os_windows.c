@@ -369,7 +369,7 @@ int os_read(int fd, char *buf, size_t len) {
 
 			if (ret != TASK_ERRED) {
 				if (fdTable[pseudofd].path == null) {
-					fdTable[pseudofd].path = events_calloc(1, (ARRAY_SIZE * 2) + 1);
+					fdTable[pseudofd].path = events_calloc(1, _mem_align_up((ARRAY_SIZE * 2) + 1, 2));
 					fdTable[pseudofd].length = ARRAY_SIZE * 2;
 				}
 
@@ -755,7 +755,7 @@ static process_t os_exec_child(const char *filename, char *cmd, execinfo_t *i) {
 		CloseHandle(i->write_input[0]);
 		CloseHandle(i->read_output[1]);
 		CloseHandle(i->error[1]);
-		fdTable[i->fd].buffer = events_calloc(1, Kb(64) + 1);
+		fdTable[i->fd].buffer = events_calloc(1, Kb(64) + 2);
 		fdTable[i->fd].ovList->length = Kb(64);
 		fdTable[i->fd].ovList->data = i;
 		fdTable[i->fd].ovList->buf = fdTable[i->fd].buffer;

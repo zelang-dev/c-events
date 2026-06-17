@@ -154,7 +154,7 @@ typedef struct {
 
 typedef struct {
 	data_types type;
-	bool is_ptr;
+	int is_ptr;
 	intptr_t value;
 	void *data;
 	defer_cb func;

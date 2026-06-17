@@ -1469,7 +1469,7 @@ void task_switch(tasks_t *co) {
 tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
 	(void)is_thread;
 	coroutine_t *contxt = (coroutine_t *)co;
-	void *memory = (unsigned char *)co + sizeof(_results_data_t);
+	void *memory = (unsigned char *)co;
 	stack_size -= sizeof(tasks_t);
 	if (contxt) {
 		struct sigaction handler;
@@ -1512,7 +1512,7 @@ tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
 tasks_t *task_derive(void *co, size_t stack_size, bool is_thread) {
 	(void)is_thread;
 	ucontext_t *ctx = (ucontext_t *)co;
-	size_t size = stack_size + sizeof(_results_data_t);
+	size_t size = stack_size;
 	size -= sizeof(ucontext_t);
 
 	/* Initialize ucontext. */
@@ -1695,8 +1695,8 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 		heapsize = Kb(18) + heapsize;
 #endif
 	/* Stack size should be aligned to 16 bytes. */
-	heapsize = _mem_align_up(heapsize + sizeof(tasks_t), 16);
-	if ((memory = events_calloc(1, heapsize + sizeof(_results_data_t))) == NULL) {
+	heapsize = _mem_align_up(heapsize + sizeof(tasks_t) + sizeof(_results_data_t), 16);
+	if ((memory = events_calloc(1, heapsize)) == NULL) {
 		perror("Error! calloc");
 		return NULL;
 	}
@@ -1736,7 +1736,8 @@ tasks_t *create_task(size_t heapsize, data_func_t func, void *args, bool is_thre
 	co->scope = NULL;
 	co->garbage = NULL;
 	co->generator = NULL;
-	co->stack_size = heapsize + sizeof(_results_data_t);
+	co->results = NULL;
+	co->stack_size = heapsize;
 	co->stack_base = (unsigned char *)(co + 1);
 	co->magic_number = TASK_MAGIC_NUMBER;
 	if (is_main) {
